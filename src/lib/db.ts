@@ -1,14 +1,20 @@
-import { PrismaClient } from "@/generated/prisma/client";
-import { PrismaLibSql } from "@prisma/adapter-libsql";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
-const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
+let _supabase: SupabaseClient | null = null;
 
-function createPrismaClient() {
-  const dbPath = process.env.DATABASE_URL || "file:dev.db";
-  const adapter = new PrismaLibSql({ url: dbPath });
-  return new PrismaClient({ adapter });
+export function getSupabase() {
+  if (!_supabase) {
+    _supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_KEY!
+    );
+  }
+  return _supabase;
 }
 
-export const prisma = globalForPrisma.prisma || createPrismaClient();
-
-if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
+// For backwards compat
+export const supabase = new Proxy({} as SupabaseClient, {
+  get(_target, prop) {
+    return (getSupabase() as unknown as Record<string | symbol, unknown>)[prop];
+  },
+});

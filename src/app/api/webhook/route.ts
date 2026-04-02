@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
+import { supabase } from "@/lib/db";
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-
-    // Resend webhook payload
     const { type, data } = body;
 
     if (!type || !data) {
@@ -13,21 +11,25 @@ export async function POST(req: NextRequest) {
     }
 
     // Find the email by resend ID
-    const email = data.email_id
-      ? await prisma.email.findFirst({ where: { resendId: data.email_id } })
-      : null;
+    let emailId: string | null = null;
+    if (data.email_id) {
+      const { data: email } = await supabase
+        .from("emails")
+        .select("id")
+        .eq("resend_id", data.email_id)
+        .single();
+      emailId = email?.id || null;
+    }
 
     // Store the webhook event
-    await prisma.webhookEvent.create({
-      data: {
-        emailId: email?.id || null,
-        type,
-        payload: JSON.stringify(body),
-      },
+    await supabase.from("webhook_events").insert({
+      email_id: emailId,
+      type,
+      payload: JSON.stringify(body),
     });
 
-    // Update email status based on event type
-    if (email) {
+    // Update email status
+    if (emailId) {
       const statusMap: Record<string, string> = {
         "email.sent": "sent",
         "email.delivered": "delivered",
@@ -40,10 +42,10 @@ export async function POST(req: NextRequest) {
 
       const newStatus = statusMap[type];
       if (newStatus) {
-        await prisma.email.update({
-          where: { id: email.id },
-          data: { status: newStatus },
-        });
+        await supabase
+          .from("emails")
+          .update({ status: newStatus, updated_at: new Date().toISOString() })
+          .eq("id", emailId);
       }
     }
 

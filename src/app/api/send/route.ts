@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
+import { supabase } from "@/lib/db";
 import { resend } from "@/lib/resend";
-import { generateThreadId } from "@/lib/utils";
 
 export async function POST(req: NextRequest) {
   try {
@@ -16,9 +15,12 @@ export async function POST(req: NextRequest) {
     let emailHtml = html || "";
     let emailText = text;
 
-    // If templateId provided, load template
     if (templateId) {
-      const template = await prisma.template.findUnique({ where: { id: templateId } });
+      const { data: template } = await supabase
+        .from("templates")
+        .select()
+        .eq("id", templateId)
+        .single();
       if (!template) {
         return NextResponse.json({ error: "Template not found" }, { status: 404 });
       }
@@ -26,7 +28,6 @@ export async function POST(req: NextRequest) {
       emailText = template.text || undefined;
     }
 
-    // Send via Resend
     const result = await resend.emails.send({
       from: senderEmail,
       to: Array.isArray(to) ? to : [to],
@@ -39,19 +40,26 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: result.error.message }, { status: 500 });
     }
 
-    // Store in DB
-    const email = await prisma.email.create({
-      data: {
+    const threadId = `thread_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+
+    const { data: email, error } = await supabase
+      .from("emails")
+      .insert({
         from: senderEmail,
         to: Array.isArray(to) ? to.join(", ") : to,
         subject,
         html: emailHtml,
         text: emailText || null,
-        resendId: result.data?.id || null,
+        resend_id: result.data?.id || null,
         status: "sent",
-        threadId: generateThreadId(),
-      },
-    });
+        thread_id: threadId,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
 
     return NextResponse.json({ id: email.id, resendId: result.data?.id });
   } catch (error: unknown) {

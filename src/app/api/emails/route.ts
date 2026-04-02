@@ -1,29 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
+import { supabase } from "@/lib/db";
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const page = parseInt(searchParams.get("page") || "1");
   const limit = parseInt(searchParams.get("limit") || "50");
   const status = searchParams.get("status");
+  const offset = (page - 1) * limit;
 
-  const where = status ? { status } : {};
+  let query = supabase
+    .from("emails")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .range(offset, offset + limit - 1);
 
-  const [emails, total] = await Promise.all([
-    prisma.email.findMany({
-      where,
-      orderBy: { createdAt: "desc" },
-      skip: (page - 1) * limit,
-      take: limit,
-      include: {
-        events: {
-          orderBy: { createdAt: "desc" },
-          take: 5,
-        },
-      },
-    }),
-    prisma.email.count({ where }),
-  ]);
+  let countQuery = supabase
+    .from("emails")
+    .select("*", { count: "exact", head: true });
 
-  return NextResponse.json({ emails, total, page, limit });
+  if (status) {
+    query = query.eq("status", status);
+    countQuery = countQuery.eq("status", status);
+  }
+
+  const [{ data: emails }, { count: total }] = await Promise.all([query, countQuery]);
+
+  return NextResponse.json({ emails: emails || [], total: total || 0, page, limit });
 }

@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
+import { supabase } from "@/lib/db";
 
 export async function GET() {
-  const templates = await prisma.template.findMany({
-    orderBy: { updatedAt: "desc" },
-  });
-  return NextResponse.json({ templates });
+  const { data: templates } = await supabase
+    .from("templates")
+    .select()
+    .order("updated_at", { ascending: false });
+
+  return NextResponse.json({ templates: templates || [] });
 }
 
 export async function POST(req: NextRequest) {
@@ -17,9 +19,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing required fields: name, subject, html" }, { status: 400 });
     }
 
-    const template = await prisma.template.create({
-      data: { name, subject, html, text: text || null },
-    });
+    const { data: template, error } = await supabase
+      .from("templates")
+      .insert({ name, subject, html, text: text || null })
+      .select()
+      .single();
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
 
     return NextResponse.json(template, { status: 201 });
   } catch (error: unknown) {
@@ -37,15 +45,22 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: "Missing template id" }, { status: 400 });
     }
 
-    const template = await prisma.template.update({
-      where: { id },
-      data: {
-        ...(name && { name }),
-        ...(subject && { subject }),
-        ...(html && { html }),
-        ...(text !== undefined && { text }),
-      },
-    });
+    const updates: Record<string, string | null> = { updated_at: new Date().toISOString() };
+    if (name) updates.name = name;
+    if (subject) updates.subject = subject;
+    if (html) updates.html = html;
+    if (text !== undefined) updates.text = text;
+
+    const { data: template, error } = await supabase
+      .from("templates")
+      .update(updates)
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
 
     return NextResponse.json(template);
   } catch (error: unknown) {
@@ -63,7 +78,11 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: "Missing template id" }, { status: 400 });
     }
 
-    await prisma.template.delete({ where: { id } });
+    const { error } = await supabase.from("templates").delete().eq("id", id);
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
     return NextResponse.json({ deleted: true });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Failed to delete template";
