@@ -1,0 +1,85 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Email {
+  id          String   @id @default(cuid())
+  from        String
+  to          String
+  subject     String
+  html        String
+  text        String?
+  resendId    String?  @unique
+  status      String   @default("queued") // queued, sent, delivered, opened, clicked, bounced, complained
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Thread support
+  inReplyTo   String?  // Message-ID of the email being replied to
+  references  String?  // Full References header chain
+  messageId   String?  @unique // Message-ID assigned by Resend
+  threadId    String?  // Group emails into threads
+
+  events      WebhookEvent[]
+
+  @@index([threadId])
+  @@index([to])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model InboundEmail {
+  id          String   @id @default(cuid())
+  from        String
+  to          String
+  subject     String
+  html        String?
+  text        String?
+  messageId   String?  @unique
+  inReplyTo   String?
+  references  String?
+  threadId    String?
+  headers     String?  // JSON string of all headers
+  isRead      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([threadId])
+  @@index([from])
+  @@index([createdAt])
+}
+
+model Template {
+  id          String   @id @default(cuid())
+  name        String
+  subject     String
+  html        String
+  text        String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model WebhookEvent {
+  id          String   @id @default(cuid())
+  emailId     String?
+  email       Email?   @relation(fields: [emailId], references: [id])
+  type        String   // email.sent, email.delivered, email.opened, email.clicked, email.bounced, email.complained
+  payload     String   // Full JSON payload
+  createdAt   DateTime @default(now())
+
+  @@index([emailId])
+  @@index([type])
+  @@index([createdAt])
+}
+
+model ApiKey {
+  id          String   @id @default(cuid())
+  name        String
+  key         String   @unique
+  createdAt   DateTime @default(now())
+  lastUsedAt  DateTime?
+}
