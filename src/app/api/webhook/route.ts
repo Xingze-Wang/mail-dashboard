@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { resend } from "@/lib/resend";
+import crypto from "crypto";
 
 const STATUS_MAP: Record<string, string> = {
   "email.sent": "sent",
@@ -12,20 +13,41 @@ const STATUS_MAP: Record<string, string> = {
   "email.complained": "complained",
 };
 
+function verifySignature(payload: string, signature: string | null, secret: string): boolean {
+  if (!signature || !secret) return !secret; // skip verification if no secret configured
+  const expected = crypto.createHmac("sha256", secret).update(payload).digest("hex");
+  return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+}
+
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
+    const rawBody = await req.text();
+
+    // Verify webhook signature if secret is configured
+    const secret = process.env.RESEND_WEBHOOK_SECRET;
+    if (secret) {
+      const signature = req.headers.get("svix-signature") || req.headers.get("webhook-signature");
+      if (!verifySignature(rawBody, signature, secret)) {
+        return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
+      }
+    }
+
+    const body = JSON.parse(rawBody);
     const { type, data } = body;
 
     if (!type || !data) {
       return NextResponse.json({ error: "Invalid webhook payload" }, { status: 400 });
     }
 
+    // Only process email events
+    if (!type.startsWith("email.")) {
+      return NextResponse.json({ received: true, skipped: true });
+    }
+
     const resendEmailId = data.email_id;
     let emailId: string | null = null;
 
     if (resendEmailId) {
-      // Try to find existing email
       const { data: email } = await supabase
         .from("emails")
         .select("id")
@@ -35,7 +57,7 @@ export async function POST(req: NextRequest) {
       if (email) {
         emailId = email.id;
       } else {
-        // Email not in DB yet — fetch from Resend and create it
+        // Email not in DB — fetch from Resend and create it
         const fetched = await resend.emails.get(resendEmailId);
         if (fetched.data) {
           const e = fetched.data;
@@ -68,7 +90,7 @@ export async function POST(req: NextRequest) {
     await supabase.from("webhook_events").insert({
       email_id: emailId,
       type,
-      payload: JSON.stringify(body),
+      payload: rawBody,
     });
 
     // Update email status

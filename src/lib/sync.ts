@@ -12,63 +12,53 @@ const STATUS_MAP: Record<string, string> = {
 };
 
 /**
- * Incremental sync: fetches recent emails from Resend and stops
- * as soon as it hits emails already in the DB with matching status.
- * First run imports everything; subsequent runs are fast.
+ * Fast incremental sync from Resend.
+ * - Fetches one page of recent emails (100)
+ * - Batch-checks which ones exist in DB
+ * - Inserts new ones, updates changed statuses
+ * - Designed to complete well within Vercel's 10s function limit
  */
 export async function syncFromResend(): Promise<{ imported: number; updated: number; total: number }> {
   let imported = 0;
   let updated = 0;
-  let total = 0;
-  let cursor: string | undefined;
-  let consecutiveSkips = 0;
-  const batchSize = 100;
-  // Stop early after hitting this many already-synced emails in a row
-  const SKIP_THRESHOLD = 50;
 
-  while (true) {
-    const params: { limit: number; cursor?: string } = { limit: batchSize };
-    if (cursor) params.cursor = cursor;
+  // Fetch the most recent 100 emails from Resend
+  const result = await resend.emails.list({ limit: 100 });
 
-    const result = await resend.emails.list(params);
+  if (result.error || !result.data) {
+    return { imported: 0, updated: 0, total: 0 };
+  }
 
-    if (result.error || !result.data) {
-      break;
-    }
+  const emails = result.data.data;
+  if (!emails || emails.length === 0) {
+    return { imported: 0, updated: 0, total: 0 };
+  }
 
-    const emails = result.data.data;
-    if (!emails || emails.length === 0) break;
+  // Batch lookup: get all existing emails by resend_id in one query
+  const resendIds = emails.map((e) => e.id);
+  const { data: existingRows } = await supabase
+    .from("emails")
+    .select("id, resend_id, status")
+    .in("resend_id", resendIds);
 
-    total += emails.length;
+  const existingMap = new Map(
+    (existingRows || []).map((row) => [row.resend_id, row])
+  );
 
-    for (const email of emails) {
-      const status = STATUS_MAP[email.last_event] || "sent";
+  // Separate into inserts and updates
+  const toInsert: Record<string, unknown>[] = [];
+  const toUpdate: { id: string; status: string }[] = [];
 
-      const { data: existing } = await supabase
-        .from("emails")
-        .select("id, status")
-        .eq("resend_id", email.id)
-        .single();
+  for (const email of emails) {
+    const status = STATUS_MAP[email.last_event] || "sent";
+    const existing = existingMap.get(email.id);
 
-      if (existing) {
-        if (existing.status !== status) {
-          await supabase
-            .from("emails")
-            .update({ status, updated_at: new Date().toISOString() })
-            .eq("id", existing.id);
-          updated++;
-          consecutiveSkips = 0;
-        } else {
-          consecutiveSkips++;
-        }
-        continue;
+    if (existing) {
+      if (existing.status !== status) {
+        toUpdate.push({ id: existing.id, status });
       }
-
-      // New email — insert it
-      consecutiveSkips = 0;
-      const threadId = `thread_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-
-      await supabase.from("emails").insert({
+    } else {
+      toInsert.push({
         from: email.from,
         to: Array.isArray(email.to) ? email.to.join(", ") : (email.to || ""),
         subject: email.subject || "(no subject)",
@@ -78,16 +68,101 @@ export async function syncFromResend(): Promise<{ imported: number; updated: num
         status,
         created_at: email.created_at,
         updated_at: email.created_at,
-        thread_id: threadId,
+        thread_id: `thread_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
       });
+    }
+  }
 
-      imported++;
+  // Batch insert new emails
+  if (toInsert.length > 0) {
+    const { error } = await supabase.from("emails").insert(toInsert);
+    if (!error) imported = toInsert.length;
+  }
+
+  // Batch update statuses (Supabase doesn't support batch update, so do them concurrently)
+  if (toUpdate.length > 0) {
+    await Promise.all(
+      toUpdate.map((u) =>
+        supabase
+          .from("emails")
+          .update({ status: u.status, updated_at: new Date().toISOString() })
+          .eq("id", u.id)
+      )
+    );
+    updated = toUpdate.length;
+  }
+
+  return { imported, updated, total: emails.length };
+}
+
+/**
+ * Full import: pages through ALL Resend emails.
+ * Call this once to backfill, not on every page load.
+ */
+export async function fullImportFromResend(): Promise<{ imported: number; updated: number; total: number }> {
+  let imported = 0;
+  let updated = 0;
+  let total = 0;
+  let cursor: string | undefined;
+
+  while (true) {
+    const params: { limit: number; cursor?: string } = { limit: 100 };
+    if (cursor) params.cursor = cursor;
+
+    const result = await resend.emails.list(params);
+    if (result.error || !result.data) break;
+
+    const emails = result.data.data;
+    if (!emails || emails.length === 0) break;
+
+    total += emails.length;
+
+    const resendIds = emails.map((e) => e.id);
+    const { data: existingRows } = await supabase
+      .from("emails")
+      .select("id, resend_id, status")
+      .in("resend_id", resendIds);
+
+    const existingMap = new Map(
+      (existingRows || []).map((row) => [row.resend_id, row])
+    );
+
+    const toInsert: Record<string, unknown>[] = [];
+
+    for (const email of emails) {
+      const status = STATUS_MAP[email.last_event] || "sent";
+      const existing = existingMap.get(email.id);
+
+      if (existing) {
+        if (existing.status !== status) {
+          await supabase
+            .from("emails")
+            .update({ status, updated_at: new Date().toISOString() })
+            .eq("id", existing.id);
+          updated++;
+        }
+      } else {
+        toInsert.push({
+          from: email.from,
+          to: Array.isArray(email.to) ? email.to.join(", ") : (email.to || ""),
+          subject: email.subject || "(no subject)",
+          html: "",
+          text: null,
+          resend_id: email.id,
+          status,
+          created_at: email.created_at,
+          updated_at: email.created_at,
+          thread_id: `thread_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+        });
+      }
     }
 
-    // If we've seen 50+ already-synced emails in a row, we're caught up
-    if (consecutiveSkips >= SKIP_THRESHOLD) break;
+    if (toInsert.length > 0) {
+      const { error } = await supabase.from("emails").insert(toInsert);
+      if (!error) imported += toInsert.length;
+    }
 
-    if (emails.length < batchSize) break;
+    if (emails.length < 100) break;
     cursor = emails[emails.length - 1].id;
   }
 
