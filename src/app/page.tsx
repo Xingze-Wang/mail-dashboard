@@ -53,16 +53,19 @@ export default function OverviewPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Trigger a background sync from Resend, then load metrics
+    // Load metrics immediately so the page renders fast
+    fetch("/api/metrics")
+      .then((res) => res.json())
+      .then(setMetrics)
+      .catch(console.error)
+      .finally(() => setLoading(false));
+
+    // Sync from Resend in background, then refresh metrics
     fetch("/api/sync")
-      .catch(() => {}) // sync is best-effort
-      .finally(() => {
-        fetch("/api/metrics")
-          .then((res) => res.json())
-          .then(setMetrics)
-          .catch(console.error)
-          .finally(() => setLoading(false));
-      });
+      .then(() => fetch("/api/metrics"))
+      .then((res) => res?.json())
+      .then((data) => { if (data) setMetrics(data); })
+      .catch(() => {});
   }, []);
 
   if (loading) {
