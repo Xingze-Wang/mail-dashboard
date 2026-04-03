@@ -1,5 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
+import { resend } from "@/lib/resend";
+
+const STATUS_MAP: Record<string, string> = {
+  "email.sent": "sent",
+  "email.delivered": "delivered",
+  "email.delivery_delayed": "sent",
+  "email.opened": "opened",
+  "email.clicked": "clicked",
+  "email.bounced": "bounced",
+  "email.complained": "complained",
+};
 
 export async function POST(req: NextRequest) {
   try {
@@ -10,15 +21,47 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid webhook payload" }, { status: 400 });
     }
 
-    // Find the email by resend ID
+    const resendEmailId = data.email_id;
     let emailId: string | null = null;
-    if (data.email_id) {
+
+    if (resendEmailId) {
+      // Try to find existing email
       const { data: email } = await supabase
         .from("emails")
         .select("id")
-        .eq("resend_id", data.email_id)
+        .eq("resend_id", resendEmailId)
         .single();
-      emailId = email?.id || null;
+
+      if (email) {
+        emailId = email.id;
+      } else {
+        // Email not in DB yet — fetch from Resend and create it
+        const fetched = await resend.emails.get(resendEmailId);
+        if (fetched.data) {
+          const e = fetched.data;
+          const threadId = `thread_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+          const status = STATUS_MAP[type] || "sent";
+
+          const { data: inserted } = await supabase
+            .from("emails")
+            .insert({
+              from: e.from,
+              to: Array.isArray(e.to) ? e.to.join(", ") : (e.to || ""),
+              subject: e.subject || "(no subject)",
+              html: e.html || "",
+              text: e.text || null,
+              resend_id: e.id,
+              status,
+              created_at: e.created_at,
+              updated_at: new Date().toISOString(),
+              thread_id: threadId,
+            })
+            .select("id")
+            .single();
+
+          emailId = inserted?.id || null;
+        }
+      }
     }
 
     // Store the webhook event
@@ -30,17 +73,7 @@ export async function POST(req: NextRequest) {
 
     // Update email status
     if (emailId) {
-      const statusMap: Record<string, string> = {
-        "email.sent": "sent",
-        "email.delivered": "delivered",
-        "email.delivery_delayed": "sent",
-        "email.opened": "opened",
-        "email.clicked": "clicked",
-        "email.bounced": "bounced",
-        "email.complained": "complained",
-      };
-
-      const newStatus = statusMap[type];
+      const newStatus = STATUS_MAP[type];
       if (newStatus) {
         await supabase
           .from("emails")
