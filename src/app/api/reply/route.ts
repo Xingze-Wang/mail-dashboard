@@ -21,7 +21,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Inbound email not found" }, { status: 404 });
     }
 
-    const replySubject = inbound.subject.startsWith("Re:") ? inbound.subject : `Re: ${inbound.subject}`;
+    const replySubject = (inbound.subject.startsWith("Re:") || inbound.subject.startsWith("回复"))
+      ? inbound.subject
+      : `Re: ${inbound.subject}`;
     const references = inbound.references
       ? `${inbound.references} ${inbound.message_id || ""}`
       : inbound.message_id || "";

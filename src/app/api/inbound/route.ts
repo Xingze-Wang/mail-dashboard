@@ -1,6 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 
+/** Clean up `to` field — handles JSON array strings like '["a@b.com"]' */
+function cleanToField(to: string | null): string {
+  if (!to) return "";
+  // If it looks like a JSON array, parse and join
+  if (to.startsWith("[")) {
+    try {
+      const arr = JSON.parse(to);
+      return Array.isArray(arr) ? arr.join(", ") : to;
+    } catch {
+      return to;
+    }
+  }
+  return to;
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -75,5 +90,19 @@ export async function GET(req: NextRequest) {
       .select("*", { count: "exact", head: true }),
   ]);
 
-  return NextResponse.json({ emails: emails || [], total: total || 0, page, limit });
+  // Map snake_case DB fields to camelCase for frontend
+  const mapped = (emails || []).map((e) => ({
+    id: e.id,
+    from: e.from,
+    to: cleanToField(e.to),
+    subject: e.subject,
+    html: e.html,
+    text: e.text,
+    isRead: e.is_read,
+    createdAt: e.created_at,
+    messageId: e.message_id,
+    threadId: e.thread_id,
+  }));
+
+  return NextResponse.json({ emails: mapped, total: total || 0, page, limit });
 }

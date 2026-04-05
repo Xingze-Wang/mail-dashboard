@@ -83,3 +83,70 @@ model ApiKey {
   createdAt   DateTime @default(now())
   lastUsedAt  DateTime?
 }
+
+// ──────────────────────────────────────────────
+// VC Lead Scouting — Dedup & Freshness Models
+// ──────────────────────────────────────────────
+
+model Lead {
+  id            String   @id @default(cuid())
+  platform      String   // jike, xiaohongshu, v2ex, weibo, producthunt
+  platformId    String   // platform-specific user ID
+  authorName    String
+  companyName   String?
+  productUrl    String?
+  contactEmail  String?
+  contactWechat String?
+  githubUrl     String?
+  linkedinUrl   String?
+  stage         String?  // idea, mvp, launched, revenue
+  score         Int      @default(0) // 1-5 qualification score
+  teamRating    String?  // hot, interesting, noise, outreach_sent
+  firstSeenAt   DateTime @default(now())
+  lastSeenAt    DateTime @default(now())
+  lastActiveAt  DateTime? // when they last posted something new
+  contactedAt   DateTime?
+  contactMethod String?  // email, wechat, dm
+  responseAt    DateTime?
+  responseType  String?  // positive, negative, no_response
+  notes         String?
+
+  // Link to email outreach
+  emailId       String?
+
+  sightings     LeadSighting[]
+
+  @@unique([platform, platformId])
+  @@index([score])
+  @@index([firstSeenAt])
+  @@index([teamRating])
+}
+
+model LeadSighting {
+  id          String   @id @default(cuid())
+  leadId      String
+  lead        Lead     @relation(fields: [leadId], references: [id])
+  runDate     DateTime @default(now())
+  postUrl     String
+  postTitle   String?
+  postContent String?
+  likes       Int      @default(0)
+  comments    Int      @default(0)
+  topic       String?
+  keyword     String?  // which search keyword found this
+
+  @@index([leadId])
+  @@index([runDate])
+}
+
+model ScoutRun {
+  id              String   @id @default(cuid())
+  runDate         DateTime @default(now())
+  platformsUsed   String   // comma-separated
+  totalRaw        Int
+  totalQualified  Int
+  totalNew        Int      // first-time leads
+  totalReturning  Int      // seen before
+  keywordsUsed    String?  // JSON
+  notes           String?
+}

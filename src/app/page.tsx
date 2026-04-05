@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import {
   Send,
   CheckCircle2,
-  Eye,
   MousePointerClick,
   AlertTriangle,
   Inbox,
@@ -24,25 +23,22 @@ interface Metrics {
   overview: {
     totalSent: number;
     totalDelivered: number;
-    totalOpened: number;
     totalClicked: number;
     totalBounced: number;
     totalComplained: number;
     totalInbound: number;
     last7DaysSent: number;
     deliveryRate: string;
-    openRate: string;
     clickRate: string;
     bounceRate: string;
   };
-  dailyStats: { date: string; sent: number; delivered: number; opened: number; bounced: number }[];
+  dailyStats: { date: string; sent: number; delivered: number; clicked: number; bounced: number }[];
   recentEvents: { id: string; type: string; createdAt: string; to?: string; subject?: string }[];
 }
 
 const statCards = [
   { key: "totalSent", label: "Sent", icon: Send, color: "text-blue-400" },
   { key: "totalDelivered", label: "Delivered", icon: CheckCircle2, color: "text-green-400" },
-  { key: "totalOpened", label: "Opened", icon: Eye, color: "text-purple-400" },
   { key: "totalClicked", label: "Clicked", icon: MousePointerClick, color: "text-indigo-400" },
   { key: "totalBounced", label: "Bounced", icon: AlertTriangle, color: "text-red-400" },
   { key: "totalInbound", label: "Received", icon: Inbox, color: "text-cyan-400" },
@@ -53,19 +49,32 @@ export default function OverviewPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Load metrics immediately so the page renders fast
     fetch("/api/metrics")
       .then((res) => res.json())
       .then(setMetrics)
       .catch(console.error)
       .finally(() => setLoading(false));
 
-    // Sync from Resend in background, then refresh metrics
-    fetch("/api/sync")
-      .then(() => fetch("/api/metrics"))
-      .then((res) => res?.json())
-      .then((data) => { if (data) setMetrics(data); })
-      .catch(() => {});
+    // Sync from Resend in background — keep re-calling until all pages are imported
+    const runSync = async () => {
+      try {
+        let complete = false;
+        while (!complete) {
+          const res = await fetch("/api/sync");
+          const data = await res.json();
+          complete = data.complete !== false;
+          const metricsRes = await fetch("/api/metrics");
+          const metricsData = await metricsRes.json();
+          if (metricsData) setMetrics(metricsData);
+          if (!complete) {
+            await new Promise((r) => setTimeout(r, 500));
+          }
+        }
+      } catch {
+        // Sync failed, metrics already loaded from initial fetch
+      }
+    };
+    runSync();
   }, []);
 
   if (loading) {
@@ -94,7 +103,7 @@ export default function OverviewPage() {
       </div>
 
       {/* Stat Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-8">
         {statCards.map((card) => {
           const value = o[card.key as keyof typeof o];
           return (
@@ -110,10 +119,9 @@ export default function OverviewPage() {
       </div>
 
       {/* Rates */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+      <div className="grid grid-cols-3 gap-4 mb-8">
         {[
           { label: "Delivery Rate", value: o.deliveryRate, suffix: "%" },
-          { label: "Open Rate", value: o.openRate, suffix: "%" },
           { label: "Click Rate", value: o.clickRate, suffix: "%" },
           { label: "Bounce Rate", value: o.bounceRate, suffix: "%", negative: true },
         ].map((rate) => (
@@ -153,7 +161,7 @@ export default function OverviewPage() {
             />
             <Area type="monotone" dataKey="sent" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.1} />
             <Area type="monotone" dataKey="delivered" stroke="#22c55e" fill="#22c55e" fillOpacity={0.1} />
-            <Area type="monotone" dataKey="opened" stroke="#a855f7" fill="#a855f7" fillOpacity={0.1} />
+            <Area type="monotone" dataKey="clicked" stroke="#818cf8" fill="#818cf8" fillOpacity={0.1} />
           </AreaChart>
         </ResponsiveContainer>
       </div>

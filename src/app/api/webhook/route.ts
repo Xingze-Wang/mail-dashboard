@@ -14,7 +14,7 @@ const STATUS_MAP: Record<string, string> = {
 };
 
 function verifySignature(payload: string, signature: string | null, secret: string): boolean {
-  if (!signature || !secret) return !secret; // skip verification if no secret configured
+  if (!signature || !secret) return !secret;
   const expected = crypto.createHmac("sha256", secret).update(payload).digest("hex");
   return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
 }
@@ -23,7 +23,6 @@ export async function POST(req: NextRequest) {
   try {
     const rawBody = await req.text();
 
-    // Verify webhook signature if secret is configured
     const secret = process.env.RESEND_WEBHOOK_SECRET;
     if (secret) {
       const signature = req.headers.get("svix-signature") || req.headers.get("webhook-signature");
@@ -39,11 +38,63 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid webhook payload" }, { status: 400 });
     }
 
-    // Only process email events
     if (!type.startsWith("email.")) {
       return NextResponse.json({ received: true, skipped: true });
     }
 
+    // ── Handle inbound/received emails ──
+    if (type === "email.received") {
+      const emailId = data.email_id;
+      if (emailId) {
+        // Check if already exists
+        const { data: existing } = await supabase
+          .from("inbound_emails")
+          .select("id")
+          .eq("message_id", emailId)
+          .maybeSingle();
+
+        if (!existing) {
+          // Fetch full email details from Resend
+          try {
+            const fetched = await resend.emails.receiving.get(emailId);
+            if (fetched.data) {
+              const e = fetched.data;
+              const threadId = `thread_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+
+              await supabase.from("inbound_emails").insert({
+                from: e.from,
+                to: Array.isArray(e.to) ? e.to.join(", ") : (e.to || ""),
+                subject: e.subject || "(no subject)",
+                html: e.html || null,
+                text: e.text || null,
+                message_id: emailId,
+                thread_id: threadId,
+                created_at: e.created_at,
+              });
+            }
+          } catch {
+            // Fallback: store with available webhook data
+            await supabase.from("inbound_emails").insert({
+              from: data.from || "unknown",
+              to: Array.isArray(data.to) ? data.to.join(", ") : (data.to || ""),
+              subject: data.subject || "(no subject)",
+              message_id: emailId,
+              thread_id: `thread_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+            });
+          }
+        }
+      }
+
+      // Store webhook event (no email_id FK for inbound)
+      await supabase.from("webhook_events").insert({
+        type,
+        payload: rawBody,
+      });
+
+      return NextResponse.json({ received: true });
+    }
+
+    // ── Handle outbound email events ──
     const resendEmailId = data.email_id;
     let emailId: string | null = null;
 
@@ -86,7 +137,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Store the webhook event
+    // Store webhook event
     await supabase.from("webhook_events").insert({
       email_id: emailId,
       type,

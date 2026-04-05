@@ -10,6 +10,7 @@ import {
   Inbox,
   Activity,
   Settings,
+  Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -17,6 +18,7 @@ const navItems = [
   { href: "/", label: "Overview", icon: BarChart3 },
   { href: "/emails", label: "Emails", icon: Send },
   { href: "/inbox", label: "Inbox", icon: Inbox },
+  { href: "/pipeline", label: "Pipeline", icon: Zap },
   { href: "/logs", label: "Logs", icon: Activity },
   { href: "/templates", label: "Templates", icon: FileText },
 ];

@@ -7,7 +7,17 @@ export async function GET() {
     .select()
     .order("updated_at", { ascending: false });
 
-  return NextResponse.json({ templates: templates || [] });
+  const mapped = (templates || []).map((t) => ({
+    id: t.id,
+    name: t.name,
+    subject: t.subject,
+    html: t.html,
+    text: t.text,
+    createdAt: t.created_at,
+    updatedAt: t.updated_at,
+  }));
+
+  return NextResponse.json({ templates: mapped });
 }
 
 export async function POST(req: NextRequest) {

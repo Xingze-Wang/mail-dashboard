@@ -25,5 +25,18 @@ export async function GET(req: NextRequest) {
 
   const [{ data: emails }, { count: total }] = await Promise.all([query, countQuery]);
 
-  return NextResponse.json({ emails: emails || [], total: total || 0, page, limit });
+  const mapped = (emails || []).map((e) => ({
+    id: e.id,
+    from: e.from,
+    to: e.to,
+    subject: e.subject,
+    html: e.html,
+    text: e.text,
+    status: e.status,
+    resendId: e.resend_id,
+    createdAt: e.created_at,
+    threadId: e.thread_id,
+  }));
+
+  return NextResponse.json({ emails: mapped, total: total || 0, page, limit });
 }
