@@ -97,6 +97,17 @@ export async function GET() {
     }));
   }
 
+  // Pipeline stats
+  const [
+    { count: pipelineReady },
+    { count: pipelineSent },
+    { count: pipelineTotal },
+  ] = await Promise.all([
+    supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("status", "ready"),
+    supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("status", "sent"),
+    supabase.from("pipeline_leads").select("*", { count: "exact", head: true }),
+  ]);
+
   return NextResponse.json({
     overview: {
       totalSent: ts,
@@ -109,6 +120,11 @@ export async function GET() {
       deliveryRate,
       clickRate,
       bounceRate,
+    },
+    pipeline: {
+      ready: pipelineReady || 0,
+      sent: pipelineSent || 0,
+      total: pipelineTotal || 0,
     },
     dailyStats: Object.entries(dailyMap).map(([date, stats]) => ({ date, ...stats })),
     recentEvents: formattedEvents,

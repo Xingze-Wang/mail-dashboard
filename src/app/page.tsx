@@ -7,6 +7,7 @@ import {
   MousePointerClick,
   AlertTriangle,
   Inbox,
+  Zap,
   TrendingUp,
 } from "lucide-react";
 import {
@@ -31,6 +32,11 @@ interface Metrics {
     deliveryRate: string;
     clickRate: string;
     bounceRate: string;
+  };
+  pipeline: {
+    ready: number;
+    sent: number;
+    total: number;
   };
   dailyStats: { date: string; sent: number; delivered: number; clicked: number; bounced: number }[];
   recentEvents: { id: string; type: string; createdAt: string; to?: string; subject?: string }[];
@@ -133,6 +139,30 @@ export default function OverviewPage() {
           </div>
         ))}
       </div>
+
+      {/* Pipeline Stats */}
+      {metrics.pipeline && metrics.pipeline.total > 0 && (
+        <div className="rounded-xl border border-neutral-800 bg-neutral-900/50 p-4 mb-8">
+          <div className="flex items-center gap-2 mb-3">
+            <Zap className="h-4 w-4 text-amber-400" />
+            <h2 className="text-[14px] font-semibold text-white">Pipeline</h2>
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <p className="text-[12px] text-neutral-400">Ready to Send</p>
+              <p className="text-xl font-semibold text-blue-400">{metrics.pipeline.ready}</p>
+            </div>
+            <div>
+              <p className="text-[12px] text-neutral-400">Sent</p>
+              <p className="text-xl font-semibold text-green-400">{metrics.pipeline.sent}</p>
+            </div>
+            <div>
+              <p className="text-[12px] text-neutral-400">Total Leads</p>
+              <p className="text-xl font-semibold text-white">{metrics.pipeline.total}</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Chart */}
       <div className="rounded-xl border border-neutral-800 bg-neutral-900/50 p-6 mb-8">

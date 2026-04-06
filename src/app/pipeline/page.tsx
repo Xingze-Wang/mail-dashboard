@@ -91,6 +91,8 @@ export default function PipelinePage() {
   const [editing, setEditing] = useState<string | null>(null);
   const [editSubject, setEditSubject] = useState("");
   const [editHtml, setEditHtml] = useState("");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [batchSending, setBatchSending] = useState(false);
 
   const fetchLeads = () => {
     setLoading(true);
@@ -151,6 +153,43 @@ export default function PipelinePage() {
     }
   };
 
+  const toggleSelect = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAllReady = () => {
+    const readyIds = leads.filter((l) => canSend(l).ok).map((l) => l.id);
+    setSelected(new Set(readyIds));
+  };
+
+  const handleBatchSend = async () => {
+    if (selected.size === 0) return;
+    setBatchSending(true);
+    try {
+      const res = await fetch("/api/pipeline/batch-send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: [...selected] }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        alert(`Sent ${data.sent}, skipped ${data.skipped}`);
+        setSelected(new Set());
+        fetchLeads();
+      } else {
+        alert(`Error: ${data.error}`);
+      }
+    } catch {
+      alert("Batch send failed");
+    } finally {
+      setBatchSending(false);
+    }
+  };
+
   const handleSkip = async (id: string) => {
     await fetch(`/api/pipeline/${id}`, {
       method: "PATCH",
@@ -192,6 +231,33 @@ export default function PipelinePage() {
             <span className={`text-[12px] ${scanResult.startsWith("Error") ? "text-red-400" : "text-green-400"}`}>
               {scanResult}
             </span>
+          )}
+          {selected.size > 0 && (
+            <>
+              <span className="text-[12px] text-neutral-400">{selected.size} selected</span>
+              <button
+                onClick={handleBatchSend}
+                disabled={batchSending}
+                className="flex items-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-[13px] font-medium text-white hover:bg-green-500 disabled:opacity-50 transition-colors"
+              >
+                {batchSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                {batchSending ? "Sending..." : `Send ${selected.size}`}
+              </button>
+              <button
+                onClick={() => setSelected(new Set())}
+                className="text-[12px] text-neutral-400 hover:text-white transition-colors"
+              >
+                Clear
+              </button>
+            </>
+          )}
+          {selected.size === 0 && readyCount > 0 && (
+            <button
+              onClick={selectAllReady}
+              className="rounded-lg border border-neutral-700 px-3 py-2 text-[12px] text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
+            >
+              Select All Ready
+            </button>
           )}
           <button
             onClick={handleScan}
@@ -257,6 +323,15 @@ export default function PipelinePage() {
                   onClick={() => setExpanded(isExpanded ? null : lead.id)}
                 >
                   <div className="flex items-start justify-between gap-4">
+                    {lead.status === "ready" && sendCheck.ok && (
+                      <input
+                        type="checkbox"
+                        checked={selected.has(lead.id)}
+                        onChange={(e) => { e.stopPropagation(); toggleSelect(lead.id); }}
+                        onClick={(e) => e.stopPropagation()}
+                        className="mt-1 h-4 w-4 rounded border-neutral-600 bg-neutral-800 flex-shrink-0 accent-blue-500"
+                      />
+                    )}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1 flex-wrap">
                         <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${statusBadgeColor(lead.status)}`}>
