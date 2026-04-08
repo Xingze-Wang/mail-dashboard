@@ -524,6 +524,65 @@ async function markPaperProcessed(arxivId: string): Promise<void> {
   await supabase.from("processed_papers").upsert({ arxiv_id: arxivId });
 }
 
+/** Archive a paper and all its author-email matches into papers + paper_authors */
+async function archivePaper(
+  paper: ArxivPaper,
+  analysis: GeminiAnalysis,
+): Promise<void> {
+  // Upsert paper
+  await supabase.from("papers").upsert({
+    arxiv_id: paper.arxivId,
+    title: paper.title,
+    abstract: paper.abstract,
+    authors: paper.authors.join(", "),
+    pdf_url: paper.pdfUrl,
+    published_at: paper.published,
+    compute_level: analysis.compute_level,
+    compute_confidence: analysis.compute_confidence,
+    compute_reason: analysis.compute_reason,
+    matched_directions: JSON.stringify(analysis.matched_directions),
+  });
+
+  // Insert all author-email matches with position info
+  const rows = (analysis.email_matches ?? []).map((m, i) => ({
+    arxiv_id: paper.arxivId,
+    author_name: m.author,
+    first_name: m.first_name,
+    email: m.email,
+    is_chinese: m.is_chinese,
+    position: i,
+  }));
+
+  // Also add authors from the paper's author list who weren't in email_matches
+  const matchedNames = new Set(
+    (analysis.email_matches ?? [])
+      .filter((m) => m.author)
+      .map((m) => (m.author ?? "").toLowerCase()),
+  );
+  for (let i = 0; i < paper.authors.length; i++) {
+    const name = paper.authors[i];
+    if (!matchedNames.has(name.toLowerCase())) {
+      // Extract first name (first word)
+      const parts = name.trim().split(/\s+/);
+      rows.push({
+        arxiv_id: paper.arxivId,
+        author_name: name,
+        first_name: parts[0] || null,
+        email: null as unknown as string,
+        is_chinese: likelyHasChineseAuthor([name]),
+        position: i,
+      });
+    }
+  }
+
+  if (rows.length > 0) {
+    await supabase.from("paper_authors").upsert(rows, {
+      onConflict: "id",
+      ignoreDuplicates: true,
+    });
+  }
+}
+
 /** Record that we contacted this email */
 export async function recordContact(email: string, paperTitle: string, subject: string): Promise<void> {
   await supabase.from("email_contact_history").upsert({
@@ -638,6 +697,13 @@ export async function scanArxiv(options?: {
       if (!analysis) {
         errors.push(`No analysis for ${paper.arxivId}`);
         continue;
+      }
+
+      // Archive paper + all authors (regardless of whether it becomes a lead)
+      try {
+        await archivePaper(paper, analysis);
+      } catch (err) {
+        errors.push(`Archive error for ${paper.arxivId}: ${err}`);
       }
 
       // Skip if no compute need

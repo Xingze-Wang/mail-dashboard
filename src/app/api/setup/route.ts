@@ -89,6 +89,50 @@ export async function POST() {
     `create index if not exists idx_pipeline_status on pipeline_leads(status)`,
     `create index if not exists idx_pipeline_email on pipeline_leads(author_email)`,
     `create index if not exists idx_pipeline_created on pipeline_leads(created_at)`,
+
+    // Paper archive: one row per paper, all authors stored individually
+    `create table if not exists papers (
+      arxiv_id text primary key,
+      title text not null,
+      abstract text,
+      authors text,
+      pdf_url text,
+      published_at timestamptz,
+      compute_level text,
+      compute_confidence float,
+      compute_reason text,
+      matched_directions text,
+      created_at timestamptz not null default now()
+    )`,
+    `create table if not exists paper_authors (
+      id text primary key default gen_random_uuid()::text,
+      arxiv_id text not null references papers(arxiv_id),
+      author_name text,
+      first_name text,
+      email text,
+      is_chinese boolean default false,
+      position int,
+      created_at timestamptz not null default now()
+    )`,
+    `create index if not exists idx_paper_authors_arxiv on paper_authors(arxiv_id)`,
+    `create index if not exists idx_paper_authors_name on paper_authors(first_name)`,
+    `create index if not exists idx_paper_authors_author on paper_authors(author_name)`,
+    `create index if not exists idx_paper_authors_email on paper_authors(email)`,
+
+    // Brief lookups: tracks when sales looked up a name (= someone added on WeChat)
+    `create table if not exists brief_lookups (
+      id text primary key default gen_random_uuid()::text,
+      query text not null,
+      arxiv_id text,
+      lead_id text,
+      added_wechat boolean not null default false,
+      wechat_at timestamptz,
+      notes text,
+      created_at timestamptz not null default now()
+    )`,
+    `create index if not exists idx_brief_lookups_query on brief_lookups(query)`,
+    `create index if not exists idx_brief_lookups_arxiv on brief_lookups(arxiv_id)`,
+    `create index if not exists idx_brief_lookups_wechat on brief_lookups(added_wechat)`,
   ];
 
   const results = [];

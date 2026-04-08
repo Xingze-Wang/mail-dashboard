@@ -11,6 +11,7 @@ import {
   Activity,
   Settings,
   Zap,
+  User,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -19,6 +20,7 @@ const navItems = [
   { href: "/emails", label: "Emails", icon: Send },
   { href: "/inbox", label: "Inbox", icon: Inbox },
   { href: "/pipeline", label: "Pipeline", icon: Zap },
+  { href: "/brief", label: "Lookup", icon: User },
   { href: "/logs", label: "Logs", icon: Activity },
   { href: "/templates", label: "Templates", icon: FileText },
 ];
