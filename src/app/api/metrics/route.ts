@@ -97,15 +97,19 @@ export async function GET() {
     }));
   }
 
-  // Pipeline stats
+  // Pipeline stats + WeChat
   const [
     { count: pipelineReady },
     { count: pipelineSent },
     { count: pipelineTotal },
+    { count: wechatTotal },
+    { data: recentWechat },
   ] = await Promise.all([
     supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("status", "ready"),
     supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("status", "sent"),
     supabase.from("pipeline_leads").select("*", { count: "exact", head: true }),
+    supabase.from("brief_lookups").select("*", { count: "exact", head: true }).eq("added_wechat", true),
+    supabase.from("brief_lookups").select("query, arxiv_id, created_at").eq("added_wechat", true).order("created_at", { ascending: false }).limit(10),
   ]);
 
   return NextResponse.json({
@@ -125,6 +129,14 @@ export async function GET() {
       ready: pipelineReady || 0,
       sent: pipelineSent || 0,
       total: pipelineTotal || 0,
+    },
+    wechat: {
+      total: wechatTotal || 0,
+      recent: (recentWechat || []).map((r) => ({
+        query: r.query,
+        arxivId: r.arxiv_id,
+        createdAt: r.created_at,
+      })),
     },
     dailyStats: Object.entries(dailyMap).map(([date, stats]) => ({ date, ...stats })),
     recentEvents: formattedEvents,

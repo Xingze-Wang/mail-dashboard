@@ -9,6 +9,7 @@ import {
   Inbox,
   Zap,
   TrendingUp,
+  MessageCircle,
 } from "lucide-react";
 import {
   AreaChart,
@@ -37,6 +38,10 @@ interface Metrics {
     ready: number;
     sent: number;
     total: number;
+  };
+  wechat: {
+    total: number;
+    recent: { query: string; arxivId: string; createdAt: string }[];
   };
   dailyStats: { date: string; sent: number; delivered: number; clicked: number; bounced: number }[];
   recentEvents: { id: string; type: string; createdAt: string; to?: string; subject?: string }[];
@@ -161,6 +166,42 @@ export default function OverviewPage() {
               <p className="text-xl font-semibold text-white">{metrics.pipeline.total}</p>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* WeChat Conversions */}
+      {metrics.wechat && metrics.wechat.total > 0 && (
+        <div className="rounded-xl border border-green-500/20 bg-green-500/5 p-4 mb-8">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <MessageCircle className="h-4 w-4 text-green-400" />
+              <h2 className="text-[14px] font-semibold text-white">WeChat Conversions</h2>
+            </div>
+            <span className="text-2xl font-semibold text-green-400">{metrics.wechat.total}</span>
+          </div>
+          {metrics.wechat.recent.length > 0 && (
+            <div className="space-y-1.5">
+              {metrics.wechat.recent.slice(0, 5).map((r, i) => (
+                <div key={i} className="flex items-center justify-between text-[12px]">
+                  <span className="text-neutral-300">{r.query}</span>
+                  <span className="text-neutral-600">
+                    {new Date(r.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          {metrics.pipeline && metrics.pipeline.sent > 0 && (
+            <div className="mt-3 pt-3 border-t border-green-500/10">
+              <p className="text-[11px] text-neutral-500">
+                Conversion rate:{" "}
+                <span className="text-green-400 font-medium">
+                  {((metrics.wechat.total / metrics.pipeline.sent) * 100).toFixed(1)}%
+                </span>
+                <span className="text-neutral-600"> ({metrics.wechat.total} / {metrics.pipeline.sent} sent)</span>
+              </p>
+            </div>
+          )}
         </div>
       )}
 

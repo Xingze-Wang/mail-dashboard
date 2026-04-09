@@ -133,6 +133,25 @@ export async function POST() {
     `create index if not exists idx_brief_lookups_query on brief_lookups(query)`,
     `create index if not exists idx_brief_lookups_arxiv on brief_lookups(arxiv_id)`,
     `create index if not exists idx_brief_lookups_wechat on brief_lookups(added_wechat)`,
+
+    // Scorer model metrics — stores training runs for dashboard visualization
+    `create table if not exists scorer_runs (
+      id text primary key default gen_random_uuid()::text,
+      embedder text not null,
+      n_samples int not null,
+      n_positive int not null,
+      n_negative int not null,
+      cv_f1 float not null,
+      cv_f1_std float,
+      cv_precision float,
+      cv_recall float,
+      cv_auc float,
+      label_distribution jsonb,
+      score_distribution jsonb,
+      gemini_vs_scorer jsonb,
+      trained_at timestamptz not null,
+      created_at timestamptz not null default now()
+    )`,
   ];
 
   const results = [];
