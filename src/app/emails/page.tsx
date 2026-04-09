@@ -69,15 +69,15 @@ function computeBadge(level: string | null) {
 function BriefPanel({ email }: { email: Email }) {
   const [brief, setBrief] = useState<BriefData | null>(null);
   const [summary, setSummary] = useState<string | null>(null);
+  const [talkingPoints, setTalkingPoints] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [summaryLoading, setSummaryLoading] = useState(false);
-  const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
     setLoading(true);
     setBrief(null);
     setSummary(null);
-    setExpanded(false);
+    setTalkingPoints([]);
 
     fetch(`/api/brief?email=${encodeURIComponent(email.to)}`)
       .then((r) => r.json())
@@ -90,23 +90,28 @@ function BriefPanel({ email }: { email: Email }) {
       .finally(() => setLoading(false));
   }, [email.to]);
 
-  // Fetch AI summary when expanded
+  // Auto-fetch AI summary + talking points when brief loads
   useEffect(() => {
-    if (!expanded || !brief || summary) return;
+    if (!brief || summary) return;
     setSummaryLoading(true);
     fetch(`/api/brief/summary?id=${encodeURIComponent(brief.id)}`)
       .then((r) => r.json())
-      .then((d) => setSummary(d.summary ?? null))
+      .then((d) => {
+        setSummary(d.summary ?? null);
+        setTalkingPoints(d.talkingPoints ?? []);
+      })
       .catch(() => {})
       .finally(() => setSummaryLoading(false));
-  }, [expanded, brief, summary]);
+  }, [brief, summary]);
 
   if (loading) {
     return (
-      <div className="rounded-lg border border-neutral-800 bg-neutral-900/50 p-4 mt-4 animate-pulse">
-        <div className="flex items-center gap-2 text-[12px] text-neutral-600">
-          <Search className="h-3.5 w-3.5" />
-          Looking up paper...
+      <div className="space-y-4 animate-pulse">
+        <div className="rounded-lg border border-neutral-800 bg-neutral-900/50 p-4">
+          <div className="flex items-center gap-2 text-[12px] text-neutral-600">
+            <Search className="h-3.5 w-3.5" />
+            Looking up paper...
+          </div>
         </div>
       </div>
     );
@@ -117,105 +122,103 @@ function BriefPanel({ email }: { email: Email }) {
   const { paper, research } = brief;
 
   return (
-    <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 mt-4">
-      {/* Collapsed: one-line summary */}
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full text-left px-5 py-3 flex items-center justify-between gap-3"
-      >
-        <div className="flex items-center gap-3 min-w-0">
-          <FileText className="h-4 w-4 text-blue-400 shrink-0" />
-          <div className="min-w-0">
-            <span className="text-[13px] text-blue-300 font-medium truncate block">
-              {paper.title}
-            </span>
-            <div className="flex items-center gap-2 mt-0.5 text-[11px] text-neutral-500">
-              {brief.personName && <span>{brief.personName}</span>}
-              {research.schoolName && (
-                <>
-                  <span className="text-neutral-700">·</span>
-                  <span>{research.schoolName}</span>
-                </>
-              )}
-              {research.computeLevel && (
-                <>
-                  <span className="text-neutral-700">·</span>
-                  <span className={`rounded px-1 py-0.5 text-[10px] ${computeBadge(research.computeLevel)}`}>
-                    {research.computeLevel}
-                  </span>
-                </>
-              )}
-              {research.directions.length > 0 && (
-                <>
-                  <span className="text-neutral-700">·</span>
-                  <span>{research.directions.slice(0, 2).join(", ")}</span>
-                </>
-              )}
-            </div>
-          </div>
+    <div className="space-y-4">
+      {/* AI Summary — the main thing sales reads */}
+      <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-4">
+        <p className="text-[11px] text-blue-400 font-medium mb-2">Sales Brief</p>
+        {summaryLoading ? (
+          <p className="text-[12px] text-neutral-500 animate-pulse">Generating brief...</p>
+        ) : summary ? (
+          <p className="text-[13px] text-neutral-200 leading-relaxed whitespace-pre-line">
+            {summary}
+          </p>
+        ) : (
+          <p className="text-[12px] text-neutral-500">No summary available</p>
+        )}
+      </div>
+
+      {/* Paper info */}
+      <div className="rounded-lg border border-neutral-800 bg-neutral-900/50 p-4">
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-[11px] text-neutral-500 font-medium">Paper</p>
+          {paper.pdfUrl && (
+            <a
+              href={paper.pdfUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-[11px] text-blue-400 hover:text-blue-300"
+            >
+              <ExternalLink className="h-3 w-3" />
+              PDF
+            </a>
+          )}
         </div>
-        <span className="text-[11px] text-neutral-600 shrink-0">
-          {expanded ? "Collapse" : "View brief"}
-        </span>
-      </button>
+        <p className="text-[13px] text-white font-medium mb-1">{paper.title}</p>
+        <p className="text-[11px] text-neutral-500 mb-2">{paper.authors}</p>
+        {paper.abstract && (
+          <p className="text-[11px] text-neutral-500 leading-relaxed">
+            {paper.abstract}
+          </p>
+        )}
+      </div>
 
-      {/* Expanded: full brief */}
-      {expanded && (
-        <div className="px-5 pb-4 space-y-4 border-t border-blue-500/10 pt-4">
-          {/* AI Summary */}
-          <div>
-            <p className="text-[11px] text-blue-400 font-medium mb-1.5">Sales Brief</p>
-            {summaryLoading ? (
-              <p className="text-[12px] text-neutral-500 animate-pulse">Generating brief...</p>
-            ) : summary ? (
-              <p className="text-[13px] text-neutral-200 leading-relaxed whitespace-pre-line">
-                {summary}
-              </p>
-            ) : (
-              <p className="text-[12px] text-neutral-500">No summary available</p>
-            )}
-          </div>
-
-          {/* Paper details */}
-          <div>
-            <p className="text-[11px] text-neutral-500 font-medium mb-1">Paper</p>
-            <p className="text-[12px] text-neutral-300 mb-1">{paper.authors}</p>
-            {paper.abstract && (
-              <p className="text-[11px] text-neutral-500 leading-relaxed">
-                {paper.abstract.length > 400
-                  ? paper.abstract.slice(0, 400) + "..."
-                  : paper.abstract}
-              </p>
-            )}
-            {paper.pdfUrl && (
-              <a
-                href={paper.pdfUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 mt-2 text-[11px] text-blue-400 hover:text-blue-300"
-              >
-                <ExternalLink className="h-3 w-3" />
-                PDF
-              </a>
-            )}
-          </div>
-
-          {/* Compute + directions */}
+      {/* Research profile */}
+      <div className="rounded-lg border border-neutral-800 bg-neutral-900/50 p-4">
+        <p className="text-[11px] text-neutral-500 font-medium mb-2">Research Profile</p>
+        <div className="space-y-2">
+          {research.computeLevel && (
+            <div className="flex items-center gap-2">
+              <Cpu className="h-3 w-3 text-neutral-600" />
+              <span className={`rounded px-1.5 py-0.5 text-[11px] ${computeBadge(research.computeLevel)}`}>
+                {research.computeLevel}
+              </span>
+              {research.computeConfidence != null && (
+                <span className="text-[11px] text-neutral-600">
+                  {Math.round((research.computeConfidence ?? 0) * 100)}%
+                </span>
+              )}
+            </div>
+          )}
           {research.computeReason && (
-            <div>
-              <p className="text-[11px] text-neutral-500 font-medium mb-1">
-                Compute ({research.computeLevel})
-              </p>
-              <p className="text-[12px] text-neutral-400">{research.computeReason}</p>
+            <p className="text-[12px] text-neutral-400">{research.computeReason}</p>
+          )}
+          {research.directions.length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-1">
+              {research.directions.map((d) => (
+                <span key={d} className="rounded px-1.5 py-0.5 text-[10px] bg-blue-500/15 text-blue-400">
+                  {d}
+                </span>
+              ))}
             </div>
           )}
+          {brief.personName && research.schoolName && (
+            <div className="flex items-center gap-1.5 text-[11px] text-neutral-500 mt-1">
+              <GraduationCap className="h-3 w-3" />
+              {brief.personName} · {research.schoolName}
+            </div>
+          )}
+        </div>
+      </div>
 
-          {/* Author mismatch */}
-          {brief.authorMismatch && (
-            <div className="rounded bg-amber-500/10 border border-amber-500/20 px-3 py-2">
-              <p className="text-[11px] text-amber-400">{brief.authorMismatch.note}</p>
-            </div>
-          )}
+      {/* AI-generated talking points */}
+      {talkingPoints.length > 0 && (
+        <div className="rounded-lg border border-neutral-800 bg-neutral-900/50 p-4">
+          <p className="text-[11px] text-neutral-500 font-medium mb-2">Talking Points</p>
+          <ul className="space-y-2 text-[12px] text-neutral-400">
+            {talkingPoints.map((point, i) => (
+              <li key={i} className="flex gap-2">
+                <span className="text-neutral-600 shrink-0">{i + 1}.</span>
+                <span className="leading-relaxed">{point}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Author mismatch */}
+      {brief.authorMismatch && (
+        <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-4">
+          <p className="text-[11px] text-amber-400">{brief.authorMismatch.note}</p>
         </div>
       )}
     </div>
@@ -281,47 +284,32 @@ export default function EmailsPage() {
     const sanitized = selected.html ? sanitizeHtml(selected.html) : "";
 
     return (
-      <div className="p-8 max-w-[1200px]">
+      <div className="p-6">
         <button
           onClick={() => setSelected(null)}
-          className="flex items-center gap-2 text-[13px] text-neutral-400 hover:text-white mb-6 transition-colors"
+          className="flex items-center gap-2 text-[13px] text-neutral-400 hover:text-white mb-4 transition-colors"
         >
           <ArrowLeft className="h-4 w-4" />
           Back to emails
         </button>
 
-        <div className="rounded-xl border border-neutral-800 bg-neutral-900/50">
-          <div className="px-6 py-5 border-b border-neutral-800">
-            <h2 className="text-[18px] font-semibold text-white mb-3">{selected.subject}</h2>
-            <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[12px]">
-              <span className="text-neutral-500">From</span>
-              <span className="text-neutral-300">{selected.from}</span>
-              <span className="text-neutral-500">To</span>
-              <span className="text-neutral-300">{selected.to}</span>
-              <span className="text-neutral-500">Status</span>
-              <div className="flex items-center gap-2">
-                <span className={`h-1.5 w-1.5 rounded-full ${getStatusDot(selected.status)}`} />
-                <span className={`font-medium capitalize ${getStatusColor(selected.status)}`}>
-                  {selected.status}
-                </span>
-              </div>
-              <span className="text-neutral-500">Date</span>
-              <span className="text-neutral-300">{new Date(selected.createdAt).toLocaleString()}</span>
-              {selected.resendId && (
-                <>
-                  <span className="text-neutral-500">ID</span>
-                  <span className="text-neutral-500 font-mono text-[11px]">{selected.resendId}</span>
-                </>
-              )}
-            </div>
+        {/* Email header */}
+        <div className="rounded-lg border border-neutral-800 bg-neutral-900/50 px-5 py-4 mb-4">
+          <h2 className="text-[16px] font-semibold text-white mb-2">{selected.subject}</h2>
+          <div className="flex items-center gap-4 text-[12px] text-neutral-500 flex-wrap">
+            <span>To: <span className="text-neutral-300">{selected.to}</span></span>
+            <span className="flex items-center gap-1.5">
+              <span className={`h-1.5 w-1.5 rounded-full ${getStatusDot(selected.status)}`} />
+              <span className={`capitalize ${getStatusColor(selected.status)}`}>{selected.status}</span>
+            </span>
+            <span>{new Date(selected.createdAt).toLocaleString()}</span>
           </div>
+        </div>
 
-          {/* Paper brief — auto-matches by recipient email */}
-          <div className="px-6 pt-2">
-            <BriefPanel email={selected} />
-          </div>
-
-          <div className="p-6">
+        {/* Two-column: left = email content, right = brief */}
+        <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-4">
+          {/* Left: Email content */}
+          <div className="rounded-lg border border-neutral-800 bg-neutral-900/50 p-5 min-w-0">
             {detailLoading ? (
               <div className="flex items-center gap-2 text-neutral-500 text-[13px]">
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -348,6 +336,11 @@ export default function EmailsPage() {
                 Content not available — this email may have expired from Resend&apos;s storage.
               </p>
             )}
+          </div>
+
+          {/* Right: Brief panel */}
+          <div className="min-w-0">
+            <BriefPanel email={selected} />
           </div>
         </div>
       </div>
