@@ -231,11 +231,14 @@ export default function EmailsPage() {
   const [composeOpen, setComposeOpen] = useState(false);
   const [selected, setSelected] = useState<Email | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchInput, setSearchInput] = useState("");
 
   const fetchEmails = () => {
     setLoading(true);
     const params = new URLSearchParams({ page: String(page), limit: "50" });
     if (statusFilter) params.set("status", statusFilter);
+    if (searchQuery) params.set("search", searchQuery);
 
     fetch(`/api/emails?${params}`)
       .then((res) => res.json())
@@ -268,7 +271,7 @@ export default function EmailsPage() {
 
   useEffect(() => {
     fetchEmails();
-  }, [page, statusFilter]);
+  }, [page, statusFilter, searchQuery]);
 
   const statuses = ["all", "sent", "delivered", "clicked", "bounced", "complained"];
 
@@ -375,6 +378,42 @@ export default function EmailsPage() {
           </button>
         </div>
       </div>
+
+      {/* Search */}
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          setSearchQuery(searchInput);
+          setPage(1);
+        }}
+        className="mb-4"
+      >
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-500" />
+          <input
+            type="text"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                setSearchQuery(searchInput);
+                setPage(1);
+              }
+            }}
+            placeholder="Search by name, email, or subject..."
+            className="w-full rounded-lg border border-neutral-800 bg-neutral-900 py-2.5 pl-10 pr-20 text-[13px] text-white placeholder:text-neutral-600 focus:outline-none focus:border-neutral-600 transition-colors"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => { setSearchInput(""); setSearchQuery(""); setPage(1); }}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-neutral-500 hover:text-white transition-colors"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      </form>
 
       {/* Status Filter */}
       <div className="flex gap-1 mb-6 border-b border-neutral-800 pb-3">

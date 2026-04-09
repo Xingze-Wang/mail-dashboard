@@ -6,6 +6,7 @@ export async function GET(req: NextRequest) {
   const page = parseInt(searchParams.get("page") || "1");
   const limit = parseInt(searchParams.get("limit") || "50");
   const status = searchParams.get("status");
+  const search = searchParams.get("search")?.trim();
   const offset = (page - 1) * limit;
 
   let query = supabase
@@ -21,6 +22,13 @@ export async function GET(req: NextRequest) {
   if (status) {
     query = query.eq("status", status);
     countQuery = countQuery.eq("status", status);
+  }
+
+  if (search) {
+    // Search across to and subject fields
+    const filter = `to.ilike.%${search}%,subject.ilike.%${search}%`;
+    query = query.or(filter);
+    countQuery = countQuery.or(filter);
   }
 
   const [{ data: emails }, { count: total }] = await Promise.all([query, countQuery]);
