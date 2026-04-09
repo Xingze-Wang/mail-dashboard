@@ -400,7 +400,7 @@ export default function EmailsPage() {
                 setPage(1);
               }
             }}
-            placeholder="Search by name, email, or subject..."
+            placeholder="Search by email address (e.g. zhang, mit.edu)..."
             className="w-full rounded-lg border border-neutral-800 bg-neutral-900 py-2.5 pl-10 pr-20 text-[13px] text-white placeholder:text-neutral-600 focus:outline-none focus:border-neutral-600 transition-colors"
           />
           {searchQuery && (
