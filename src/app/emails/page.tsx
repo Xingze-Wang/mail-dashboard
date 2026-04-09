@@ -386,8 +386,8 @@ export default function EmailsPage() {
             )}
           </div>
 
-          {/* Right: Brief panel */}
-          <div className="min-w-0">
+          {/* Right: Brief panel (sticky) */}
+          <div className="min-w-0 lg:sticky lg:top-6 lg:self-start lg:max-h-[calc(100vh-4rem)] lg:overflow-y-auto">
             <BriefPanel email={selected} />
           </div>
         </div>
@@ -427,10 +427,10 @@ export default function EmailsPage() {
           setSearchQuery(searchInput);
           setPage(1);
         }}
-        className="mb-4"
+        className="mb-5"
       >
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-500" />
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-500" />
           <input
             type="text"
             value={searchInput}
@@ -442,22 +442,32 @@ export default function EmailsPage() {
               }
             }}
             placeholder="Search by email address (e.g. zhang, mit.edu)..."
-            className="w-full rounded-lg border border-neutral-800 bg-neutral-900 py-2.5 pl-10 pr-20 text-[13px] text-white placeholder:text-neutral-600 focus:outline-none focus:border-neutral-600 transition-colors"
+            className="w-full rounded-xl border border-neutral-700/50 bg-neutral-900/80 py-3 pl-11 pr-24 text-[14px] text-white placeholder:text-neutral-600 focus:outline-none focus:border-neutral-500 focus:bg-neutral-900 transition-all"
           />
-          {searchQuery && (
+          {searchQuery ? (
             <button
               type="button"
               onClick={() => { setSearchInput(""); setSearchQuery(""); setPage(1); }}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-neutral-500 hover:text-white transition-colors"
+              className="absolute right-4 top-1/2 -translate-y-1/2 rounded-md bg-neutral-800 px-2.5 py-1 text-[11px] text-neutral-400 hover:text-white hover:bg-neutral-700 transition-colors"
             >
               Clear
             </button>
+          ) : (
+            <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[11px] text-neutral-700">
+              Enter to search
+            </span>
           )}
         </div>
+        {searchQuery && (
+          <p className="mt-2 text-[12px] text-neutral-500">
+            Showing results for <span className="text-neutral-300">&ldquo;{searchQuery}&rdquo;</span>
+            {" "}<span className="text-neutral-600">({total} found)</span>
+          </p>
+        )}
       </form>
 
       {/* Status Filter */}
-      <div className="flex gap-1 mb-6 border-b border-neutral-800 pb-3">
+      <div className="flex gap-1 mb-5 border-b border-neutral-800/50 pb-3">
         {statuses.map((s) => (
           <button
             key={s}
