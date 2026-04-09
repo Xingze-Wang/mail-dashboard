@@ -67,43 +67,77 @@ function computeBadge(level: string | null) {
 }
 
 function BriefPanel({ email }: { email: Email }) {
+  const [activated, setActivated] = useState(false);
   const [brief, setBrief] = useState<BriefData | null>(null);
   const [summary, setSummary] = useState<string | null>(null);
   const [talkingPoints, setTalkingPoints] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [summaryLoading, setSummaryLoading] = useState(false);
 
+  // Reset when email changes
   useEffect(() => {
-    setLoading(true);
+    setActivated(false);
     setBrief(null);
     setSummary(null);
     setTalkingPoints([]);
-
-    fetch(`/api/brief?email=${encodeURIComponent(email.to)}`)
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.briefs && data.briefs.length > 0) {
-          setBrief(data.briefs[0]);
-        }
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false));
   }, [email.to]);
 
-  // Auto-fetch AI summary + talking points when brief loads
-  useEffect(() => {
-    if (!brief || summary) return;
-    setSummaryLoading(true);
-    fetch(`/api/brief/summary?id=${encodeURIComponent(brief.id)}`)
-      .then((r) => r.json())
-      .then((d) => {
-        setSummary(d.summary ?? null);
-        setTalkingPoints(d.talkingPoints ?? []);
-      })
-      .catch(() => {})
-      .finally(() => setSummaryLoading(false));
-  }, [brief, summary]);
+  const handleActivate = async () => {
+    setActivated(true);
+    setLoading(true);
 
+    try {
+      // 1. Fetch brief data
+      const res = await fetch(`/api/brief?email=${encodeURIComponent(email.to)}`);
+      const data = await res.json();
+      const match = data.briefs?.[0] ?? null;
+      setBrief(match);
+
+      if (match) {
+        // 2. Record WeChat addition
+        fetch("/api/brief/wechat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            query: email.to,
+            arxiv_id: match.paper.arxivId,
+            lead_id: match.id,
+          }),
+        }).catch(() => {});
+
+        // 3. Fetch AI summary + talking points
+        setSummaryLoading(true);
+        const sumRes = await fetch(`/api/brief/summary?id=${encodeURIComponent(match.id)}`);
+        const sumData = await sumRes.json();
+        setSummary(sumData.summary ?? null);
+        setTalkingPoints(sumData.talkingPoints ?? []);
+        setSummaryLoading(false);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Not activated yet — show the button
+  if (!activated) {
+    return (
+      <button
+        onClick={handleActivate}
+        className="w-full rounded-lg border border-green-500/30 bg-green-500/10 p-5 text-center hover:bg-green-500/20 transition-colors"
+      >
+        <p className="text-[14px] font-medium text-green-400 mb-1">
+          Added on WeChat
+        </p>
+        <p className="text-[12px] text-green-400/60">
+          Click to generate paper brief + talking points
+        </p>
+      </button>
+    );
+  }
+
+  // Loading state
   if (loading) {
     return (
       <div className="space-y-4 animate-pulse">
@@ -117,13 +151,27 @@ function BriefPanel({ email }: { email: Email }) {
     );
   }
 
-  if (!brief) return null;
+  // No match found
+  if (!brief) {
+    return (
+      <div className="rounded-lg border border-neutral-800 bg-neutral-900/50 p-4">
+        <p className="text-[12px] text-neutral-500">
+          No matching paper found for this email.
+        </p>
+      </div>
+    );
+  }
 
   const { paper, research } = brief;
 
   return (
     <div className="space-y-4">
-      {/* AI Summary — the main thing sales reads */}
+      {/* Confirmed badge */}
+      <div className="rounded-lg bg-green-500/10 border border-green-500/20 px-4 py-2">
+        <p className="text-[11px] text-green-400 font-medium">Added on WeChat — recorded</p>
+      </div>
+
+      {/* AI Summary */}
       <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-4">
         <p className="text-[11px] text-blue-400 font-medium mb-2">Sales Brief</p>
         {summaryLoading ? (
@@ -349,7 +397,7 @@ export default function EmailsPage() {
 
   // List view
   return (
-    <div className="p-8 max-w-[1200px]">
+    <div className="p-8">
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-semibold text-white tracking-tight">Emails</h1>
