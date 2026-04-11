@@ -2,8 +2,26 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { scanArxiv, type ScannedLead } from "@/lib/scanner";
 import { generateDraft } from "@/lib/email-generator";
+import { lookupAuthor } from "@/lib/semantic-scholar";
+import {
+  getAssignmentConfig,
+  classifyLead,
+  assignRep,
+  getRep,
+} from "@/lib/assignment";
 
-async function insertLead(lead: ScannedLead, draft: { subject: string; html: string } | null) {
+async function insertLead(
+  lead: ScannedLead,
+  draft: { subject: string; html: string } | null,
+  extras: {
+    s2AuthorId?: string | null;
+    hIndex?: number | null;
+    citationCount?: number | null;
+    paperCount?: number | null;
+    leadTier?: string;
+    assignedRepId?: number;
+  },
+) {
   return supabase.from("pipeline_leads").insert({
     arxiv_id: lead.arxivId,
     title: lead.title,
@@ -19,10 +37,16 @@ async function insertLead(lead: ScannedLead, draft: { subject: string; html: str
     compute_level: lead.computeLevel,
     compute_confidence: lead.computeConfidence,
     compute_reason: lead.computeReason,
-    matched_directions: Array.isArray(lead.matchedDirections) ? lead.matchedDirections.join(",") : (lead.matchedDirections || ""),
+    matched_directions: lead.matchedDirections,
     draft_subject: draft?.subject ?? null,
     draft_html: draft?.html ?? null,
     status: draft ? "ready" : "new",
+    s2_author_id: extras.s2AuthorId ?? null,
+    h_index: extras.hIndex ?? null,
+    citation_count: extras.citationCount ?? null,
+    paper_count: extras.paperCount ?? null,
+    lead_tier: extras.leadTier ?? "normal",
+    assigned_rep_id: extras.assignedRepId ?? null,
   });
 }
 
@@ -72,9 +96,31 @@ async function ensureTable() {
 async function runScan() {
   await ensureTable();
   const { leads, stats } = await scanArxiv({ maxPapers: 200, timeBudgetMs: 45000 });
+  const config = await getAssignmentConfig();
   let leadsCreated = 0;
 
   for (const lead of leads) {
+    // 1. Semantic Scholar enrichment (best-effort)
+    let s2: Awaited<ReturnType<typeof lookupAuthor>> = null;
+    try {
+      s2 = await lookupAuthor(lead.title, lead.authorName);
+    } catch {
+      // S2 enrichment failure is non-blocking
+    }
+
+    // 2. Classify and assign
+    const hIndex = s2?.hIndex ?? null;
+    const tier = classifyLead(config, {
+      hIndex,
+      schoolTier: lead.schoolTier,
+      authorEmail: lead.authorEmail,
+    });
+    const repId = assignRep(config, tier);
+
+    // 3. Get rep info for draft generation
+    const rep = await getRep(repId);
+
+    // 4. Generate draft with rep identity
     let draft: { subject: string; html: string } | null = null;
     try {
       draft = await generateDraft({
@@ -85,12 +131,22 @@ async function runScan() {
         schoolName: lead.schoolName,
         schoolTier: lead.schoolTier,
         matchedDirections: lead.matchedDirections,
+        repName: rep?.name,
+        repWechatId: rep?.wechat_id,
       });
     } catch {
       // Draft generation failed — insert with status 'new'
     }
 
-    const { error } = await insertLead(lead, draft);
+    // 5. Insert with enrichment data
+    const { error } = await insertLead(lead, draft, {
+      s2AuthorId: s2?.authorId ?? null,
+      hIndex: s2?.hIndex ?? null,
+      citationCount: s2?.citationCount ?? null,
+      paperCount: s2?.paperCount ?? null,
+      leadTier: tier,
+      assignedRepId: repId,
+    });
     if (error) {
       stats.errors.push(`insert ${lead.arxivId}: ${error.message}`);
     } else {
