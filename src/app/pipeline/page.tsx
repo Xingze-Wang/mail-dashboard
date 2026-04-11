@@ -12,7 +12,13 @@ import {
   ChevronDown,
   ChevronUp,
   Pencil,
+  BarChart3,
+  TrendingUp,
+  MessageCircle,
 } from "lucide-react";
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
+} from "recharts";
 import { formatDate } from "@/lib/utils";
 import { sanitizeHtml } from "@/lib/sanitize";
 
@@ -358,19 +364,19 @@ export default function PipelinePage() {
       </div>
 
       {/* ── Page Tabs ── */}
-      <div className="flex gap-0 mb-6 border-b border-white/[0.06]">
+      <div className="flex gap-1 mb-6 bg-neutral-900/50 rounded-lg p-1 w-fit border border-neutral-800">
         {(["leads", "channels", "sales"] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
-            className={`px-5 py-2.5 text-[13px] font-medium border-b-2 -mb-px transition-colors ${
+            className={`rounded-md px-4 py-1.5 text-[13px] font-medium transition-colors ${
               activeTab === tab
-                ? "border-white text-white"
-                : "border-transparent text-neutral-500 hover:text-neutral-300"
+                ? "bg-neutral-800 text-white"
+                : "text-neutral-500 hover:text-neutral-300"
             }`}
           >
-            {tab === "leads" ? `Leads` : tab.charAt(0).toUpperCase() + tab.slice(1)}
-            {tab === "leads" && <span className="ml-1.5 text-[11px] text-neutral-600">{total}</span>}
+            {tab === "leads" ? "Leads" : tab.charAt(0).toUpperCase() + tab.slice(1)}
+            {tab === "leads" && total > 0 && <span className="ml-1.5 text-[11px] text-neutral-600">{total}</span>}
           </button>
         ))}
       </div>
@@ -399,7 +405,7 @@ export default function PipelinePage() {
         <select
           value={tierFilter}
           onChange={(e) => setTierFilter(e.target.value)}
-          className="rounded-lg border border-white/[0.06] bg-white/[0.03] px-3 py-1.5 text-[12px] text-neutral-400"
+          className="rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-1.5 text-[12px] text-neutral-400"
         >
           <option value="all">All Tiers</option>
           <option value="strong">Strong</option>
@@ -408,7 +414,7 @@ export default function PipelinePage() {
         <select
           value={repFilter}
           onChange={(e) => setRepFilter(e.target.value)}
-          className="rounded-lg border border-white/[0.06] bg-white/[0.03] px-3 py-1.5 text-[12px] text-neutral-400"
+          className="rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-1.5 text-[12px] text-neutral-400"
         >
           <option value="all">All Reps</option>
           {reps.map((r) => (
@@ -441,7 +447,7 @@ export default function PipelinePage() {
             return (
               <div
                 key={lead.id}
-                className="rounded-xl border border-white/[0.06] bg-white/[0.02] overflow-hidden"
+                className="rounded-xl border border-neutral-800 bg-neutral-900/50 overflow-hidden"
               >
                 {/* Lead Header */}
                 <div
@@ -477,12 +483,12 @@ export default function PipelinePage() {
                           <span className="text-[11px] text-neutral-500">{lead.schoolName}</span>
                         )}
                         {lead.hIndex !== null && (
-                          <span className="text-[10px] text-neutral-600 bg-white/[0.04] rounded px-1.5 py-0.5">
+                          <span className="text-[10px] text-neutral-600 bg-neutral-800/50 rounded px-1.5 py-0.5">
                             h:{lead.hIndex}
                           </span>
                         )}
                         {lead.citationCount !== null && lead.citationCount > 0 && (
-                          <span className="text-[10px] text-neutral-600 bg-white/[0.04] rounded px-1.5 py-0.5">
+                          <span className="text-[10px] text-neutral-600 bg-neutral-800/50 rounded px-1.5 py-0.5">
                             cit:{lead.citationCount.toLocaleString()}
                           </span>
                         )}
@@ -518,7 +524,7 @@ export default function PipelinePage() {
                             handleRepChange(lead.id, parseInt(e.target.value));
                           }}
                           onClick={(e) => e.stopPropagation()}
-                          className="rounded-md border border-white/[0.06] bg-white/[0.03] px-2 py-1 text-[11px] text-neutral-400"
+                          className="rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-400"
                         >
                           {reps.map((r) => (
                             <option key={r.id} value={r.id}>{r.name}</option>
@@ -662,51 +668,45 @@ export default function PipelinePage() {
       {activeTab === "channels" && analytics && (
         <div className="space-y-6">
           {/* Stat cards */}
-          <div className="grid grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {[
-              { label: "Total Leads", value: analytics.channels.totalLeads, sub: `+${analytics.channels.leadsThisWeek} this week` },
-              { label: "Strong Leads", value: analytics.channels.strongLeads, sub: `${analytics.channels.totalLeads > 0 ? ((analytics.channels.strongLeads / analytics.channels.totalLeads) * 100).toFixed(1) : 0}% of total` },
-              { label: "Avg h-index", value: analytics.channels.avgHIndex, sub: null },
-              { label: "Send → WeChat", value: `${analytics.channels.conversionRate}%`, sub: null, highlight: true },
+              { label: "Total Leads", value: analytics.channels.totalLeads, sub: `+${analytics.channels.leadsThisWeek} this week`, icon: BarChart3, color: "text-blue-400" },
+              { label: "Strong Leads", value: analytics.channels.strongLeads, sub: `${analytics.channels.totalLeads > 0 ? ((analytics.channels.strongLeads / analytics.channels.totalLeads) * 100).toFixed(1) : 0}% of total`, icon: Zap, color: "text-orange-400" },
+              { label: "Avg h-index", value: analytics.channels.avgHIndex, sub: null, icon: TrendingUp, color: "text-neutral-400" },
+              { label: "Send → WeChat", value: `${analytics.channels.conversionRate}%`, sub: null, icon: MessageCircle, color: "text-emerald-400" },
             ].map((card) => (
-              <div key={card.label} className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-5">
-                <p className="text-[12px] text-neutral-500 mb-1">{card.label}</p>
-                <p className={`text-[28px] font-bold tracking-tight ${card.highlight ? "text-emerald-400" : "text-white"}`}>
-                  {card.value}
-                </p>
-                {card.sub && <p className="text-[11px] text-emerald-400 mt-1">{card.sub}</p>}
+              <div key={card.label} className="rounded-xl border border-neutral-800 bg-neutral-900/50 p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <card.icon className={`h-4 w-4 ${card.color}`} />
+                  <span className="text-[12px] font-medium text-neutral-400">{card.label}</span>
+                </div>
+                <p className="text-2xl font-semibold text-white tabular-nums">{card.value}</p>
+                {card.sub && <p className="text-[11px] text-neutral-500 mt-1">{card.sub}</p>}
               </div>
             ))}
           </div>
 
-          {/* Daily chart */}
-          <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-5">
+          {/* Daily chart — Recharts */}
+          <div className="rounded-xl border border-neutral-800 bg-neutral-900/50 p-5">
             <p className="text-[13px] font-semibold mb-4">Leads Discovered (Last 30 Days)</p>
-            <div className="flex items-end gap-1 h-[160px]">
-              {analytics.channels.daily.map((d) => {
-                const maxVal = Math.max(...analytics.channels.daily.map((x) => x.strong + x.normal), 1);
-                const totalH = ((d.strong + d.normal) / maxVal) * 140;
-                const strongH = d.strong > 0 ? (d.strong / (d.strong + d.normal)) * totalH : 0;
-                return (
-                  <div key={d.date} className="flex-1 flex flex-col items-center justify-end gap-0.5" title={`${d.date}: ${d.strong} strong, ${d.normal} normal`}>
-                    <div className="w-full rounded-t" style={{ height: `${totalH - strongH}px`, background: "rgba(59,130,246,0.4)" }} />
-                    {strongH > 0 && <div className="w-full rounded-t" style={{ height: `${strongH}px`, background: "rgba(249,115,22,0.7)" }} />}
-                  </div>
-                );
-              })}
-            </div>
-            <div className="flex gap-4 mt-3 justify-center">
-              <span className="flex items-center gap-1.5 text-[11px] text-neutral-500"><span className="w-2 h-2 rounded-sm bg-orange-500/70" /> Strong</span>
-              <span className="flex items-center gap-1.5 text-[11px] text-neutral-500"><span className="w-2 h-2 rounded-sm bg-blue-500/40" /> Normal</span>
-            </div>
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={analytics.channels.daily}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#262626" />
+                <XAxis dataKey="date" tickFormatter={(d: string) => d.slice(5)} stroke="#525252" tick={{ fontSize: 11 }} />
+                <YAxis stroke="#525252" tick={{ fontSize: 11 }} />
+                <Tooltip contentStyle={{ backgroundColor: "#171717", border: "1px solid #333", borderRadius: "8px", fontSize: "12px" }} />
+                <Bar dataKey="normal" stackId="a" fill="rgba(59,130,246,0.5)" />
+                <Bar dataKey="strong" stackId="a" fill="rgba(249,115,22,0.7)" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
           </div>
 
           {/* Source table */}
-          <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] overflow-hidden">
+          <div className="rounded-xl border border-neutral-800 bg-neutral-900/50 overflow-hidden">
             <p className="text-[13px] font-semibold p-5 pb-3">Source Breakdown</p>
             <table className="w-full text-[13px]">
               <thead>
-                <tr className="border-t border-white/[0.06]">
+                <tr className="border-t border-neutral-800">
                   {["Source", "Total", "Strong", "Normal", "Sent", "WeChat", "Conv %"].map((h) => (
                     <th key={h} className="text-left px-5 py-2.5 text-[11px] font-semibold text-neutral-500 uppercase tracking-wider">{h}</th>
                   ))}
@@ -714,7 +714,7 @@ export default function PipelinePage() {
               </thead>
               <tbody>
                 {analytics.channels.sources.map((s: { source: string; total: number; strong: number; normal: number; sent: number; wechat: number; convRate: number }) => (
-                  <tr key={s.source} className="border-t border-white/[0.04]">
+                  <tr key={s.source} className="border-t border-neutral-800/50">
                     <td className="px-5 py-3 font-medium">{s.source}</td>
                     <td className="px-5 py-3 text-neutral-400">{s.total}</td>
                     <td className="px-5 py-3 text-neutral-400">{s.strong}</td>
@@ -728,23 +728,17 @@ export default function PipelinePage() {
             </table>
           </div>
 
-          {/* h-index distribution */}
-          <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-5">
+          {/* h-index distribution — Recharts */}
+          <div className="rounded-xl border border-neutral-800 bg-neutral-900/50 p-5">
             <p className="text-[13px] font-semibold mb-4">h-index Distribution</p>
-            <div className="flex items-end gap-1 h-[120px]">
-              {analytics.channels.hIndexDist.map((b) => {
-                const maxCount = Math.max(...analytics.channels.hIndexDist.map((x) => x.count), 1);
-                const h = (b.count / maxCount) * 100;
-                return (
-                  <div key={b.min} className="flex-1" title={`h ${b.min}-${b.max ?? "+"}: ${b.count}`}>
-                    <div className="w-full rounded-t bg-blue-500/30 hover:bg-blue-500/50 transition-colors" style={{ height: `${Math.max(h, 2)}px` }} />
-                  </div>
-                );
-              })}
-            </div>
-            <div className="flex justify-between mt-2 text-[10px] text-neutral-600">
-              <span>0</span><span>10</span><span>20</span><span>30</span><span>40+</span>
-            </div>
+            <ResponsiveContainer width="100%" height={160}>
+              <BarChart data={analytics.channels.hIndexDist}>
+                <XAxis dataKey="min" stroke="#525252" tick={{ fontSize: 10 }} />
+                <YAxis stroke="#525252" tick={{ fontSize: 10 }} />
+                <Tooltip contentStyle={{ backgroundColor: "#171717", border: "1px solid #333", borderRadius: "8px", fontSize: "12px" }} />
+                <Bar dataKey="count" fill="rgba(59,130,246,0.4)" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
           </div>
         </div>
       )}
@@ -759,13 +753,13 @@ export default function PipelinePage() {
           {/* Rep cards */}
           <div className="grid grid-cols-3 gap-4">
             {analytics.sales.reps.map((r) => (
-              <div key={r.rep.id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-5">
+              <div key={r.rep.id} className="rounded-xl border border-neutral-800 bg-neutral-900/50 p-5">
                 <div className="flex items-start justify-between mb-4">
                   <div>
                     <p className="text-[16px] font-semibold">{r.rep.name}</p>
                     <p className="text-[11px] text-neutral-500 mt-0.5">{r.rep.sender_email}</p>
                   </div>
-                  <span className="text-[11px] text-neutral-600 bg-white/[0.04] rounded px-2 py-0.5">{r.rep.wechat_id}</span>
+                  <span className="text-[11px] text-neutral-600 bg-neutral-800/50 rounded px-2 py-0.5">{r.rep.wechat_id}</span>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
@@ -783,7 +777,7 @@ export default function PipelinePage() {
                   <div>
                     <p className="text-[11px] text-neutral-500">WeChat Conv.</p>
                     <p className="text-[20px] font-bold text-emerald-400">{r.convRate}%</p>
-                    <div className="w-full h-1 bg-white/[0.06] rounded mt-1">
+                    <div className="w-full h-1 bg-neutral-800 rounded mt-1">
                       <div className="h-full bg-emerald-500 rounded" style={{ width: `${Math.min(r.convRate * 5, 100)}%` }} />
                     </div>
                   </div>
@@ -793,11 +787,11 @@ export default function PipelinePage() {
           </div>
 
           {/* Performance matrix */}
-          <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] overflow-hidden">
+          <div className="rounded-xl border border-neutral-800 bg-neutral-900/50 overflow-hidden">
             <p className="text-[13px] font-semibold p-5 pb-3">Rep &times; Lead Type Performance</p>
             <table className="w-full text-[13px]">
               <thead>
-                <tr className="border-t border-white/[0.06]">
+                <tr className="border-t border-neutral-800">
                   {["Rep", "Tier", "Assigned", "Sent", "Replied", "WeChat", "Conv %"].map((h) => (
                     <th key={h} className="text-left px-5 py-2.5 text-[11px] font-semibold text-neutral-500 uppercase tracking-wider">{h}</th>
                   ))}
@@ -806,7 +800,7 @@ export default function PipelinePage() {
               <tbody>
                 {analytics.sales.reps.flatMap((r) =>
                   r.tiers.filter((t) => t.assigned > 0).map((t) => (
-                    <tr key={`${r.rep.id}-${t.tier}`} className="border-t border-white/[0.04]">
+                    <tr key={`${r.rep.id}-${t.tier}`} className="border-t border-neutral-800/50">
                       <td className="px-5 py-3 font-medium">{r.rep.name}</td>
                       <td className="px-5 py-3">
                         <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${tierBadgeColor(t.tier)}`}>
