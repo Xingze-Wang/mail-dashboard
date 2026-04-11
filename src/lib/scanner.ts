@@ -28,6 +28,10 @@ export interface ScannedLead {
   computeConfidence: number;
   computeReason: string;
   matchedDirections: string[];
+  s2AuthorId: string | null;
+  hIndex: number | null;
+  citationCount: number | null;
+  paperCount: number | null;
 }
 
 interface ArxivPaper {
@@ -759,6 +763,10 @@ export async function scanArxiv(options?: {
           computeConfidence: analysis.compute_confidence,
           computeReason: analysis.compute_reason ?? "",
           matchedDirections: analysis.matched_directions,
+          s2AuthorId: null,
+          hIndex: null,
+          citationCount: null,
+          paperCount: null,
         });
       }
 

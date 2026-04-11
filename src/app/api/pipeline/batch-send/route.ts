@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { resend } from "@/lib/resend";
 import { recordContact } from "@/lib/scanner";
+import { getRep } from "@/lib/assignment";
 
 /**
  * POST /api/pipeline/batch-send
@@ -20,7 +21,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Max 50 at a time" }, { status: 400 });
     }
 
-    const senderFrom = `${process.env.SENDER_NAME} <${process.env.SENDER_EMAIL}>`;
     const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
     let sent = 0;
@@ -55,6 +55,15 @@ export async function POST(req: NextRequest) {
       if (lead.published_at && new Date(lead.published_at) > oneDayAgo) {
         skipped++;
         continue;
+      }
+
+      // Look up assigned rep for this lead
+      let senderFrom = `${process.env.SENDER_NAME} <${process.env.SENDER_EMAIL}>`;
+      if (lead.assigned_rep_id) {
+        const rep = await getRep(lead.assigned_rep_id);
+        if (rep) {
+          senderFrom = `${rep.sender_name} <${rep.sender_email}>`;
+        }
       }
 
       // Send via Resend

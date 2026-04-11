@@ -2,32 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { scanArxiv, type ScannedLead } from "@/lib/scanner";
 import { generateDraft } from "@/lib/email-generator";
+import { lookupAuthor } from "@/lib/semantic-scholar";
+import {
+  getAssignmentConfig,
+  classifyLead,
+  assignRep,
+  getRep,
+} from "@/lib/assignment";
 
-export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
-  const page = parseInt(searchParams.get("page") || "1");
-  const limit = parseInt(searchParams.get("limit") || "50");
-  const status = searchParams.get("status");
-  const offset = (page - 1) * limit;
+// ─── Shared field mapper ────────────────────────────────────────────────────
 
-  let query = supabase
-    .from("pipeline_leads")
-    .select("*")
-    .order("created_at", { ascending: false })
-    .range(offset, offset + limit - 1);
-
-  let countQuery = supabase
-    .from("pipeline_leads")
-    .select("*", { count: "exact", head: true });
-
-  if (status) {
-    query = query.eq("status", status);
-    countQuery = countQuery.eq("status", status);
-  }
-
-  const [{ data: leads }, { count: total }] = await Promise.all([query, countQuery]);
-
-  const mapped = (leads || []).map((l) => ({
+function mapLead(l: Record<string, unknown>) {
+  return {
     id: l.id,
     arxivId: l.arxiv_id,
     title: l.title,
@@ -49,12 +35,76 @@ export async function GET(req: NextRequest) {
     status: l.status,
     sentAt: l.sent_at,
     createdAt: l.created_at,
-  }));
-
-  return NextResponse.json({ leads: mapped, total: total || 0, page, limit });
+    s2AuthorId: l.s2_author_id,
+    hIndex: l.h_index,
+    citationCount: l.citation_count,
+    paperCount: l.paper_count,
+    leadTier: l.lead_tier,
+    assignedRepId: l.assigned_rep_id,
+  };
 }
 
-async function insertLead(lead: ScannedLead, draft: { subject: string; html: string } | null) {
+// ─── GET: list leads with filters ───────────────────────────────────────────
+
+export async function GET(req: NextRequest) {
+  const { searchParams } = new URL(req.url);
+  const page = parseInt(searchParams.get("page") || "1");
+  const limit = parseInt(searchParams.get("limit") || "50");
+  const status = searchParams.get("status");
+  const tier = searchParams.get("tier");
+  const repId = searchParams.get("rep_id");
+  const offset = (page - 1) * limit;
+
+  let query = supabase
+    .from("pipeline_leads")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .range(offset, offset + limit - 1);
+
+  let countQuery = supabase
+    .from("pipeline_leads")
+    .select("*", { count: "exact", head: true });
+
+  if (status) {
+    query = query.eq("status", status);
+    countQuery = countQuery.eq("status", status);
+  }
+  if (tier) {
+    query = query.eq("lead_tier", tier);
+    countQuery = countQuery.eq("lead_tier", tier);
+  }
+  if (repId) {
+    query = query.eq("assigned_rep_id", parseInt(repId));
+    countQuery = countQuery.eq("assigned_rep_id", parseInt(repId));
+  }
+
+  const [{ data: leads }, { count: total }] = await Promise.all([
+    query,
+    countQuery,
+  ]);
+
+  return NextResponse.json({
+    leads: (leads || []).map(mapLead),
+    total: total || 0,
+    page,
+    limit,
+  });
+}
+
+// ─── POST: scan arXiv → enrich → classify → assign → draft ─────────────────
+
+async function insertLead(
+  lead: ScannedLead,
+  draft: { subject: string; html: string } | null,
+  extras: {
+    s2AuthorId?: string | null;
+    hIndex?: number | null;
+    citationCount?: number | null;
+    paperCount?: number | null;
+    leadTier?: string;
+    assignedRepId?: number;
+  },
+) {
   return supabase.from("pipeline_leads").insert({
     arxiv_id: lead.arxivId,
     title: lead.title,
@@ -74,11 +124,18 @@ async function insertLead(lead: ScannedLead, draft: { subject: string; html: str
     draft_subject: draft?.subject ?? null,
     draft_html: draft?.html ?? null,
     status: draft ? "ready" : "new",
+    s2_author_id: extras.s2AuthorId ?? null,
+    h_index: extras.hIndex ?? null,
+    citation_count: extras.citationCount ?? null,
+    paper_count: extras.paperCount ?? null,
+    lead_tier: extras.leadTier ?? "normal",
+    assigned_rep_id: extras.assignedRepId ?? null,
   });
 }
 
 export async function POST(req: NextRequest) {
-  const isVercelCron = req.headers.get("authorization") === `Bearer ${process.env.CRON_SECRET}`;
+  const isVercelCron =
+    req.headers.get("authorization") === `Bearer ${process.env.CRON_SECRET}`;
   const referer = req.headers.get("referer") || "";
   const host = req.headers.get("host") || "__none__";
   const isInternal = referer.includes(host);
@@ -89,9 +146,31 @@ export async function POST(req: NextRequest) {
 
   try {
     const { leads, stats } = await scanArxiv();
+    const config = await getAssignmentConfig();
     let leadsCreated = 0;
 
     for (const lead of leads) {
+      // 1. Semantic Scholar enrichment (best-effort)
+      let s2: Awaited<ReturnType<typeof lookupAuthor>> = null;
+      try {
+        s2 = await lookupAuthor(lead.title, lead.authorName);
+      } catch {
+        // S2 enrichment failure is non-blocking
+      }
+
+      // 2. Classify and assign
+      const hIndex = s2?.hIndex ?? null;
+      const tier = classifyLead(config, {
+        hIndex,
+        schoolTier: lead.schoolTier,
+        authorEmail: lead.authorEmail,
+      });
+      const repId = assignRep(config, tier);
+
+      // 3. Get rep info for draft generation
+      const rep = await getRep(repId);
+
+      // 4. Generate draft with rep identity
       let draft: { subject: string; html: string } | null = null;
       try {
         draft = await generateDraft({
@@ -102,18 +181,29 @@ export async function POST(req: NextRequest) {
           schoolName: lead.schoolName,
           schoolTier: lead.schoolTier,
           matchedDirections: lead.matchedDirections,
+          repName: rep?.name,
+          repWechatId: rep?.wechat_id,
         });
       } catch {
         // Draft generation failed — insert with status 'new'
       }
 
-      const { error } = await insertLead(lead, draft);
+      // 5. Insert with enrichment data
+      const { error } = await insertLead(lead, draft, {
+        s2AuthorId: s2?.authorId ?? null,
+        hIndex: s2?.hIndex ?? null,
+        citationCount: s2?.citationCount ?? null,
+        paperCount: s2?.paperCount ?? null,
+        leadTier: tier,
+        assignedRepId: repId,
+      });
       if (!error) leadsCreated++;
     }
 
     return NextResponse.json({ stats, leadsCreated });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Pipeline scan failed";
+    const message =
+      error instanceof Error ? error.message : "Pipeline scan failed";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

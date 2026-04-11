@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { resend } from "@/lib/resend";
 import { recordContact } from "@/lib/scanner";
+import { getRep } from "@/lib/assignment";
 
 export async function POST(req: NextRequest) {
   try {
@@ -44,8 +45,14 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Send via Resend
-    const senderFrom = `${process.env.SENDER_NAME} <${process.env.SENDER_EMAIL}>`;
+    // Look up assigned rep (fall back to env vars)
+    let senderFrom = `${process.env.SENDER_NAME} <${process.env.SENDER_EMAIL}>`;
+    if (lead.assigned_rep_id) {
+      const rep = await getRep(lead.assigned_rep_id);
+      if (rep) {
+        senderFrom = `${rep.sender_name} <${rep.sender_email}>`;
+      }
+    }
 
     const result = await resend.emails.send({
       from: senderFrom,
