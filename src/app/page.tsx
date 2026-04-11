@@ -98,7 +98,7 @@ export default function OverviewPage() {
 
   if (!metrics) {
     return (
-      <div className="p-8">
+      <div>
         <p className="text-neutral-400">Failed to load metrics</p>
       </div>
     );
@@ -107,7 +107,7 @@ export default function OverviewPage() {
   const o = metrics.overview;
 
   return (
-    <div className="p-8 max-w-[1200px]">
+    <div>
       <div className="mb-8">
         <h1 className="text-2xl font-semibold text-white tracking-tight">Overview</h1>
         <p className="text-sm text-neutral-400 mt-1">Email delivery metrics and activity</p>

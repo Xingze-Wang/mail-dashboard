@@ -28,9 +28,13 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased dark`}
     >
-      <body className="min-h-full bg-neutral-950 text-white">
-        <Sidebar />
-        <main className="ml-[220px] min-h-screen">{children}</main>
+      <body className="h-full">
+        <div className="app-layout">
+          <Sidebar />
+          <div className="app-content">
+            {children}
+          </div>
+        </div>
       </body>
     </html>
   );

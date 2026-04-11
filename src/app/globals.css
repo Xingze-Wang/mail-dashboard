@@ -1,8 +1,10 @@
 @import "tailwindcss";
 
 :root {
-  --background: #0a0a0a;
-  --foreground: #ededed;
+  --background: #09090b;
+  --foreground: #fafafa;
+  --sidebar-width: 240px;
+  --header-height: 56px;
 }
 
 @theme inline {
@@ -13,12 +15,54 @@
 }
 
 body {
-  background: #0a0a0a;
-  color: #ededed;
+  background: var(--background);
+  color: var(--foreground);
   font-family: var(--font-sans), system-ui, -apple-system, sans-serif;
+  overflow: hidden;
 }
 
-/* Scrollbar styling */
+/* ─── Layout grid ─── */
+.app-layout {
+  display: grid;
+  grid-template-columns: var(--sidebar-width) 1fr;
+  grid-template-rows: var(--header-height) 1fr;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.app-sidebar {
+  grid-row: 1 / -1;
+  grid-column: 1;
+  border-right: 1px solid #1c1c1e;
+  background: #0c0c0e;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-header {
+  grid-row: 1;
+  grid-column: 2;
+  border-bottom: 1px solid #1c1c1e;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 32px;
+  background: var(--background);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.app-content {
+  grid-row: 2;
+  grid-column: 2;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 24px 32px 48px;
+}
+
+/* ─── Scrollbar ─── */
 ::-webkit-scrollbar {
   width: 6px;
 }
@@ -28,10 +72,15 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #333;
+  background: #262626;
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #555;
+  background: #404040;
+}
+
+/* ─── Smooth scroll in content area ─── */
+.app-content {
+  scroll-behavior: smooth;
 }

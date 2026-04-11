@@ -218,34 +218,35 @@ export default function PipelinePage() {
   const readyCount = leads.filter((l) => l.status === "ready").length;
 
   return (
-    <div className="p-8 max-w-[1200px]">
-      <div className="flex items-center justify-between mb-6">
+    <div>
+      {/* ── Page Header ── */}
+      <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-2xl font-semibold text-white tracking-tight">Pipeline</h1>
-          <p className="text-sm text-neutral-400 mt-1">
+          <h1 className="text-[22px] font-semibold text-white tracking-tight">Pipeline</h1>
+          <p className="text-[13px] text-neutral-500 mt-0.5">
             {total} leads{readyCount > 0 && ` · ${readyCount} ready to send`}
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           {scanResult && (
-            <span className={`text-[12px] ${scanResult.startsWith("Error") ? "text-red-400" : "text-green-400"}`}>
+            <span className={`text-[12px] mr-2 ${scanResult.startsWith("Error") ? "text-red-400" : "text-emerald-400"}`}>
               {scanResult}
             </span>
           )}
           {selected.size > 0 && (
             <>
-              <span className="text-[12px] text-neutral-400">{selected.size} selected</span>
+              <span className="text-[12px] text-neutral-500">{selected.size} selected</span>
               <button
                 onClick={handleBatchSend}
                 disabled={batchSending}
-                className="flex items-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-[13px] font-medium text-white hover:bg-green-500 disabled:opacity-50 transition-colors"
+                className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-1.5 text-[13px] font-medium text-white hover:bg-emerald-500 disabled:opacity-50 transition-colors"
               >
-                {batchSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                {batchSending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
                 {batchSending ? "Sending..." : `Send ${selected.size}`}
               </button>
               <button
                 onClick={() => setSelected(new Set())}
-                className="text-[12px] text-neutral-400 hover:text-white transition-colors"
+                className="text-[12px] text-neutral-500 hover:text-white transition-colors px-2"
               >
                 Clear
               </button>
@@ -254,7 +255,7 @@ export default function PipelinePage() {
           {selected.size === 0 && readyCount > 0 && (
             <button
               onClick={selectAllReady}
-              className="rounded-lg border border-neutral-700 px-3 py-2 text-[12px] text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
+              className="rounded-lg border border-neutral-800 px-3 py-1.5 text-[12px] text-neutral-500 hover:text-white hover:border-neutral-600 transition-colors"
             >
               Select All Ready
             </button>
@@ -262,20 +263,20 @@ export default function PipelinePage() {
           <button
             onClick={handleScan}
             disabled={scanning}
-            className="flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-[13px] font-medium text-black hover:bg-neutral-200 disabled:opacity-50 transition-colors"
+            className="flex items-center gap-1.5 rounded-lg bg-white px-3.5 py-1.5 text-[13px] font-medium text-black hover:bg-neutral-200 disabled:opacity-50 transition-colors"
           >
             {scanning ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
             ) : (
-              <Zap className="h-4 w-4" />
+              <Zap className="h-3.5 w-3.5" />
             )}
             {scanning ? "Scanning..." : "Scan Now"}
           </button>
         </div>
       </div>
 
-      {/* Status Tabs */}
-      <div className="flex gap-1 mb-6 border-b border-neutral-800 pb-3">
+      {/* ── Status Tabs ── */}
+      <div className="flex gap-1 mb-6 border-b border-white/[0.06] pb-3">
         {STATUS_TABS.map((s) => (
           <button
             key={s}
@@ -315,7 +316,7 @@ export default function PipelinePage() {
             return (
               <div
                 key={lead.id}
-                className="rounded-xl border border-neutral-800 bg-neutral-900/50 overflow-hidden"
+                className="rounded-xl border border-white/[0.06] bg-white/[0.02] overflow-hidden"
               >
                 {/* Lead Header */}
                 <div

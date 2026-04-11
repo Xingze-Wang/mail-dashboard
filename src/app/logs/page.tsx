@@ -37,7 +37,7 @@ export default function LogsPage() {
     : events;
 
   return (
-    <div className="p-8 max-w-[1200px]">
+    <div>
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-semibold text-white tracking-tight">Logs</h1>

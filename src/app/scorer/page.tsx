@@ -95,7 +95,7 @@ export default function ScorerPage() {
 
   if (loading) {
     return (
-      <div className="p-8">
+      <div>
         <p className="text-neutral-500 animate-pulse">Loading scorer data...</p>
       </div>
     );
@@ -103,7 +103,7 @@ export default function ScorerPage() {
 
   if (error || !meta) {
     return (
-      <div className="p-8">
+      <div>
         <h1 className="text-2xl font-semibold text-white mb-4 flex items-center gap-2">
           <Brain className="h-6 w-6" />
           Scorer
