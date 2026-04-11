@@ -26,15 +26,19 @@ export interface SalesRep {
 // Round-robin counter (in-memory, resets on deploy — acceptable)
 let rrIndex = 0;
 
-/** Load assignment config from system_config table. */
+/** Load assignment config from system_config table. Falls back to defaults if table doesn't exist. */
 export async function getAssignmentConfig(): Promise<AssignmentConfig> {
-  const { data } = await supabase
-    .from("system_config")
-    .select("value")
-    .eq("key", "lead_assignment")
-    .single();
+  try {
+    const { data } = await supabase
+      .from("system_config")
+      .select("value")
+      .eq("key", "lead_assignment")
+      .single();
 
-  if (data?.value) return data.value as AssignmentConfig;
+    if (data?.value) return data.value as AssignmentConfig;
+  } catch {
+    // Table may not exist yet — use defaults
+  }
 
   return {
     strong_criteria: { min_h_index: 20, max_school_tier: 2, require_overseas: true },
@@ -42,27 +46,35 @@ export async function getAssignmentConfig(): Promise<AssignmentConfig> {
   };
 }
 
-/** Load a sales rep by ID. Returns null if not found or inactive. */
+/** Load a sales rep by ID. Returns null if not found, inactive, or table doesn't exist. */
 export async function getRep(id: number): Promise<SalesRep | null> {
-  const { data } = await supabase
-    .from("sales_reps")
-    .select("*")
-    .eq("id", id)
-    .eq("active", true)
-    .single();
+  try {
+    const { data } = await supabase
+      .from("sales_reps")
+      .select("*")
+      .eq("id", id)
+      .eq("active", true)
+      .single();
 
-  return data as SalesRep | null;
+    return data as SalesRep | null;
+  } catch {
+    return null;
+  }
 }
 
-/** Load all active sales reps. */
+/** Load all active sales reps. Returns empty array if table doesn't exist. */
 export async function getAllReps(): Promise<SalesRep[]> {
-  const { data } = await supabase
-    .from("sales_reps")
-    .select("*")
-    .eq("active", true)
-    .order("id");
+  try {
+    const { data } = await supabase
+      .from("sales_reps")
+      .select("*")
+      .eq("active", true)
+      .order("id");
 
-  return (data ?? []) as SalesRep[];
+    return (data ?? []) as SalesRep[];
+  } catch {
+    return [];
+  }
 }
 
 function isOverseas(email: string): boolean {
