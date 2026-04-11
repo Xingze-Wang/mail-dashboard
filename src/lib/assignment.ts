@@ -11,6 +11,7 @@ export interface AssignmentConfig {
   assignment: {
     strong: { rep_id: number };
     normal: { rep_ids: number[]; mode: "round_robin" };
+    overseas_override?: { enabled: boolean; rep_id: number };
   };
 }
 
@@ -42,7 +43,11 @@ export async function getAssignmentConfig(): Promise<AssignmentConfig> {
 
   return {
     strong_criteria: { min_h_index: 20, max_school_tier: 2, require_overseas: true },
-    assignment: { strong: { rep_id: 1 }, normal: { rep_ids: [1], mode: "round_robin" } },
+    assignment: {
+      strong: { rep_id: 1 },
+      normal: { rep_ids: [2], mode: "round_robin" },
+      overseas_override: { enabled: true, rep_id: 1 },
+    },
   };
 }
 
@@ -100,15 +105,27 @@ export function classifyLead(
   return "strong";
 }
 
-/** Pick the rep ID for a lead based on its tier and assignment config. */
+/** Pick the rep ID for a lead based on its tier, overseas status, and assignment config. */
 export function assignRep(
   config: AssignmentConfig,
   tier: "strong" | "normal",
+  authorEmail?: string,
 ): number {
+  // Strong leads always go to the strong rep
   if (tier === "strong") {
     return config.assignment.strong.rep_id;
   }
 
+  // Overseas override: all overseas leads go to designated rep
+  if (
+    authorEmail &&
+    config.assignment.overseas_override?.enabled &&
+    isOverseas(authorEmail)
+  ) {
+    return config.assignment.overseas_override.rep_id;
+  }
+
+  // Normal leads: round-robin
   const repIds = config.assignment.normal.rep_ids;
   if (repIds.length === 0) return config.assignment.strong.rep_id;
   if (repIds.length === 1) return repIds[0];

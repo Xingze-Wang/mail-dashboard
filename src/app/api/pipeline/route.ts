@@ -165,7 +165,7 @@ export async function POST(req: NextRequest) {
         schoolTier: lead.schoolTier,
         authorEmail: lead.authorEmail,
       });
-      const repId = assignRep(config, tier);
+      const repId = assignRep(config, tier, lead.authorEmail);
 
       // 3. Get rep info for draft generation
       const rep = await getRep(repId);

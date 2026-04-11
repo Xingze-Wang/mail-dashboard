@@ -30,12 +30,17 @@ interface AssignmentConfig {
   assignment: {
     strong: { rep_id: number };
     normal: { rep_ids: number[]; mode: "round_robin" };
+    overseas_override?: { enabled: boolean; rep_id: number };
   };
 }
 
 const DEFAULT_CONFIG: AssignmentConfig = {
   strong_criteria: { min_h_index: 20, max_school_tier: 2, require_overseas: true },
-  assignment: { strong: { rep_id: 1 }, normal: { rep_ids: [1], mode: "round_robin" } },
+  assignment: {
+    strong: { rep_id: 1 },
+    normal: { rep_ids: [2], mode: "round_robin" },
+    overseas_override: { enabled: true, rep_id: 1 },
+  },
 };
 
 const EMPTY_REP = { name: "", sender_email: "", sender_name: "", wechat_id: "" };
@@ -343,17 +348,89 @@ export default function SettingsPage() {
           </div>
         </div>
 
+        {/* Overseas override */}
+        <div className="grid grid-cols-2 gap-4 mb-5">
+          <div>
+            <label className="block text-[11px] font-medium text-neutral-500 mb-1.5">
+              Overseas Override
+            </label>
+            <select
+              value={config.assignment.overseas_override?.enabled ? "yes" : "no"}
+              onChange={(e) =>
+                setConfig({
+                  ...config,
+                  assignment: {
+                    ...config.assignment,
+                    overseas_override: {
+                      enabled: e.target.value === "yes",
+                      rep_id: config.assignment.overseas_override?.rep_id ?? config.assignment.strong.rep_id,
+                    },
+                  },
+                })
+              }
+              className="w-full rounded-lg border border-neutral-800 bg-white/[0.04] px-3 py-2 text-[13px] text-white focus:outline-none focus:border-neutral-600 transition-colors appearance-none"
+              style={{
+                backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%23737373' viewBox='0 0 16 16'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E")`,
+                backgroundRepeat: "no-repeat",
+                backgroundPosition: "right 12px center",
+              }}
+            >
+              <option value="yes">Yes — all overseas leads to one rep</option>
+              <option value="no">No — follow normal round-robin</option>
+            </select>
+          </div>
+
+          {config.assignment.overseas_override?.enabled && (
+            <div>
+              <label className="block text-[11px] font-medium text-neutral-500 mb-1.5">
+                Overseas → Rep
+              </label>
+              <select
+                value={config.assignment.overseas_override?.rep_id ?? ""}
+                onChange={(e) =>
+                  setConfig({
+                    ...config,
+                    assignment: {
+                      ...config.assignment,
+                      overseas_override: {
+                        enabled: true,
+                        rep_id: parseInt(e.target.value),
+                      },
+                    },
+                  })
+                }
+                className="w-full rounded-lg border border-neutral-800 bg-white/[0.04] px-3 py-2 text-[13px] text-white focus:outline-none focus:border-neutral-600 transition-colors appearance-none"
+                style={{
+                  backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%23737373' viewBox='0 0 16 16'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E")`,
+                  backgroundRepeat: "no-repeat",
+                  backgroundPosition: "right 12px center",
+                }}
+              >
+                {reps.filter((r) => r.active).map((r) => (
+                  <option key={r.id} value={r.id}>{r.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
+
         {/* Preview */}
         <div className="border-t border-neutral-800/50 pt-4 flex items-center justify-between">
-          <div className="flex gap-6 text-xs text-neutral-500">
+          <div className="flex flex-wrap gap-4 text-xs text-neutral-500">
             <span>
               Strong: h-index ≥ <strong className="text-neutral-400">{config.strong_criteria.min_h_index}</strong>,
-              school tier ≤ <strong className="text-neutral-400">{config.strong_criteria.max_school_tier}</strong>
-              {config.strong_criteria.require_overseas && ", overseas only"}
+              tier ≤ <strong className="text-neutral-400">{config.strong_criteria.max_school_tier}</strong>
               {" → "}<strong className="text-neutral-400">{reps.find((r) => r.id === config.assignment.strong.rep_id)?.name || "?"}</strong>
             </span>
+            {config.assignment.overseas_override?.enabled && (
+              <span>
+                Overseas → <strong className="text-neutral-400">
+                  {reps.find((r) => r.id === config.assignment.overseas_override?.rep_id)?.name || "?"}
+                </strong>
+              </span>
+            )}
             <span>
-              Normal: round-robin → <strong className="text-neutral-400">
+              Rest: round-robin → <strong className="text-neutral-400">
                 {config.assignment.normal.rep_ids.map((id) => reps.find((r) => r.id === id)?.name || "?").join(", ")}
               </strong>
             </span>

@@ -135,6 +135,32 @@ export async function POST() {
     `create index if not exists idx_brief_lookups_wechat on brief_lookups(added_wechat)`,
 
     // Scorer model metrics — stores training runs for dashboard visualization
+    // Sales reps
+    `create table if not exists sales_reps (
+      id serial primary key,
+      name text not null,
+      sender_email text not null,
+      sender_name text not null,
+      wechat_id text not null,
+      active boolean default true,
+      created_at timestamptz default now()
+    )`,
+
+    // System config (assignment rules etc.)
+    `create table if not exists system_config (
+      key text primary key,
+      value jsonb not null,
+      updated_at timestamptz default now()
+    )`,
+
+    // Add assignment columns to pipeline_leads if missing
+    `alter table pipeline_leads add column if not exists s2_author_id text`,
+    `alter table pipeline_leads add column if not exists h_index int`,
+    `alter table pipeline_leads add column if not exists citation_count int`,
+    `alter table pipeline_leads add column if not exists paper_count int`,
+    `alter table pipeline_leads add column if not exists lead_tier text default 'normal'`,
+    `alter table pipeline_leads add column if not exists assigned_rep_id int`,
+
     `create table if not exists scorer_runs (
       id text primary key default gen_random_uuid()::text,
       embedder text not null,
