@@ -95,7 +95,7 @@ async function ensureTable() {
 
 async function runScan() {
   await ensureTable();
-  const { leads, stats } = await scanArxiv({ maxPapers: 200, timeBudgetMs: 45000 });
+  const { leads, stats } = await scanArxiv({ maxPapers: 50, timeBudgetMs: 120000 });
   const config = await getAssignmentConfig();
   let leadsCreated = 0;
 
@@ -115,7 +115,7 @@ async function runScan() {
       schoolTier: lead.schoolTier,
       authorEmail: lead.authorEmail,
     });
-    const repId = assignRep(config, tier, lead.authorEmail);
+    const repId = assignRep(config, tier, lead.authorEmail, lead.matchedDirections);
 
     // 3. Get rep info for draft generation
     const rep = await getRep(repId);

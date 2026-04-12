@@ -12,68 +12,121 @@ export interface S2AuthorInfo {
   paperCount: number | null;
 }
 
+/** Check if all parts of name A appear in name B (handles name order differences) */
+function namesMatch(target: string, candidate: string): boolean {
+  const targetParts = target.toLowerCase().replace(/\s+/g, " ").trim().split(" ");
+  const candidateParts = candidate.toLowerCase().replace(/\s+/g, " ").trim().split(" ");
+  return targetParts.every((p) => candidateParts.some((c) => c === p));
+}
+
+/** Fetch author details by S2 author ID */
+async function fetchAuthorDetails(authorId: string): Promise<S2AuthorInfo | null> {
+  const res = await fetch(
+    `${S2_BASE}/author/${authorId}?fields=hIndex,citationCount,paperCount`,
+    { signal: AbortSignal.timeout(10_000) },
+  );
+  if (!res.ok) return null;
+  const data = await res.json();
+  return {
+    authorId,
+    hIndex: data.hIndex ?? null,
+    citationCount: data.citationCount ?? null,
+    paperCount: data.paperCount ?? null,
+  };
+}
+
 /**
- * Look up a paper on Semantic Scholar by title, then find the matching
- * author and return their h-index and citation count.
+ * Strategy 1: Search for the paper by title, then find the matching author.
+ * Works well for papers already indexed on S2.
+ */
+async function lookupViaPaper(
+  paperTitle: string,
+  authorName: string,
+): Promise<S2AuthorInfo | null> {
+  const query = encodeURIComponent(paperTitle.slice(0, 200));
+  const paperRes = await fetch(
+    `${S2_BASE}/paper/search?query=${query}&limit=3&fields=title,authors`,
+    { signal: AbortSignal.timeout(10_000) },
+  );
+
+  if (!paperRes.ok) return null;
+  const paperData = await paperRes.json();
+  const papers = paperData?.data ?? [];
+  if (papers.length === 0) return null;
+
+  for (const paper of papers) {
+    for (const author of paper.authors ?? []) {
+      if (namesMatch(authorName, author.name ?? "") && author.authorId) {
+        await sleep(S2_DELAY_MS);
+        return fetchAuthorDetails(author.authorId);
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Strategy 2: Search for the author directly by name.
+ * Handles cases where the paper is too new to be indexed but the author
+ * already has an S2 profile from previous publications.
+ */
+async function lookupViaAuthor(
+  authorName: string,
+): Promise<S2AuthorInfo | null> {
+  const query = encodeURIComponent(authorName);
+  const res = await fetch(
+    `${S2_BASE}/author/search?query=${query}&limit=5&fields=name,hIndex,citationCount,paperCount`,
+    { signal: AbortSignal.timeout(10_000) },
+  );
+
+  if (!res.ok) return null;
+  const data = await res.json();
+  const authors = data?.data ?? [];
+  if (authors.length === 0) return null;
+
+  // Find the best match: name must match AND prefer the one with highest h-index
+  // (common Chinese names like "Wei Zhang" may have many profiles)
+  let best: S2AuthorInfo | null = null;
+
+  for (const author of authors) {
+    if (!namesMatch(authorName, author.name ?? "")) continue;
+    const candidate: S2AuthorInfo = {
+      authorId: author.authorId,
+      hIndex: author.hIndex ?? null,
+      citationCount: author.citationCount ?? null,
+      paperCount: author.paperCount ?? null,
+    };
+    // Pick the profile with the highest h-index (most likely the right person
+    // for well-published researchers; for unknowns, any match is better than none)
+    if (!best || (candidate.hIndex ?? 0) > (best.hIndex ?? 0)) {
+      best = candidate;
+    }
+  }
+
+  return best;
+}
+
+/**
+ * Look up an author on Semantic Scholar and return their h-index and citation count.
  *
- * Returns null if paper not found, author not matched, or API error.
+ * Uses two strategies:
+ * 1. Search by paper title → find matching author (most precise)
+ * 2. Search by author name directly (fallback for papers not yet indexed)
+ *
+ * Returns null if both strategies fail.
  */
 export async function lookupAuthor(
   paperTitle: string,
   authorName: string,
 ): Promise<S2AuthorInfo | null> {
   try {
-    // Step 1: search for the paper by title
-    const query = encodeURIComponent(paperTitle.slice(0, 200));
-    const paperRes = await fetch(
-      `${S2_BASE}/paper/search?query=${query}&limit=3&fields=title,authors`,
-      { signal: AbortSignal.timeout(10_000) },
-    );
+    // Strategy 1: paper-based lookup (most precise)
+    const viaP = await lookupViaPaper(paperTitle, authorName);
+    if (viaP) return viaP;
 
-    if (!paperRes.ok) return null;
-    const paperData = await paperRes.json();
-    const papers = paperData?.data ?? [];
-    if (papers.length === 0) return null;
-
-    // Step 2: find matching author across results
-    const normalizedTarget = authorName.toLowerCase().replace(/\s+/g, " ").trim();
-    let matchedAuthorId: string | null = null;
-
-    for (const paper of papers) {
-      for (const author of paper.authors ?? []) {
-        const normalizedAuthor = (author.name ?? "").toLowerCase().replace(/\s+/g, " ").trim();
-        // Check if all parts of target name appear in author name (handles name order)
-        const targetParts = normalizedTarget.split(" ");
-        const authorParts = normalizedAuthor.split(" ");
-        const allPartsMatch = targetParts.every((p: string) =>
-          authorParts.some((a: string) => a === p),
-        );
-        if (allPartsMatch && author.authorId) {
-          matchedAuthorId = author.authorId;
-          break;
-        }
-      }
-      if (matchedAuthorId) break;
-    }
-
-    if (!matchedAuthorId) return null;
-
-    // Step 3: fetch author details
+    // Strategy 2: direct author search (fallback for fresh papers)
     await sleep(S2_DELAY_MS);
-    const authorRes = await fetch(
-      `${S2_BASE}/author/${matchedAuthorId}?fields=hIndex,citationCount,paperCount`,
-      { signal: AbortSignal.timeout(10_000) },
-    );
-
-    if (!authorRes.ok) return null;
-    const authorData = await authorRes.json();
-
-    return {
-      authorId: matchedAuthorId,
-      hIndex: authorData.hIndex ?? null,
-      citationCount: authorData.citationCount ?? null,
-      paperCount: authorData.paperCount ?? null,
-    };
+    return await lookupViaAuthor(authorName);
   } catch {
     return null;
   }

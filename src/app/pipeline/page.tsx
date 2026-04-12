@@ -12,11 +12,12 @@ import {
   ChevronDown,
   ChevronUp,
   Pencil,
-  BarChart3,
-  TrendingUp,
-  MessageCircle,
   Search,
   X,
+  User,
+  GraduationCap,
+  FileText,
+  Mail,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
@@ -146,6 +147,74 @@ function shortDate(dateStr: string | null) {
 
 // ─── Filter tabs ────────────────────────────────────────────────────────────
 
+const RESEARCH_CATEGORIES = [
+  "具身智能/机器人", "多模态/视觉生成", "Agent/自动化", "推理/架构优化",
+  "AI安全", "语音/音频", "科学计算/生物", "推理/符号", "其他",
+];
+
+const SUPPORTED_DIRECTIONS_MAP: Record<string, string[]> = {
+  "具身智能/机器人": [
+    "具身导航感知", "多模态具身大模型", "模块化力控关节",
+    "场景孪生仿真", "工业具身模仿学习", "自动驾驶",
+    "世界模型+VLA", "连续体机械臂", "端侧机器人推理",
+    "视频策略表征", "1 bit 量化VLA模型",
+    "长程灵巧操作", "具身3D空间理解",
+    "化工精密操作机器人", "实验室语音交互机器人",
+    "多模态无人机交互", "农业场景具身模型",
+  ],
+  "多模态/视觉生成": [
+    "笔触引导生成", "动漫视频生成", "4D重建生成", "3D资产生成",
+    "3D视频生成", "视觉自回归模型", "端到端像素生成", "多阶段视频生成",
+    "多模态世界模型", "长上下文多模态模型", "能量模型图像生成", "低显存实时3D重建",
+    "通用世界模拟模型", "沉浸式场景生成模型", "潜空间图像编码",
+  ],
+  "Agent/自动化": [
+    "长程推理引擎", "Agent操作系统", "Agentic Browser",
+    "Coding Agent", "端云协同Agent", "GUI Agent RL",
+    "AI4S Agent", "AI原生操作系统", "AI SaaS全栈开发",
+    "多模态情绪模型",
+  ],
+  "推理/架构优化": [
+    "分布式推理架构", "稀疏注意力", "推理框架（MoonCake等）", "跨模态推理架构",
+    "隐空间推理", "推理加速框架", "硬件感知优化", "量子启发压缩",
+    "增强模型泛化能力的SFT相关研究", "语言模型", "高效训练推理框架（Mooncake等）",
+    "LLM生成-评测对齐", "类脑AI端侧处理",
+  ],
+  "AI安全": ["多模态内容解析", "AI Hacker"],
+  "语音/音频": ["实时AI变声", "AI Native视频压缩算法"],
+  "科学计算/生物": [
+    "细胞分析算法", "蛋白功能大模型", "原子级材料模型", "物理偏置分子建模",
+    "高频波函数求解", "基于机器学习的物理仿真", "化学材料大模型",
+    "电镜数据分析模型", "多肽药物发现", "几何深度学习",
+    "RNA药物智能设计", "AI免疫编程", "量子纠错混合训练",
+    "量子硬件神经网络纠错",
+  ],
+  "推理/符号": [
+    "神经符号大模型", "数学推理模型", "金融大模型", "非欧空间表征模型",
+    "表格结构化基础模型",
+  ],
+  "其他": ["工业设计Agent", "段级强化学习", "RL动态重排序"],
+};
+
+// Build reverse lookup: sub-direction -> parent category
+const SUB_TO_CATEGORY: Record<string, string> = {};
+for (const [category, subs] of Object.entries(SUPPORTED_DIRECTIONS_MAP)) {
+  for (const sub of subs) {
+    SUB_TO_CATEGORY[sub] = category;
+  }
+}
+
+function getLeadCategories(matchedDirections: string | null): string[] {
+  if (!matchedDirections) return [];
+  const subs = matchedDirections.split(",").map((s) => s.trim());
+  const categories = new Set<string>();
+  for (const sub of subs) {
+    const cat = SUB_TO_CATEGORY[sub];
+    if (cat) categories.add(cat);
+  }
+  return [...categories];
+}
+
 const STATUS_FILTERS = [
   { key: "all", label: "All" },
   { key: "ready", label: "Ready" },
@@ -167,6 +236,8 @@ export default function PipelinePage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [tierFilter, setTierFilter] = useState("all");
   const [repFilter, setRepFilter] = useState("all");
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [dateRange, setDateRange] = useState<"today" | "week" | "all">("today");
   const [searchQuery, setSearchQuery] = useState("");
   const [scanning, setScanning] = useState(false);
   const [scanResult, setScanResult] = useState<string | null>(null);
@@ -185,10 +256,11 @@ export default function PipelinePage() {
 
   const fetchLeads = useCallback(() => {
     setLoading(true);
-    const params = new URLSearchParams({ limit: "100" });
+    const params = new URLSearchParams({ limit: "200" });
     if (statusFilter !== "all") params.set("status", statusFilter);
     if (tierFilter !== "all") params.set("tier", tierFilter);
     if (repFilter !== "all") params.set("rep_id", repFilter);
+    if (dateRange !== "all") params.set("date", dateRange);
 
     fetch(`/api/pipeline?${params}`)
       .then((res) => res.json())
@@ -198,7 +270,7 @@ export default function PipelinePage() {
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [statusFilter, tierFilter, repFilter]);
+  }, [statusFilter, tierFilter, repFilter, dateRange]);
 
   useEffect(() => { fetchLeads(); }, [fetchLeads]);
 
@@ -210,27 +282,34 @@ export default function PipelinePage() {
   }, []);
 
   useEffect(() => {
-    if (activeTab !== "leads") {
-      fetch("/api/pipeline/analytics")
-        .then((r) => r.json())
-        .then(setAnalytics)
-        .catch(console.error);
-    }
+    fetch("/api/pipeline/analytics")
+      .then((r) => r.json())
+      .then(setAnalytics)
+      .catch(console.error);
   }, [activeTab]);
 
   // ── Filtered leads (client-side search) ──
 
   const filteredLeads = useMemo(() => {
-    if (!searchQuery.trim()) return leads;
-    const q = searchQuery.toLowerCase();
-    return leads.filter(
-      (l) =>
-        l.title.toLowerCase().includes(q) ||
-        l.authorName?.toLowerCase().includes(q) ||
-        l.authorEmail.toLowerCase().includes(q) ||
-        l.schoolName?.toLowerCase().includes(q),
-    );
-  }, [leads, searchQuery]);
+    let result = leads;
+
+    if (categoryFilter !== "all") {
+      result = result.filter((l) => getLeadCategories(l.matchedDirections).includes(categoryFilter));
+    }
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter(
+        (l) =>
+          l.title.toLowerCase().includes(q) ||
+          l.authorName?.toLowerCase().includes(q) ||
+          l.authorEmail.toLowerCase().includes(q) ||
+          l.schoolName?.toLowerCase().includes(q),
+      );
+    }
+
+    return result;
+  }, [leads, searchQuery, categoryFilter]);
 
   // ── Batch stats ──
 
@@ -380,7 +459,9 @@ export default function PipelinePage() {
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-baseline gap-3">
           <h1 className="text-2xl font-semibold tracking-tight">Pipeline</h1>
-          <span className="text-base text-neutral-500 font-normal">{total || filteredLeads.length} leads</span>
+          <span className="text-base text-neutral-500 font-normal">
+            {total || filteredLeads.length} leads{dateRange === "today" ? " today" : dateRange === "week" ? " this week" : ""}
+          </span>
         </div>
         <div className="flex items-center gap-2">
           {scanResult && (
@@ -430,55 +511,98 @@ export default function PipelinePage() {
       {/* ═══════════════ LEADS TAB ═══════════════ */}
       {activeTab === "leads" && (
         <>
+          {/* ── h-index Distribution (inline mini chart) ── */}
+          {analytics && analytics.channels.hIndexDist.some((b) => b.count > 0) && (
+            <div className="rounded-xl border border-neutral-800 bg-neutral-900/50 p-4 mb-4">
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-[13px] font-semibold">h-index Distribution</p>
+                <div className="flex items-center gap-4 text-xs text-neutral-500">
+                  <span>Avg: <strong className="text-white font-semibold">{analytics.channels.avgHIndex}</strong></span>
+                  <span>Total: <strong className="text-neutral-400 font-semibold">{analytics.channels.totalLeads}</strong></span>
+                  <span className="text-orange-400">{analytics.channels.strongLeads} strong</span>
+                </div>
+              </div>
+              <ResponsiveContainer width="100%" height={100}>
+                <BarChart data={analytics.channels.hIndexDist}>
+                  <XAxis dataKey="min" stroke="#525252" tick={{ fontSize: 9 }} tickFormatter={(v: number) => `${v}`} />
+                  <YAxis stroke="#525252" tick={{ fontSize: 9 }} width={24} />
+                  <Tooltip
+                    contentStyle={{ backgroundColor: "#171717", border: "1px solid #333", borderRadius: "8px", fontSize: "11px" }}
+                    formatter={(value) => [String(value), "Leads"]}
+                    labelFormatter={(min) => {
+                      const bucket = analytics.channels.hIndexDist.find((b) => b.min === Number(min));
+                      return bucket?.max ? `h-index ${min}–${bucket.max}` : `h-index ${min}+`;
+                    }}
+                  />
+                  <Bar dataKey="count" fill="rgba(59,130,246,0.5)" radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
           {/* ── Batch Banner ── */}
           {batchLeads.length > 0 && statusFilter !== "sent" && statusFilter !== "skipped" && statusFilter !== "replied" && (
-            <div className="rounded-xl border border-neutral-800 bg-neutral-900/50 p-5 mb-5 flex items-center gap-5">
-              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500/15 to-purple-500/15 flex items-center justify-center shrink-0">
-                <Send className="h-5 w-5 text-blue-400" />
+            <div className="rounded-xl border border-neutral-800 bg-neutral-900/50 p-4 mb-4 flex items-center gap-4">
+              <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500/15 to-purple-500/15 flex items-center justify-center shrink-0">
+                <Send className="h-4 w-4 text-blue-400" />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-[15px] font-semibold tracking-tight mb-1">
-                  Today&apos;s Batch &mdash; {batchLeads.length} leads ready to send
+                <p className="text-[13px] font-semibold tracking-tight">
+                  {dateRange === "today" ? "Today\u2019s Batch" : dateRange === "week" ? "This Week"  : "All Leads"} &mdash; {batchLeads.length} ready to send
                 </p>
-                <div className="flex items-center gap-4 text-xs text-neutral-500">
-                  <span className="flex items-center gap-1.5">
+                <div className="flex items-center gap-3 text-[11px] text-neutral-500 mt-0.5">
+                  <span className="flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-orange-400" />
                     {batchStrong} strong
                   </span>
-                  <span className="flex items-center gap-1.5">
+                  <span className="flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
                     {batchNormal} normal
                   </span>
+                  {batchByRep.map(([name, count]) => (
+                    <span key={name} className="text-neutral-600">
+                      {name}: {count}
+                    </span>
+                  ))}
                 </div>
-                {batchByRep.length > 0 && (
-                  <div className="flex gap-2 mt-2">
-                    {batchByRep.map(([name, count]) => (
-                      <span key={name} className="text-[11px] text-neutral-500 bg-white/[0.03] rounded-md px-2 py-0.5">
-                        {name}: <strong className="text-neutral-400 font-semibold">{count}</strong>
-                      </span>
-                    ))}
-                  </div>
-                )}
               </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <button
-                  onClick={handleBatchSend}
-                  disabled={batchSending}
-                  className="flex items-center gap-2 rounded-xl bg-green-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-green-500 disabled:opacity-50 transition-all hover:-translate-y-px hover:shadow-lg hover:shadow-green-500/20"
-                >
-                  {batchSending ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Send className="h-4 w-4" />
-                  )}
-                  {batchSending ? "Sending..." : `Approve & Send All (${batchLeads.length})`}
-                </button>
-              </div>
+              <button
+                onClick={handleBatchSend}
+                disabled={batchSending}
+                className="flex items-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-[13px] font-semibold text-white hover:bg-green-500 disabled:opacity-50 transition-all shrink-0"
+              >
+                {batchSending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                {batchSending ? "Sending..." : `Send All (${batchLeads.length})`}
+              </button>
             </div>
           )}
 
           {/* ── Filter Bar ── */}
           <div className="flex items-center gap-2 mb-4 flex-wrap">
+            {/* Date range */}
+            <div className="flex bg-white/[0.04] rounded-lg p-0.5">
+              {([
+                { key: "today", label: "Today" },
+                { key: "week", label: "This Week" },
+                { key: "all", label: "All Time" },
+              ] as const).map((f) => (
+                <button
+                  key={f.key}
+                  onClick={() => setDateRange(f.key)}
+                  className={`rounded-md px-3 py-[5px] text-xs font-medium transition-colors ${
+                    dateRange === f.key
+                      ? "bg-neutral-800 text-white"
+                      : "text-neutral-500 hover:text-neutral-300"
+                  }`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="w-px h-5 bg-neutral-800" />
+
+            {/* Status filter */}
             <div className="flex bg-white/[0.04] rounded-lg p-0.5">
               {STATUS_FILTERS.map((f) => (
                 <button
@@ -526,6 +650,22 @@ export default function PipelinePage() {
               ))}
             </select>
 
+            <select
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value)}
+              className="rounded-lg border border-neutral-800 bg-white/[0.04] px-3 py-[5px] text-xs text-neutral-400 appearance-none pr-7"
+              style={{
+                backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%23737373' viewBox='0 0 16 16'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E")`,
+                backgroundRepeat: "no-repeat",
+                backgroundPosition: "right 10px center",
+              }}
+            >
+              <option value="all">All Categories</option>
+              {RESEARCH_CATEGORIES.map((cat) => (
+                <option key={cat} value={cat}>{cat}</option>
+              ))}
+            </select>
+
             <div className="flex-1" />
 
             <div className="relative">
@@ -540,16 +680,20 @@ export default function PipelinePage() {
             </div>
           </div>
 
-          {/* ── Lead List ── */}
+          {/* ── Lead List (Person-Centric) ── */}
           {loading ? (
             <div className="text-center text-sm text-neutral-500 animate-pulse py-16">Loading...</div>
           ) : filteredLeads.length === 0 ? (
             <div className="text-center py-16">
               <Zap className="h-8 w-8 mx-auto mb-3 text-neutral-700" />
               <p className="text-sm text-neutral-500">
-                {statusFilter === "all"
-                  ? 'No leads yet. Click "Scan arXiv" to find papers.'
-                  : `No ${statusFilter} leads.`}
+                {dateRange === "today"
+                  ? 'No leads discovered today. Click "Scan arXiv" to run a scan.'
+                  : dateRange === "week"
+                    ? "No leads this week."
+                    : statusFilter === "all"
+                      ? 'No leads yet. Click "Scan arXiv" to find papers.'
+                      : `No ${statusFilter} leads.`}
               </p>
             </div>
           ) : (
@@ -560,58 +704,93 @@ export default function PipelinePage() {
                 const isEditing = editing === lead.id;
                 const isExcluded = excluded.has(lead.id);
                 const directions = lead.matchedDirections?.split(",").filter(Boolean) || [];
-                // Draft HTML is sanitized with DOMPurify before rendering
                 const sanitized = lead.draftHtml ? sanitizeHtml(lead.draftHtml) : "";
+                const isNew = lead.status === "new" || lead.status === "ready";
 
                 return (
                   <div
                     key={lead.id}
-                    className={`rounded-xl border border-neutral-800 bg-neutral-900/50 transition-all ${
-                      isExcluded ? "opacity-40 border-transparent" : "hover:bg-neutral-800/40"
+                    className={`rounded-xl border transition-all ${
+                      isExcluded
+                        ? "opacity-40 border-transparent bg-neutral-900/50"
+                        : isNew
+                          ? "border-blue-500/20 bg-neutral-900/50 hover:bg-neutral-800/40"
+                          : "border-neutral-800 bg-neutral-900/50 hover:bg-neutral-800/40"
                     }`}
                   >
-                    {/* Lead Header */}
+                    {/* ── Lead-Centric Header ── */}
                     <div
-                      className="flex items-start gap-3 px-[18px] py-3.5 cursor-pointer"
+                      className="flex items-start gap-3.5 px-[18px] py-3.5 cursor-pointer"
                       onClick={() => setExpanded(isExpanded ? null : lead.id)}
                     >
-                      {/* Left: badges + title + meta + tags */}
+                      {/* Paper Icon */}
+                      <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
+                        lead.leadTier === "strong"
+                          ? "bg-orange-500/15"
+                          : "bg-white/[0.06]"
+                      }`}>
+                        <FileText className={`h-4 w-4 ${
+                          lead.leadTier === "strong" ? "text-orange-400" : "text-neutral-500"
+                        }`} />
+                      </div>
+
+                      {/* Main info */}
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1 flex-wrap">
-                          {statusFilter === "all" && (
-                            <span className={`inline-flex items-center rounded-full px-2 py-px text-[10px] font-semibold uppercase tracking-wide ${statusBadgeClass(lead.status)}`}>
-                              {lead.status}
-                            </span>
-                          )}
-                          {lead.computeLevel && (
-                            <span className={`inline-flex items-center rounded-full px-2 py-px text-[10px] font-semibold uppercase tracking-wide ${computeBadgeClass(lead.computeLevel)}`}>
-                              {lead.computeLevel}
-                            </span>
-                          )}
-                          {lead.leadTier && (
-                            <span className={`inline-flex items-center rounded-full px-2 py-px text-[10px] font-semibold uppercase tracking-wide ${tierBadgeClass(lead.leadTier)}`}>
-                              {lead.leadTier}
-                            </span>
-                          )}
+                        {/* Row 1: Paper title + badges */}
+                        <div className="flex items-start gap-2 mb-0.5">
+                          <h3 className="text-[13px] font-semibold text-white leading-snug line-clamp-1 flex-1">
+                            {lead.title}
+                          </h3>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {lead.leadTier === "strong" && (
+                              <span className="inline-flex items-center rounded-full px-1.5 py-px text-[9px] font-bold uppercase tracking-wider bg-orange-500/15 text-orange-400">
+                                Strong
+                              </span>
+                            )}
+                            {statusFilter === "all" && (
+                              <span className={`inline-flex items-center rounded-full px-1.5 py-px text-[9px] font-semibold uppercase tracking-wider ${statusBadgeClass(lead.status)}`}>
+                                {lead.status}
+                              </span>
+                            )}
+                            {lead.computeLevel && lead.computeLevel !== "none" && (
+                              <span className={`inline-flex items-center rounded-full px-1.5 py-px text-[9px] font-semibold uppercase tracking-wider ${computeBadgeClass(lead.computeLevel)}`}>
+                                {lead.computeLevel}
+                              </span>
+                            )}
+                          </div>
                         </div>
 
-                        <h3 className="text-[13px] font-medium text-white leading-snug mb-1 line-clamp-1">
-                          {lead.title}
-                        </h3>
-
-                        <div className="flex items-center gap-3 text-[11px] text-neutral-500 flex-wrap">
-                          <span>{lead.authorName || "Unknown"} · {lead.authorEmail}</span>
-                          {lead.schoolName && <span>{lead.schoolName}</span>}
-                          <span>{shortDate(lead.publishedAt || lead.createdAt)}</span>
-                          {lead.sentAt && (
-                            <span className="text-green-500">Sent {shortDate(lead.sentAt)}</span>
+                        {/* Row 2: Author + School + metrics */}
+                        <div className="flex items-center gap-3 text-[11px] text-neutral-500 mb-1">
+                          <span className="flex items-center gap-1 font-medium text-neutral-300">
+                            <User className="h-3 w-3" />
+                            {lead.authorName || "Unknown"}
+                          </span>
+                          {lead.schoolName && (
+                            <span className="flex items-center gap-1">
+                              <GraduationCap className="h-3 w-3" />
+                              {lead.schoolName}
+                              {lead.schoolTier !== null && lead.schoolTier <= 2 && (
+                                <span className="text-[9px] text-amber-500 font-semibold ml-0.5">T{lead.schoolTier}</span>
+                              )}
+                            </span>
                           )}
+                          {lead.hIndex !== null && (
+                            <span className="font-medium">
+                              h: <strong className="text-white font-semibold">{lead.hIndex}</strong>
+                            </span>
+                          )}
+                          {lead.citationCount !== null && lead.citationCount > 0 && (
+                            <span>{lead.citationCount.toLocaleString()} cit.</span>
+                          )}
+                          <span className="text-neutral-600">{shortDate(lead.publishedAt || lead.createdAt)}</span>
                         </div>
 
+                        {/* Row 3: Research directions */}
                         {directions.length > 0 && (
-                          <div className="flex gap-1 mt-1.5 flex-wrap">
+                          <div className="flex gap-1 flex-wrap">
                             {directions.map((d) => (
-                              <span key={d} className="rounded bg-white/[0.05] px-1.5 py-px text-[10px] text-neutral-500">
+                              <span key={d} className="rounded bg-blue-500/10 px-1.5 py-px text-[10px] text-blue-400/80">
                                 {d}
                               </span>
                             ))}
@@ -619,19 +798,8 @@ export default function PipelinePage() {
                         )}
                       </div>
 
-                      {/* Right: h-index, citations, rep dropdown, send/exclude */}
-                      <div className="flex items-center gap-2.5 shrink-0 pt-0.5">
-                        {lead.hIndex !== null && (
-                          <span className="text-[11px] text-neutral-500 bg-white/[0.04] rounded px-1.5 py-0.5">
-                            h: <strong className="text-neutral-400 font-semibold">{lead.hIndex}</strong>
-                          </span>
-                        )}
-                        {lead.citationCount !== null && lead.citationCount > 0 && (
-                          <span className="text-[11px] text-neutral-500 bg-white/[0.04] rounded px-1.5 py-0.5">
-                            cit: <strong className="text-neutral-400 font-semibold">{lead.citationCount.toLocaleString()}</strong>
-                          </span>
-                        )}
-
+                      {/* Right: actions */}
+                      <div className="flex items-center gap-2 shrink-0 pt-0.5">
                         {!sendCheck.ok && sendCheck.availableIn && (
                           <span className="inline-flex items-center gap-1 text-[11px] text-amber-400">
                             <Clock className="h-3 w-3" />
@@ -694,39 +862,81 @@ export default function PipelinePage() {
                       </div>
                     </div>
 
-                    {/* Expanded Detail */}
+                    {/* ── Expanded: Person Detail ── */}
                     {isExpanded && (
                       <div className="border-t border-neutral-800">
-                        {lead.abstract && (
-                          <div className="px-[18px] py-3 border-b border-neutral-800/50">
-                            <p className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wider mb-1">Abstract</p>
-                            <p className="text-xs text-neutral-400 leading-relaxed">
-                              {lead.abstract.slice(0, 400)}{lead.abstract.length > 400 ? "..." : ""}
-                            </p>
-                            {lead.pdfUrl && (
+                        {/* Person profile summary */}
+                        <div className="px-[18px] py-3.5 grid grid-cols-[1fr_1fr] gap-x-8 gap-y-2 border-b border-neutral-800/50">
+                          <div>
+                            <p className="text-[10px] font-semibold text-neutral-600 uppercase tracking-wider mb-0.5">Contact</p>
+                            <p className="text-xs text-neutral-300">{lead.authorEmail}</p>
+                          </div>
+                          <div>
+                            <p className="text-[10px] font-semibold text-neutral-600 uppercase tracking-wider mb-0.5">Semantic Scholar</p>
+                            {lead.s2AuthorId ? (
                               <a
-                                href={lead.pdfUrl}
+                                href={`https://www.semanticscholar.org/author/${lead.s2AuthorId}`}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1 mt-2 text-[11px] text-blue-400 hover:text-blue-300"
+                                className="inline-flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300"
                               >
-                                <ExternalLink className="h-3 w-3" />
-                                View on arXiv
+                                Profile <ExternalLink className="h-2.5 w-2.5" />
                               </a>
+                            ) : (
+                              <p className="text-xs text-neutral-600">Not found</p>
                             )}
+                          </div>
+                          {lead.hIndex !== null && (
+                            <div>
+                              <p className="text-[10px] font-semibold text-neutral-600 uppercase tracking-wider mb-0.5">h-index</p>
+                              <p className="text-lg font-bold text-white tracking-tight">{lead.hIndex}</p>
+                            </div>
+                          )}
+                          {lead.citationCount !== null && (
+                            <div>
+                              <p className="text-[10px] font-semibold text-neutral-600 uppercase tracking-wider mb-0.5">Total Citations</p>
+                              <p className="text-lg font-bold text-white tracking-tight">{lead.citationCount.toLocaleString()}</p>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Paper / compute context */}
+                        {lead.abstract && (
+                          <div className="px-[18px] py-3 border-b border-neutral-800/50">
+                            <div className="flex items-center gap-2 mb-1">
+                              <p className="text-[10px] font-semibold text-neutral-600 uppercase tracking-wider">Latest Paper</p>
+                              {lead.pdfUrl && (
+                                <a
+                                  href={lead.pdfUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 text-[10px] text-blue-400 hover:text-blue-300"
+                                >
+                                  arXiv <ExternalLink className="h-2.5 w-2.5" />
+                                </a>
+                              )}
+                            </div>
+                            <p className="text-xs text-neutral-300 font-medium mb-1">{lead.title}</p>
+                            <p className="text-[11px] text-neutral-500 leading-relaxed">
+                              {lead.abstract.slice(0, 400)}{lead.abstract.length > 400 ? "..." : ""}
+                            </p>
                           </div>
                         )}
 
                         {lead.computeReason && (
                           <div className="px-[18px] py-3 border-b border-neutral-800/50">
-                            <p className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wider mb-1">Why Compute</p>
+                            <p className="text-[10px] font-semibold text-neutral-600 uppercase tracking-wider mb-1">Compute Signal</p>
                             <p className="text-xs text-neutral-400">{lead.computeReason}</p>
                           </div>
                         )}
 
-                        <div className="px-[18px] py-4">
+                        {/* Email draft section */}
+                        <div className="px-[18px] py-3">
                           <div className="flex items-center justify-between mb-2">
-                            <p className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wider">Email Draft</p>
+                            <p className="flex items-center gap-1.5 text-[11px] font-semibold text-neutral-500 uppercase tracking-wider">
+                              <Mail className="h-3 w-3" />
+                              Email Draft
+                            </p>
                             <div className="flex gap-2">
                               {lead.status === "ready" && !isEditing && (
                                 <button
@@ -797,6 +1007,12 @@ export default function PipelinePage() {
                             <p className="text-xs text-neutral-500 italic">No draft generated yet</p>
                           )}
                         </div>
+
+                        {lead.sentAt && (
+                          <div className="px-[18px] py-2 border-t border-neutral-800/50 text-[11px] text-green-500">
+                            Sent {shortDate(lead.sentAt)}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

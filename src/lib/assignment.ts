@@ -1,6 +1,7 @@
 // Lead classification (strong/normal) and sales rep assignment
 
 import { supabase } from "@/lib/db";
+import { SUPPORTED_DIRECTIONS } from "@/lib/scanner-config";
 
 export interface AssignmentConfig {
   strong_criteria: {
@@ -12,6 +13,11 @@ export interface AssignmentConfig {
     strong: { rep_id: number };
     normal: { rep_ids: number[]; mode: "round_robin" };
     overseas_override?: { enabled: boolean; rep_id: number };
+    category_routing?: {
+      enabled: boolean;
+      // Maps category name -> rep_id
+      routes: Record<string, number>;
+    };
   };
 }
 
@@ -47,6 +53,20 @@ export async function getAssignmentConfig(): Promise<AssignmentConfig> {
       strong: { rep_id: 1 },
       normal: { rep_ids: [2], mode: "round_robin" },
       overseas_override: { enabled: true, rep_id: 1 },
+      category_routing: {
+        enabled: true,
+        routes: {
+          "具身智能/机器人": 1,
+          "多模态/视觉生成": 1,
+          "推理/架构优化": 1,
+          "AI安全": 1,
+          "Agent/自动化": 2,
+          "科学计算/生物": 2,
+          "推理/符号": 2,
+          "语音/音频": 2,
+          "其他": 2,
+        },
+      },
     },
   };
 }
@@ -82,6 +102,34 @@ export async function getAllReps(): Promise<SalesRep[]> {
   }
 }
 
+/** Resolve an array of matched sub-directions to their parent category.
+ *  If multiple categories match, pick the one with the most hits.
+ *  Returns null if no sub-direction matches any category. */
+export function resolveCategory(matchedDirections: string[]): string | null {
+  if (!matchedDirections || matchedDirections.length === 0) return null;
+
+  const counts: Record<string, number> = {};
+  for (const dir of matchedDirections) {
+    const trimmed = dir.trim();
+    if (!trimmed) continue;
+    for (const [category, subs] of Object.entries(SUPPORTED_DIRECTIONS)) {
+      if (subs.includes(trimmed)) {
+        counts[category] = (counts[category] || 0) + 1;
+      }
+    }
+  }
+
+  let best: string | null = null;
+  let bestCount = 0;
+  for (const [cat, count] of Object.entries(counts)) {
+    if (count > bestCount) {
+      best = cat;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
 function isOverseas(email: string): boolean {
   const domain = email.split("@").pop()?.toLowerCase() ?? "";
   return !domain.endsWith(".cn");
@@ -105,15 +153,25 @@ export function classifyLead(
   return "strong";
 }
 
-/** Pick the rep ID for a lead based on its tier, overseas status, and assignment config. */
+/** Pick the rep ID for a lead based on its tier, overseas status, category, and assignment config. */
 export function assignRep(
   config: AssignmentConfig,
   tier: "strong" | "normal",
   authorEmail?: string,
+  matchedDirections?: string[],
 ): number {
   // Strong leads always go to the strong rep
   if (tier === "strong") {
     return config.assignment.strong.rep_id;
+  }
+
+  // Category routing: resolve lead's category and route to owning rep
+  const catRouting = config.assignment.category_routing;
+  if (catRouting?.enabled && matchedDirections && matchedDirections.length > 0) {
+    const category = resolveCategory(matchedDirections);
+    if (category && category in catRouting.routes) {
+      return catRouting.routes[category];
+    }
   }
 
   // Overseas override: all overseas leads go to designated rep

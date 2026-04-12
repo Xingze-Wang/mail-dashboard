@@ -8,11 +8,28 @@ import {
   classifyLead,
   assignRep,
   getRep,
+  resolveCategory,
 } from "@/lib/assignment";
 
 // ─── Shared field mapper ────────────────────────────────────────────────────
 
+/** Parse matched_directions from DB (may be JSON array string or comma-separated). */
+function parseDirections(raw: unknown): string[] {
+  if (!raw || typeof raw !== "string") return [];
+  const trimmed = raw.trim();
+  if (trimmed.startsWith("[")) {
+    try {
+      const arr = JSON.parse(trimmed);
+      return Array.isArray(arr) ? arr.map(String) : [];
+    } catch {
+      // fall through to comma split
+    }
+  }
+  return trimmed.split(",").map((s: string) => s.trim()).filter(Boolean);
+}
+
 function mapLead(l: Record<string, unknown>) {
+  const directions = parseDirections(l.matched_directions);
   return {
     id: l.id,
     arxivId: l.arxiv_id,
@@ -30,6 +47,7 @@ function mapLead(l: Record<string, unknown>) {
     computeConfidence: l.compute_confidence,
     computeReason: l.compute_reason,
     matchedDirections: l.matched_directions,
+    category: resolveCategory(directions),
     draftSubject: l.draft_subject,
     draftHtml: l.draft_html,
     status: l.status,
@@ -53,6 +71,8 @@ export async function GET(req: NextRequest) {
   const status = searchParams.get("status");
   const tier = searchParams.get("tier");
   const repId = searchParams.get("rep_id");
+  const category = searchParams.get("category");
+  const dateRange = searchParams.get("date"); // "today" | "week" | "all"
   const offset = (page - 1) * limit;
 
   let query = supabase
@@ -77,15 +97,34 @@ export async function GET(req: NextRequest) {
     query = query.eq("assigned_rep_id", parseInt(repId));
     countQuery = countQuery.eq("assigned_rep_id", parseInt(repId));
   }
+  if (dateRange === "today") {
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    query = query.gte("created_at", todayStart.toISOString());
+    countQuery = countQuery.gte("created_at", todayStart.toISOString());
+  } else if (dateRange === "week") {
+    const weekAgo = new Date();
+    weekAgo.setDate(weekAgo.getDate() - 7);
+    weekAgo.setHours(0, 0, 0, 0);
+    query = query.gte("created_at", weekAgo.toISOString());
+    countQuery = countQuery.gte("created_at", weekAgo.toISOString());
+  }
 
   const [{ data: leads }, { count: total }] = await Promise.all([
     query,
     countQuery,
   ]);
 
+  let mapped = (leads || []).map(mapLead);
+
+  // Client-side category filter (category is derived, not a DB column)
+  if (category) {
+    mapped = mapped.filter((l) => l.category === category);
+  }
+
   return NextResponse.json({
-    leads: (leads || []).map(mapLead),
-    total: total || 0,
+    leads: mapped,
+    total: category ? mapped.length : (total || 0),
     page,
     limit,
   });
@@ -165,7 +204,7 @@ export async function POST(req: NextRequest) {
         schoolTier: lead.schoolTier,
         authorEmail: lead.authorEmail,
       });
-      const repId = assignRep(config, tier, lead.authorEmail);
+      const repId = assignRep(config, tier, lead.authorEmail, lead.matchedDirections);
 
       // 3. Get rep info for draft generation
       const rep = await getRep(repId);

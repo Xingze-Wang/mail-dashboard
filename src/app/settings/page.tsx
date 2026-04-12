@@ -8,6 +8,7 @@ import {
   Trash2,
   User,
   Settings,
+  Tag,
 } from "lucide-react";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -32,7 +33,28 @@ interface AssignmentConfig {
     normal: { rep_ids: number[]; mode: "round_robin" };
     overseas_override?: { enabled: boolean; rep_id: number };
   };
+  category_routing?: {
+    enabled: boolean;
+    routes: Record<string, number>;
+  };
 }
+
+const RESEARCH_CATEGORIES = [
+  "具身智能/机器人", "多模态/视觉生成", "Agent/自动化", "推理/架构优化",
+  "AI安全", "语音/音频", "科学计算/生物", "推理/符号", "其他",
+];
+
+const DEFAULT_CATEGORY_ROUTES: Record<string, number> = {
+  "具身智能/机器人": 1,
+  "多模态/视觉生成": 1,
+  "推理/架构优化": 1,
+  "AI安全": 1,
+  "Agent/自动化": 2,
+  "科学计算/生物": 2,
+  "推理/符号": 2,
+  "语音/音频": 2,
+  "其他": 2,
+};
 
 const DEFAULT_CONFIG: AssignmentConfig = {
   strong_criteria: { min_h_index: 20, max_school_tier: 2, require_overseas: true },
@@ -71,7 +93,15 @@ export default function SettingsPage() {
     ])
       .then(([repsData, configData]) => {
         setReps(repsData.reps || []);
-        if (configData.strong_criteria) setConfig(configData);
+        if (configData.strong_criteria) {
+          setConfig({
+            ...configData,
+            category_routing: configData.category_routing ?? {
+              enabled: false,
+              routes: DEFAULT_CATEGORY_ROUTES,
+            },
+          });
+        }
       })
       .catch(console.error)
       .finally(() => setLoading(false));
@@ -444,6 +474,95 @@ export default function SettingsPage() {
             Save Rules
           </button>
         </div>
+      </div>
+
+      {/* ═══ Category Routing ═══ */}
+      <div className="rounded-xl border border-neutral-800 bg-neutral-900/50 p-5 mb-6">
+        <div className="flex items-center justify-between mb-5">
+          <div className="flex items-center gap-2">
+            <Tag className="h-4 w-4 text-neutral-400" />
+            <h2 className="text-sm font-semibold">Category Routing</h2>
+          </div>
+          <button
+            onClick={() => {
+              const current = config.category_routing ?? { enabled: false, routes: DEFAULT_CATEGORY_ROUTES };
+              setConfig({
+                ...config,
+                category_routing: { ...current, enabled: !current.enabled },
+              });
+            }}
+            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+              config.category_routing?.enabled ? "bg-blue-500" : "bg-neutral-700"
+            }`}
+          >
+            <span
+              className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${
+                config.category_routing?.enabled ? "translate-x-[18px]" : "translate-x-[3px]"
+              }`}
+            />
+          </button>
+        </div>
+
+        {config.category_routing?.enabled && (() => {
+          const routes = config.category_routing?.routes ?? DEFAULT_CATEGORY_ROUTES;
+          const activeReps = reps.filter((r) => r.active);
+          const repCounts = new Map<string, number>();
+          for (const cat of RESEARCH_CATEGORIES) {
+            const repId = routes[cat] ?? DEFAULT_CATEGORY_ROUTES[cat];
+            const repName = reps.find((r) => r.id === repId)?.name ?? "?";
+            repCounts.set(repName, (repCounts.get(repName) ?? 0) + 1);
+          }
+
+          return (
+            <>
+              <div className="grid grid-cols-3 gap-3 mb-4">
+                {RESEARCH_CATEGORIES.map((cat) => (
+                  <div key={cat} className="flex items-center justify-between rounded-lg border border-neutral-800/50 bg-white/[0.02] px-3 py-2.5">
+                    <span className="text-[12px] text-neutral-300 truncate mr-2">{cat}</span>
+                    <select
+                      value={routes[cat] ?? DEFAULT_CATEGORY_ROUTES[cat]}
+                      onChange={(e) => {
+                        const newRoutes = { ...routes, [cat]: parseInt(e.target.value) };
+                        setConfig({
+                          ...config,
+                          category_routing: {
+                            enabled: true,
+                            routes: newRoutes,
+                          },
+                        });
+                      }}
+                      className="rounded-md border border-neutral-800 bg-white/[0.04] px-2 py-1 text-[11px] text-white focus:outline-none focus:border-neutral-600 transition-colors appearance-none pr-5"
+                      style={{
+                        backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' fill='%23737373' viewBox='0 0 16 16'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E")`,
+                        backgroundRepeat: "no-repeat",
+                        backgroundPosition: "right 6px center",
+                      }}
+                    >
+                      {activeReps.map((r) => (
+                        <option key={r.id} value={r.id}>{r.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+              </div>
+
+              {/* Summary */}
+              <div className="flex flex-wrap gap-3 text-xs text-neutral-500">
+                {[...repCounts.entries()].map(([name, count]) => (
+                  <span key={name}>
+                    <strong className="text-neutral-400">{name}</strong>: {count} {count === 1 ? "category" : "categories"}
+                  </span>
+                ))}
+              </div>
+            </>
+          );
+        })()}
+
+        {!config.category_routing?.enabled && (
+          <p className="text-[12px] text-neutral-600">
+            When enabled, leads are routed to reps based on their research category instead of the default round-robin.
+          </p>
+        )}
       </div>
 
       {/* ═══ Sales Reps ═══ */}

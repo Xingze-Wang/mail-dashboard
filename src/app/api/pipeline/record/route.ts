@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
+import { lookupAuthor } from "@/lib/semantic-scholar";
+import { getAssignmentConfig, classifyLead, assignRep } from "@/lib/assignment";
+import { getSchoolInfo } from "@/lib/email-generator";
 
 /**
  * POST /api/pipeline/record
@@ -78,6 +81,44 @@ export async function POST(req: NextRequest) {
       await supabase.from("paper_authors").insert(authorRows);
     }
 
+    // 2b. School info lookup (from email domain)
+    const schoolInfo = emailed.email ? getSchoolInfo(emailed.email) : null;
+    const schoolName = schoolInfo?.name ?? null;
+    const schoolTier = schoolInfo?.tier ?? null;
+
+    // 2c. Semantic Scholar enrichment (best-effort, non-blocking)
+    let s2AuthorId: string | null = null;
+    let hIndex: number | null = null;
+    let citationCount: number | null = null;
+    let paperCount: number | null = null;
+    try {
+      const s2 = await lookupAuthor(paper.title, emailed.author_name);
+      if (s2) {
+        s2AuthorId = s2.authorId;
+        hIndex = s2.hIndex;
+        citationCount = s2.citationCount;
+        paperCount = s2.paperCount;
+      }
+    } catch {
+      // S2 enrichment failure is non-blocking
+    }
+
+    // 2d. Classify lead and assign rep
+    let leadTier: "strong" | "normal" = "normal";
+    let assignedRepId: number | null = null;
+    try {
+      const config = await getAssignmentConfig();
+      leadTier = classifyLead(config, {
+        hIndex,
+        schoolTier,
+        authorEmail: emailed.email,
+      });
+      const dirs: string[] = Array.isArray(matched_directions) ? matched_directions : [];
+      assignedRepId = assignRep(config, leadTier, emailed.email, dirs);
+    } catch {
+      // Classification/assignment failure is non-blocking
+    }
+
     // 3. Upsert pipeline_lead (so dashboard has the lead)
     await supabase.from("pipeline_leads").upsert(
       {
@@ -90,6 +131,8 @@ export async function POST(req: NextRequest) {
         author_name: emailed.author_name || null,
         author_email: emailed.email,
         first_name: emailed.first_name || null,
+        school_name: schoolName,
+        school_tier: schoolTier,
         compute_level: compute?.level || null,
         compute_confidence: compute?.confidence || null,
         compute_reason: compute?.reason || null,
@@ -98,6 +141,12 @@ export async function POST(req: NextRequest) {
         status: "sent",
         sent_at: new Date().toISOString(),
         source: "python_script",
+        s2_author_id: s2AuthorId,
+        h_index: hIndex,
+        citation_count: citationCount,
+        paper_count: paperCount,
+        lead_tier: leadTier,
+        assigned_rep_id: assignedRepId,
       },
       { onConflict: "arxiv_id" },
     );
