@@ -12,6 +12,7 @@ import {
   canSend,
   paperAge, shortDate,
 } from "./types";
+import { colorForRep } from "./repColors";
 
 interface Props {
   lead: Lead;
@@ -197,17 +198,31 @@ function LeadRowInner({
               </div>
             )}
 
-            {reps.length > 0 && (
-              <select
-                className="rep-select"
-                value={lead.assignedRepId ?? ""}
-                onChange={(e) => onRepChange(lead.id, parseInt(e.target.value))}
-              >
-                {reps.map((r) => (
-                  <option key={r.id} value={r.id}>{r.name}</option>
-                ))}
-              </select>
-            )}
+            {reps.length > 0 && (() => {
+              const currentRep = reps.find((r) => r.id === lead.assignedRepId);
+              const repColor = colorForRep(currentRep?.name ?? null);
+              return (
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  <span
+                    aria-hidden
+                    style={{
+                      width: 8, height: 8, borderRadius: 4,
+                      background: repColor, flexShrink: 0,
+                    }}
+                  />
+                  <select
+                    className="rep-select"
+                    value={lead.assignedRepId ?? ""}
+                    onChange={(e) => onRepChange(lead.id, parseInt(e.target.value))}
+                    style={{ borderLeft: `3px solid ${repColor}` }}
+                  >
+                    {reps.map((r) => (
+                      <option key={r.id} value={r.id}>{r.name}</option>
+                    ))}
+                  </select>
+                </span>
+              );
+            })()}
 
             {lead.status === "ready" && (
               <button

@@ -56,7 +56,9 @@ export async function GET(req: NextRequest) {
 
       // 2. Classify and assign
       const hIndex = s2?.hIndex ?? null;
+      const citationCount = s2?.citationCount ?? null;
       const tier = classifyLead(config, {
+        citationCount,
         hIndex,
         schoolTier: lead.schoolTier,
         authorEmail: lead.authorEmail,

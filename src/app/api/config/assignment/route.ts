@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
-import { getAssignmentConfig } from "@/lib/assignment";
+import {
+  getAssignmentConfig,
+  classifyLead,
+  assignRep,
+} from "@/lib/assignment";
 
 export async function GET() {
   const config = await getAssignmentConfig();
@@ -33,4 +37,64 @@ export async function PUT(req: NextRequest) {
   }
 
   return NextResponse.json({ ok: true, config: body });
+}
+
+/**
+ * POST /api/config/assignment
+ * Re-classify and re-assign EVERY existing lead with the current rules.
+ * No body required. Returns counts of what changed.
+ */
+export async function POST() {
+  const config = await getAssignmentConfig();
+
+  const { data: leads, error: fetchError } = await supabase
+    .from("pipeline_leads")
+    .select(
+      "id, citation_count, h_index, school_tier, author_email, lead_tier, assigned_rep_id",
+    );
+
+  if (fetchError) {
+    return NextResponse.json({ error: fetchError.message }, { status: 500 });
+  }
+
+  const rows = leads ?? [];
+  let reassigned = 0;
+  let retiered = 0;
+  let scanned = 0;
+  const errors: string[] = [];
+
+  for (const l of rows) {
+    scanned++;
+    const newTier = classifyLead(config, {
+      citationCount: l.citation_count ?? null,
+      hIndex: l.h_index ?? null,
+      schoolTier: l.school_tier ?? null,
+      authorEmail: l.author_email ?? "",
+    });
+    const newRepId = assignRep(config, newTier, l.author_email ?? "");
+
+    const tierChanged = (l.lead_tier ?? "normal") !== newTier;
+    const repChanged = (l.assigned_rep_id ?? null) !== newRepId;
+    if (!tierChanged && !repChanged) continue;
+
+    const { error: updateError } = await supabase
+      .from("pipeline_leads")
+      .update({ lead_tier: newTier, assigned_rep_id: newRepId })
+      .eq("id", l.id);
+
+    if (updateError) {
+      errors.push(`${l.id}: ${updateError.message}`);
+      continue;
+    }
+    if (tierChanged) retiered++;
+    if (repChanged) reassigned++;
+  }
+
+  return NextResponse.json({
+    ok: true,
+    scanned,
+    reassigned,
+    retiered,
+    errors: errors.length ? errors.slice(0, 10) : undefined,
+  });
 }

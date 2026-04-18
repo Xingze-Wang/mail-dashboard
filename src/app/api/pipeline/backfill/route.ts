@@ -6,21 +6,6 @@ import { getSchoolInfo } from "@/lib/email-generator";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Parse matched_directions from DB (may be JSON array string or comma-separated). */
-function parseDirections(raw: unknown): string[] {
-  if (!raw || typeof raw !== "string") return [];
-  const trimmed = raw.trim();
-  if (trimmed.startsWith("[")) {
-    try {
-      const arr = JSON.parse(trimmed);
-      return Array.isArray(arr) ? arr.map(String) : [];
-    } catch {
-      // fall through to comma split
-    }
-  }
-  return trimmed.split(",").map((s: string) => s.trim()).filter(Boolean);
-}
-
 export const maxDuration = 300; // 5 min for Vercel
 
 export async function POST(req: NextRequest) {
@@ -101,12 +86,12 @@ export async function POST(req: NextRequest) {
       let assignedRepId: number | null = null;
       try {
         leadTier = classifyLead(config, {
+          citationCount,
           hIndex,
           schoolTier,
           authorEmail: lead.author_email || "",
         });
-        const dirs = parseDirections(lead.matched_directions);
-        assignedRepId = assignRep(config, leadTier, lead.author_email || undefined, dirs);
+        assignedRepId = assignRep(config, leadTier, lead.author_email || undefined);
       } catch {
         // Classification failure is non-blocking
       }

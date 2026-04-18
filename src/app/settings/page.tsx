@@ -8,8 +8,11 @@ import {
   Trash2,
   User,
   Settings,
-  Tag,
+  Crown,
+  Globe,
+  MapPin,
 } from "lucide-react";
+import { paletteFor } from "@/app/pipeline/repColors";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -24,44 +27,22 @@ interface Rep {
 
 interface AssignmentConfig {
   strong_criteria: {
-    min_h_index: number;
+    min_citation: number;
     max_school_tier: number;
-    require_overseas: boolean;
   };
   assignment: {
     strong: { rep_id: number };
-    normal: { rep_ids: number[]; mode: "round_robin" };
-    overseas_override?: { enabled: boolean; rep_id: number };
-  };
-  category_routing?: {
-    enabled: boolean;
-    routes: Record<string, number>;
+    overseas: { rep_id: number };
+    domestic: { rep_id: number };
   };
 }
 
-const RESEARCH_CATEGORIES = [
-  "具身智能/机器人", "多模态/视觉生成", "Agent/自动化", "推理/架构优化",
-  "AI安全", "语音/音频", "科学计算/生物", "推理/符号", "其他",
-];
-
-const DEFAULT_CATEGORY_ROUTES: Record<string, number> = {
-  "具身智能/机器人": 1,
-  "多模态/视觉生成": 1,
-  "推理/架构优化": 1,
-  "AI安全": 1,
-  "Agent/自动化": 2,
-  "科学计算/生物": 2,
-  "推理/符号": 2,
-  "语音/音频": 2,
-  "其他": 2,
-};
-
 const DEFAULT_CONFIG: AssignmentConfig = {
-  strong_criteria: { min_h_index: 20, max_school_tier: 2, require_overseas: true },
+  strong_criteria: { min_citation: 2000, max_school_tier: 2 },
   assignment: {
     strong: { rep_id: 1 },
-    normal: { rep_ids: [2], mode: "round_robin" },
-    overseas_override: { enabled: true, rep_id: 1 },
+    overseas: { rep_id: 3 },
+    domestic: { rep_id: 2 },
   },
 };
 
@@ -74,6 +55,7 @@ export default function SettingsPage() {
   const [config, setConfig] = useState<AssignmentConfig>(DEFAULT_CONFIG);
   const [loading, setLoading] = useState(true);
   const [savingConfig, setSavingConfig] = useState(false);
+  const [reassigning, setReassigning] = useState(false);
   const [savingRep, setSavingRep] = useState<number | "new" | null>(null);
   const [newRep, setNewRep] = useState(EMPTY_REP);
   const [showNewRep, setShowNewRep] = useState(false);
@@ -93,12 +75,22 @@ export default function SettingsPage() {
     ])
       .then(([repsData, configData]) => {
         setReps(repsData.reps || []);
-        if (configData.strong_criteria) {
+        if (configData?.strong_criteria && configData?.assignment) {
+          // The /api/config/assignment GET handler normalizes legacy shapes
+          // forward to {strong, overseas, domestic}, so we can trust the result.
           setConfig({
-            ...configData,
-            category_routing: configData.category_routing ?? {
-              enabled: false,
-              routes: DEFAULT_CATEGORY_ROUTES,
+            strong_criteria: {
+              min_citation:
+                configData.strong_criteria.min_citation ??
+                DEFAULT_CONFIG.strong_criteria.min_citation,
+              max_school_tier:
+                configData.strong_criteria.max_school_tier ??
+                DEFAULT_CONFIG.strong_criteria.max_school_tier,
+            },
+            assignment: {
+              strong: { rep_id: configData.assignment.strong?.rep_id ?? DEFAULT_CONFIG.assignment.strong.rep_id },
+              overseas: { rep_id: configData.assignment.overseas?.rep_id ?? DEFAULT_CONFIG.assignment.overseas.rep_id },
+              domestic: { rep_id: configData.assignment.domestic?.rep_id ?? DEFAULT_CONFIG.assignment.domestic.rep_id },
             },
           });
         }
@@ -123,6 +115,28 @@ export default function SettingsPage() {
       showFlash("Failed to save config");
     } finally {
       setSavingConfig(false);
+    }
+  };
+
+  // ── Re-assign ALL existing leads ──
+
+  const handleReassignAll = async () => {
+    setReassigning(true);
+    try {
+      const res = await fetch("/api/config/assignment", { method: "POST" });
+      if (res.ok) {
+        const data = await res.json();
+        showFlash(
+          `Re-assigned ${data.reassigned} of ${data.scanned} leads (${data.retiered} re-tiered)`,
+        );
+      } else {
+        const data = await res.json().catch(() => ({}));
+        showFlash(`Re-assign failed: ${data.error ?? res.status}`);
+      }
+    } catch {
+      showFlash("Re-assign failed");
+    } finally {
+      setReassigning(false);
     }
   };
 
@@ -227,6 +241,9 @@ export default function SettingsPage() {
     fontFamily: "var(--font-body)",
   };
 
+  const activeReps = reps.filter((r) => r.active);
+  const repName = (id: number) => reps.find((r) => r.id === id)?.name ?? "?";
+
   return (
     <div>
       {/* Flash message */}
@@ -260,25 +277,27 @@ export default function SettingsPage() {
           <Settings style={{ width: 16, height: 16, color: "var(--text-secondary)" }} />
           <h3 style={{ marginBottom: 0 }}>Assignment Rules</h3>
         </div>
-        <p style={{ fontSize: 12.5, color: "var(--text-tertiary)", marginBottom: 20, lineHeight: 1.5 }}>
-          Define what makes a Strong lead and how leads are routed to your sales reps.
+        <p style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 20 }}>
+          Strong if <strong>citation_count &gt; threshold</strong> OR{" "}
+          <strong>school_tier ≤ threshold</strong>. Routing is then a flat 3-way:
+          strong → strong rep, normal+overseas → overseas rep, normal+domestic → domestic rep.
         </p>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 20 }}>
-          {/* Min h-index */}
+        {/* Strong criteria */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16, marginBottom: 20 }}>
           <div>
             <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em" }}>
-              Min h-index (Strong)
+              Min citation_count for Strong
             </label>
             <input
               type="number"
-              value={config.strong_criteria.min_h_index}
+              value={config.strong_criteria.min_citation}
               onChange={(e) =>
                 setConfig({
                   ...config,
                   strong_criteria: {
                     ...config.strong_criteria,
-                    min_h_index: parseInt(e.target.value) || 0,
+                    min_citation: parseInt(e.target.value) || 0,
                   },
                 })
               }
@@ -286,10 +305,9 @@ export default function SettingsPage() {
             />
           </div>
 
-          {/* Max school tier */}
           <div>
             <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em" }}>
-              Max School Tier (Strong)
+              Max school_tier for Strong
             </label>
             <input
               type="number"
@@ -306,322 +324,92 @@ export default function SettingsPage() {
               style={inputStyle}
             />
           </div>
-
-          {/* Require overseas */}
-          <div>
-            <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em" }}>
-              Require Overseas
-            </label>
-            <select
-              className="filter-select"
-              value={config.strong_criteria.require_overseas ? "yes" : "no"}
-              onChange={(e) =>
-                setConfig({
-                  ...config,
-                  strong_criteria: {
-                    ...config.strong_criteria,
-                    require_overseas: e.target.value === "yes",
-                  },
-                })
-              }
-              style={{ width: "100%", padding: "8px 28px 8px 12px", fontSize: 13 }}
-            >
-              <option value="yes">Yes — only non-.cn emails</option>
-              <option value="no">No — all emails qualify</option>
-            </select>
-          </div>
         </div>
 
-        {/* Assignment mapping */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
-          <div>
-            <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em" }}>
-              Strong Leads → Rep
-            </label>
-            <select
-              className="filter-select"
-              value={config.assignment.strong.rep_id}
-              onChange={(e) =>
-                setConfig({
-                  ...config,
-                  assignment: {
-                    ...config.assignment,
-                    strong: { rep_id: parseInt(e.target.value) },
-                  },
-                })
-              }
-              style={{ width: "100%", padding: "8px 28px 8px 12px", fontSize: 13 }}
-            >
-              {reps.filter((r) => r.active).map((r) => (
-                <option key={r.id} value={r.id}>{r.name}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em" }}>
-              Normal Leads → Round Robin Reps
-            </label>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-              {reps.filter((r) => r.active).map((r) => {
-                const isSelected = config.assignment.normal.rep_ids.includes(r.id);
-                return (
-                  <button
-                    key={r.id}
-                    onClick={() => {
-                      const ids = isSelected
-                        ? config.assignment.normal.rep_ids.filter((id) => id !== r.id)
-                        : [...config.assignment.normal.rep_ids, r.id];
-                      if (ids.length === 0) return; // must have at least one
-                      setConfig({
-                        ...config,
-                        assignment: {
-                          ...config.assignment,
-                          normal: { ...config.assignment.normal, rep_ids: ids },
-                        },
-                      });
-                    }}
-                    style={{
-                      borderRadius: "var(--radius-sm)",
-                      padding: "6px 12px",
-                      fontSize: 12,
-                      fontWeight: 600,
-                      border: isSelected ? "1px solid #BFDBFE" : "1px solid var(--border)",
-                      background: isSelected ? "var(--blue-bg)" : "var(--card)",
-                      color: isSelected ? "var(--blue)" : "var(--text-secondary)",
-                      cursor: "pointer",
-                      transition: "all 0.15s ease",
-                    }}
-                  >
-                    {r.name}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-
-        {/* Overseas override */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
-          <div>
-            <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em" }}>
-              Overseas Override
-            </label>
-            <select
-              className="filter-select"
-              value={config.assignment.overseas_override?.enabled ? "yes" : "no"}
-              onChange={(e) =>
-                setConfig({
-                  ...config,
-                  assignment: {
-                    ...config.assignment,
-                    overseas_override: {
-                      enabled: e.target.value === "yes",
-                      rep_id: config.assignment.overseas_override?.rep_id ?? config.assignment.strong.rep_id,
-                    },
-                  },
-                })
-              }
-              style={{ width: "100%", padding: "8px 28px 8px 12px", fontSize: 13 }}
-            >
-              <option value="yes">Yes — all overseas leads to one rep</option>
-              <option value="no">No — follow normal round-robin</option>
-            </select>
-          </div>
-
-          {config.assignment.overseas_override?.enabled && (
-            <div>
-              <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em" }}>
-                Overseas → Rep
-              </label>
-              <select
-                className="filter-select"
-                value={config.assignment.overseas_override?.rep_id ?? ""}
-                onChange={(e) =>
-                  setConfig({
-                    ...config,
-                    assignment: {
-                      ...config.assignment,
-                      overseas_override: {
-                        enabled: true,
-                        rep_id: parseInt(e.target.value),
-                      },
-                    },
-                  })
-                }
-                style={{ width: "100%", padding: "8px 28px 8px 12px", fontSize: 13 }}
+        {/* Routing — 3 selects (strong / overseas / domestic) */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 20 }}>
+          {([
+            { key: "strong", label: "Strong → rep", icon: Crown, hint: "Tier=Strong" },
+            { key: "overseas", label: "Normal · overseas → rep", icon: Globe, hint: "domain ≠ .cn" },
+            { key: "domestic", label: "Normal · domestic → rep", icon: MapPin, hint: "domain = .cn" },
+          ] as const).map((row) => {
+            const selectedId = config.assignment[row.key].rep_id;
+            const palette = paletteFor(repName(selectedId));
+            const Icon = row.icon;
+            return (
+              <div
+                key={row.key}
+                style={{
+                  borderRadius: "var(--radius-sm)",
+                  border: "1px solid var(--border-light)",
+                  background: "var(--card)",
+                  padding: 12,
+                  borderLeft: `3px solid ${palette.solid}`,
+                }}
               >
-                {reps.filter((r) => r.active).map((r) => (
-                  <option key={r.id} value={r.id}>{r.name}</option>
-                ))}
-              </select>
-            </div>
-          )}
-        </div>
-
-        {/* Preview */}
-        <div style={{ borderTop: "1px solid var(--border-light)", paddingTop: 16, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 16, fontSize: 12, color: "var(--text-tertiary)" }}>
-            <span>
-              Strong: h-index ≥{" "}
-              <strong style={{ color: "var(--text)" }}>{config.strong_criteria.min_h_index}</strong>,
-              tier ≤{" "}
-              <strong style={{ color: "var(--text)" }}>{config.strong_criteria.max_school_tier}</strong>
-              {" → "}
-              <strong style={{ color: "var(--text)" }}>
-                {reps.find((r) => r.id === config.assignment.strong.rep_id)?.name || "?"}
-              </strong>
-            </span>
-            {config.assignment.overseas_override?.enabled && (
-              <span>
-                Overseas →{" "}
-                <strong style={{ color: "var(--text)" }}>
-                  {reps.find((r) => r.id === config.assignment.overseas_override?.rep_id)?.name || "?"}
-                </strong>
-              </span>
-            )}
-            <span>
-              Rest: round-robin →{" "}
-              <strong style={{ color: "var(--text)" }}>
-                {config.assignment.normal.rep_ids
-                  .map((id) => reps.find((r) => r.id === id)?.name || "?")
-                  .join(", ")}
-              </strong>
-            </span>
-          </div>
-          <button onClick={handleSaveConfig} disabled={savingConfig} className="btn btn-primary">
-            {savingConfig ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save />}
-            Save Rules
-          </button>
-        </div>
-      </div>
-
-      {/* ═══ Category Routing ═══ */}
-      <div className="section-card" style={{ marginBottom: 24 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <Tag style={{ width: 16, height: 16, color: "var(--text-secondary)" }} />
-            <h3 style={{ marginBottom: 0 }}>Category Routing</h3>
-          </div>
-          <button
-            onClick={() => {
-              const current = config.category_routing ?? { enabled: false, routes: DEFAULT_CATEGORY_ROUTES };
-              setConfig({
-                ...config,
-                category_routing: { ...current, enabled: !current.enabled },
-              });
-            }}
-            style={{
-              position: "relative",
-              display: "inline-flex",
-              alignItems: "center",
-              height: 22,
-              width: 40,
-              borderRadius: 999,
-              background: config.category_routing?.enabled ? "var(--blue)" : "var(--border)",
-              border: "none",
-              cursor: "pointer",
-              transition: "background 0.15s ease",
-              padding: 0,
-            }}
-          >
-            <span
-              style={{
-                display: "inline-block",
-                height: 16,
-                width: 16,
-                borderRadius: "50%",
-                background: "white",
-                transition: "transform 0.15s ease",
-                transform: config.category_routing?.enabled ? "translateX(21px)" : "translateX(3px)",
-                boxShadow: "0 1px 2px rgba(0,0,0,0.15)",
-              }}
-            />
-          </button>
-        </div>
-        <p style={{ fontSize: 12.5, color: "var(--text-tertiary)", marginBottom: 20, lineHeight: 1.5 }}>
-          Override default round-robin by routing leads to specific reps based on their research category.
-        </p>
-
-        {config.category_routing?.enabled && (() => {
-          const routes = config.category_routing?.routes ?? DEFAULT_CATEGORY_ROUTES;
-          const activeReps = reps.filter((r) => r.active);
-          const repCounts = new Map<string, number>();
-          for (const cat of RESEARCH_CATEGORIES) {
-            const repId = routes[cat] ?? DEFAULT_CATEGORY_ROUTES[cat];
-            const repName = reps.find((r) => r.id === repId)?.name ?? "?";
-            repCounts.set(repName, (repCounts.get(repName) ?? 0) + 1);
-          }
-
-          return (
-            <>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 16 }}>
-                {RESEARCH_CATEGORIES.map((cat) => (
-                  <div
-                    key={cat}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      borderRadius: "var(--radius-sm)",
-                      border: "1px solid var(--border-light)",
-                      background: "var(--bg)",
-                      padding: "10px 12px",
-                    }}
-                  >
-                    <span style={{ fontSize: 12, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginRight: 8 }}>
-                      {cat}
-                    </span>
-                    <select
-                      className="filter-select"
-                      value={routes[cat] ?? DEFAULT_CATEGORY_ROUTES[cat]}
-                      onChange={(e) => {
-                        const newRoutes = { ...routes, [cat]: parseInt(e.target.value) };
-                        setConfig({
-                          ...config,
-                          category_routing: {
-                            enabled: true,
-                            routes: newRoutes,
-                          },
-                        });
-                      }}
-                      style={{ padding: "4px 22px 4px 8px", fontSize: 11 }}
-                    >
-                      {activeReps.map((r) => (
-                        <option key={r.id} value={r.id}>{r.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                ))}
-              </div>
-
-              {/* Summary */}
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 12, fontSize: 12, color: "var(--text-tertiary)" }}>
-                {[...repCounts.entries()].map(([name, count]) => (
-                  <span key={name}>
-                    <strong style={{ color: "var(--text)" }}>{name}</strong>: {count}{" "}
-                    {count === 1 ? "category" : "categories"}
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                  <Icon style={{ width: 13, height: 13, color: palette.color }} />
+                  <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                    {row.label}
                   </span>
-                ))}
+                </div>
+                <select
+                  className="filter-select"
+                  value={selectedId}
+                  onChange={(e) =>
+                    setConfig({
+                      ...config,
+                      assignment: {
+                        ...config.assignment,
+                        [row.key]: { rep_id: parseInt(e.target.value) },
+                      },
+                    })
+                  }
+                  style={{ width: "100%", padding: "8px 28px 8px 12px", fontSize: 13 }}
+                >
+                  {activeReps.map((r) => (
+                    <option key={r.id} value={r.id}>{r.name}</option>
+                  ))}
+                </select>
+                <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 6 }}>{row.hint}</div>
               </div>
-            </>
-          );
-        })()}
+            );
+          })}
+        </div>
 
-        {!config.category_routing?.enabled && (
-          <p style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
-            When enabled, leads are routed to reps based on their research category instead of the default round-robin.
-          </p>
-        )}
+        {/* Footer */}
+        <div style={{ borderTop: "1px solid var(--border-light)", paddingTop: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 12, fontSize: 12, color: "var(--text-tertiary)" }}>
+            <span>
+              Strong → <strong style={{ color: paletteFor(repName(config.assignment.strong.rep_id)).color }}>{repName(config.assignment.strong.rep_id)}</strong>
+            </span>
+            <span>
+              Overseas → <strong style={{ color: paletteFor(repName(config.assignment.overseas.rep_id)).color }}>{repName(config.assignment.overseas.rep_id)}</strong>
+            </span>
+            <span>
+              Domestic → <strong style={{ color: paletteFor(repName(config.assignment.domestic.rep_id)).color }}>{repName(config.assignment.domestic.rep_id)}</strong>
+            </span>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={handleReassignAll} disabled={reassigning} className="btn">
+              {reassigning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+              Re-assign all leads
+            </button>
+            <button onClick={handleSaveConfig} disabled={savingConfig} className="btn btn-primary">
+              {savingConfig ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save />}
+              Save Rules
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* ═══ Sales Reps ═══ */}
       <div className="section-card">
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <User style={{ width: 16, height: 16, color: "var(--text-secondary)" }} />
             <h3 style={{ marginBottom: 0 }}>Sales Reps</h3>
-            <span className="lead-count">{reps.filter((r) => r.active).length} active</span>
+            <span className="lead-count">{activeReps.length} active</span>
           </div>
           {!showNewRep && (
             <button onClick={() => setShowNewRep(true)} className="btn">
@@ -630,99 +418,100 @@ export default function SettingsPage() {
             </button>
           )}
         </div>
-        <p style={{ fontSize: 12.5, color: "var(--text-tertiary)", marginBottom: 20, lineHeight: 1.5 }}>
-          Sender identities used when emailing leads. Email and WeChat ID appear in the outgoing message footer.
-        </p>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           {/* Existing reps */}
-          {reps.map((rep) => (
-            <div
-              key={rep.id}
-              style={{
-                borderRadius: "var(--radius)",
-                border: "1px solid var(--border)",
-                background: "var(--card)",
-                padding: 16,
-                opacity: rep.active ? 1 : 0.5,
-                transition: "opacity 0.15s ease",
-              }}
-            >
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 12 }}>
-                <div>
-                  <label style={{ display: "block", fontSize: 10, fontWeight: 600, color: "var(--text-tertiary)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>
-                    Name
-                  </label>
-                  <input
-                    type="text"
-                    value={rep.name}
-                    onChange={(e) => updateRepField(rep.id, "name", e.target.value)}
-                    style={inputStyle}
-                  />
+          {reps.map((rep) => {
+            const palette = paletteFor(rep.name);
+            return (
+              <div
+                key={rep.id}
+                style={{
+                  borderRadius: "var(--radius)",
+                  border: "1px solid var(--border)",
+                  borderLeft: `3px solid ${palette.solid}`,
+                  background: "var(--card)",
+                  padding: 16,
+                  opacity: rep.active ? 1 : 0.55,
+                  transition: "opacity 0.15s ease",
+                }}
+              >
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 12 }}>
+                  <div>
+                    <label style={{ display: "block", fontSize: 10, fontWeight: 600, color: "var(--text-tertiary)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                      Name
+                    </label>
+                    <input
+                      type="text"
+                      value={rep.name}
+                      onChange={(e) => updateRepField(rep.id, "name", e.target.value)}
+                      style={inputStyle}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: 10, fontWeight: 600, color: "var(--text-tertiary)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                      Sender Email
+                    </label>
+                    <input
+                      type="email"
+                      value={rep.sender_email}
+                      onChange={(e) => updateRepField(rep.id, "sender_email", e.target.value)}
+                      style={inputStyle}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: 10, fontWeight: 600, color: "var(--text-tertiary)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                      Sender Name
+                    </label>
+                    <input
+                      type="text"
+                      value={rep.sender_name}
+                      onChange={(e) => updateRepField(rep.id, "sender_name", e.target.value)}
+                      style={inputStyle}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: 10, fontWeight: 600, color: "var(--text-tertiary)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                      WeChat ID
+                    </label>
+                    <input
+                      type="text"
+                      value={rep.wechat_id}
+                      onChange={(e) => updateRepField(rep.id, "wechat_id", e.target.value)}
+                      style={inputStyle}
+                    />
+                  </div>
                 </div>
-                <div>
-                  <label style={{ display: "block", fontSize: 10, fontWeight: 600, color: "var(--text-tertiary)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>
-                    Sender Email
-                  </label>
-                  <input
-                    type="email"
-                    value={rep.sender_email}
-                    onChange={(e) => updateRepField(rep.id, "sender_email", e.target.value)}
-                    style={inputStyle}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: 10, fontWeight: 600, color: "var(--text-tertiary)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>
-                    Sender Name
-                  </label>
-                  <input
-                    type="text"
-                    value={rep.sender_name}
-                    onChange={(e) => updateRepField(rep.id, "sender_name", e.target.value)}
-                    style={inputStyle}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: 10, fontWeight: 600, color: "var(--text-tertiary)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>
-                    WeChat ID
-                  </label>
-                  <input
-                    type="text"
-                    value={rep.wechat_id}
-                    onChange={(e) => updateRepField(rep.id, "wechat_id", e.target.value)}
-                    style={inputStyle}
-                  />
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <button
+                    onClick={() => handleToggleActive(rep)}
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: rep.active ? "var(--text-tertiary)" : "var(--green)",
+                      background: "transparent",
+                      border: "none",
+                      cursor: "pointer",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 4,
+                    }}
+                  >
+                    {savingRep === rep.id ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : rep.active ? (
+                      <Trash2 style={{ width: 12, height: 12 }} />
+                    ) : null}
+                    {rep.active ? "Deactivate" : "Reactivate"}
+                  </button>
+                  <button onClick={() => handleSaveRep(rep)} disabled={savingRep === rep.id} className="btn">
+                    {savingRep === rep.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save />}
+                    Save
+                  </button>
                 </div>
               </div>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <button
-                  onClick={() => handleToggleActive(rep)}
-                  style={{
-                    fontSize: 11,
-                    fontWeight: 600,
-                    color: rep.active ? "var(--text-tertiary)" : "var(--green)",
-                    background: "transparent",
-                    border: "none",
-                    cursor: "pointer",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 4,
-                  }}
-                >
-                  {savingRep === rep.id ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  ) : rep.active ? (
-                    <Trash2 style={{ width: 12, height: 12 }} />
-                  ) : null}
-                  {rep.active ? "Deactivate" : "Reactivate"}
-                </button>
-                <button onClick={() => handleSaveRep(rep)} disabled={savingRep === rep.id} className="btn">
-                  {savingRep === rep.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save />}
-                  Save
-                </button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
 
           {/* New rep form */}
           {showNewRep && (
@@ -806,14 +595,12 @@ export default function SettingsPage() {
           )}
 
           {reps.length === 0 && !showNewRep && (
-            <div className="empty-state" style={{ border: "none", padding: "32px 0" }}>
-              <div className="empty-icon">
-                <User style={{ width: 20, height: 20 }} />
-              </div>
-              <h3>No sales reps yet</h3>
-              <p>Add your first rep to start assigning leads.</p>
-              <button onClick={() => setShowNewRep(true)} className="btn btn-primary" style={{ marginTop: 14 }}>
-                <Plus />
+            <div style={{ textAlign: "center", padding: "32px 0" }}>
+              <User style={{ width: 32, height: 32, color: "var(--text-tertiary)", margin: "0 auto 12px" }} />
+              <p style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 12 }}>
+                No sales reps yet
+              </p>
+              <button onClick={() => setShowNewRep(true)} className="btn btn-primary">
                 Add First Rep
               </button>
             </div>

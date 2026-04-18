@@ -4,6 +4,7 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from "recharts";
 import { Analytics, SourceRow } from "./types";
+import { colorForRep } from "./repColors";
 
 const CHART_TOOLTIP = {
   backgroundColor: "#FFFFFF",
@@ -13,21 +14,6 @@ const CHART_TOOLTIP = {
   color: "#1A1A1A",
   boxShadow: "0 4px 12px rgba(0,0,0,0.06)",
 };
-
-const REP_BAR_COLORS = [
-  "#2563EB", // blue
-  "#BE185D", // pink
-  "#16A34A", // green
-  "#B45309", // amber
-  "#7C3AED", // purple
-  "#0891B2", // cyan
-];
-
-function colorForRep(seed: string) {
-  let h = 0;
-  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
-  return REP_BAR_COLORS[h % REP_BAR_COLORS.length];
-}
 
 function ChannelCard({ row }: { row: SourceRow }) {
   const empty = row.total === 0;
@@ -78,7 +64,7 @@ function ChannelCard({ row }: { row: SourceRow }) {
             <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginTop: 10 }}>
               {row.reps.map((r) => {
                 const pct = row.total > 0 ? Math.round((r.count / row.total) * 100) : 0;
-                const color = r.repId === null ? "var(--text-tertiary)" : colorForRep(r.repName);
+                const color = colorForRep(r.repId === null ? null : r.repName);
                 return (
                   <div key={r.repName} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
                     <span style={{ width: 8, height: 8, borderRadius: 4, background: color }} />

@@ -1,23 +1,28 @@
-// Lead classification (strong/normal) and sales rep assignment
+// Lead classification (strong/normal) and sales rep assignment.
+//
+// Rules (binding spec — see SALES_RULES.md):
+//   Tier:
+//     Strong if citation_count > 2000 OR school_tier ∈ {1, 2}
+//     Otherwise Normal.
+//   Assignment:
+//     Strong            → Leo
+//     Normal + overseas → Ethan   (email domain does NOT end with .cn)
+//     Normal + domestic → Chenyu  (email domain ends with .cn)
+//
+// No more round-robin, no more category routing. Flat 3-way decision.
 
 import { supabase } from "@/lib/db";
 import { SUPPORTED_DIRECTIONS } from "@/lib/scanner-config";
 
 export interface AssignmentConfig {
   strong_criteria: {
-    min_h_index: number;
+    min_citation: number;
     max_school_tier: number;
-    require_overseas: boolean;
   };
   assignment: {
     strong: { rep_id: number };
-    normal: { rep_ids: number[]; mode: "round_robin" };
-    overseas_override?: { enabled: boolean; rep_id: number };
-    category_routing?: {
-      enabled: boolean;
-      // Maps category name -> rep_id
-      routes: Record<string, number>;
-    };
+    overseas: { rep_id: number };
+    domestic: { rep_id: number };
   };
 }
 
@@ -30,10 +35,16 @@ export interface SalesRep {
   active: boolean;
 }
 
-// Round-robin counter (in-memory, resets on deploy — acceptable)
-let rrIndex = 0;
+// Default rep IDs after `migrations/003-add-ethan.sql` is applied.
+// Leo is seeded with id=1; Chenyu and Ethan get the next two SERIAL ids.
+// If your DB ordering differs, override the defaults in /settings.
+const DEFAULT_REP_IDS = {
+  leo: 1,
+  chenyu: 2,
+  ethan: 3,
+} as const;
 
-/** Load assignment config from system_config table. Falls back to defaults if table doesn't exist. */
+/** Load assignment config from system_config table. Falls back to defaults if absent. */
 export async function getAssignmentConfig(): Promise<AssignmentConfig> {
   try {
     const { data } = await supabase
@@ -42,36 +53,80 @@ export async function getAssignmentConfig(): Promise<AssignmentConfig> {
       .eq("key", "lead_assignment")
       .single();
 
-    if (data?.value) return data.value as AssignmentConfig;
+    if (data?.value) return normalizeConfig(data.value);
   } catch {
     // Table may not exist yet — use defaults
   }
 
+  return defaultConfig();
+}
+
+export function defaultConfig(): AssignmentConfig {
   return {
-    strong_criteria: { min_h_index: 20, max_school_tier: 2, require_overseas: true },
+    strong_criteria: { min_citation: 2000, max_school_tier: 2 },
     assignment: {
-      strong: { rep_id: 1 },
-      normal: { rep_ids: [2], mode: "round_robin" },
-      overseas_override: { enabled: true, rep_id: 1 },
-      category_routing: {
-        enabled: true,
-        routes: {
-          "具身智能/机器人": 1,
-          "多模态/视觉生成": 1,
-          "推理/架构优化": 1,
-          "AI安全": 1,
-          "Agent/自动化": 2,
-          "科学计算/生物": 2,
-          "推理/符号": 2,
-          "语音/音频": 2,
-          "其他": 2,
-        },
-      },
+      strong: { rep_id: DEFAULT_REP_IDS.leo },
+      overseas: { rep_id: DEFAULT_REP_IDS.ethan },
+      domestic: { rep_id: DEFAULT_REP_IDS.chenyu },
     },
   };
 }
 
-/** Load a sales rep by ID. Returns null if not found, inactive, or table doesn't exist. */
+/** Migrate older config shapes (h-index based, round-robin, category routing)
+ *  forward to the new flat tier+geo shape. Anything unrecognized falls back
+ *  to `defaultConfig()`. */
+function normalizeConfig(raw: unknown): AssignmentConfig {
+  const def = defaultConfig();
+  if (!raw || typeof raw !== "object") return def;
+  const r = raw as Record<string, unknown>;
+
+  const sc = (r.strong_criteria as Record<string, unknown> | undefined) ?? {};
+  const min_citation =
+    typeof sc.min_citation === "number"
+      ? sc.min_citation
+      : def.strong_criteria.min_citation;
+  const max_school_tier =
+    typeof sc.max_school_tier === "number"
+      ? sc.max_school_tier
+      : def.strong_criteria.max_school_tier;
+
+  const a = (r.assignment as Record<string, unknown> | undefined) ?? {};
+  const strongRep =
+    (a.strong as { rep_id?: number } | undefined)?.rep_id ??
+    def.assignment.strong.rep_id;
+
+  // New shape
+  let overseasRep = (a.overseas as { rep_id?: number } | undefined)?.rep_id;
+  let domesticRep = (a.domestic as { rep_id?: number } | undefined)?.rep_id;
+
+  // Legacy shape: overseas_override + normal.rep_ids (round-robin).
+  if (overseasRep === undefined) {
+    const ov = a.overseas_override as
+      | { enabled?: boolean; rep_id?: number }
+      | undefined;
+    if (ov?.enabled && typeof ov.rep_id === "number") overseasRep = ov.rep_id;
+  }
+  if (domesticRep === undefined) {
+    const normal = a.normal as { rep_ids?: unknown } | undefined;
+    if (Array.isArray(normal?.rep_ids) && normal!.rep_ids.length > 0) {
+      const first = (normal!.rep_ids as unknown[]).find(
+        (x) => typeof x === "number",
+      );
+      if (typeof first === "number") domesticRep = first;
+    }
+  }
+
+  return {
+    strong_criteria: { min_citation, max_school_tier },
+    assignment: {
+      strong: { rep_id: strongRep },
+      overseas: { rep_id: overseasRep ?? def.assignment.overseas.rep_id },
+      domestic: { rep_id: domesticRep ?? def.assignment.domestic.rep_id },
+    },
+  };
+}
+
+/** Load a single active sales rep by ID. */
 export async function getRep(id: number): Promise<SalesRep | null> {
   try {
     const { data } = await supabase
@@ -80,14 +135,13 @@ export async function getRep(id: number): Promise<SalesRep | null> {
       .eq("id", id)
       .eq("active", true)
       .single();
-
     return data as SalesRep | null;
   } catch {
     return null;
   }
 }
 
-/** Load all active sales reps. Returns empty array if table doesn't exist. */
+/** Load all active sales reps. */
 export async function getAllReps(): Promise<SalesRep[]> {
   try {
     const { data } = await supabase
@@ -95,7 +149,6 @@ export async function getAllReps(): Promise<SalesRep[]> {
       .select("*")
       .eq("active", true)
       .order("id");
-
     return (data ?? []) as SalesRep[];
   } catch {
     return [];
@@ -103,8 +156,7 @@ export async function getAllReps(): Promise<SalesRep[]> {
 }
 
 /** Resolve an array of matched sub-directions to their parent category.
- *  If multiple categories match, pick the one with the most hits.
- *  Returns null if no sub-direction matches any category. */
+ *  Used for display + filtering only — routing no longer depends on it. */
 export function resolveCategory(matchedDirections: string[]): string | null {
   if (!matchedDirections || matchedDirections.length === 0) return null;
 
@@ -130,65 +182,51 @@ export function resolveCategory(matchedDirections: string[]): string | null {
   return best;
 }
 
-function isOverseas(email: string): boolean {
+function isOverseas(email: string | null | undefined): boolean {
+  if (!email) return false;
   const domain = email.split("@").pop()?.toLowerCase() ?? "";
   return !domain.endsWith(".cn");
 }
 
-/** Classify a lead as 'strong' or 'normal' based on config thresholds. */
+/** Classify a lead as 'strong' or 'normal'.
+ *  Strong if: citationCount > min_citation OR schoolTier ∈ [1, max_school_tier].
+ *  When data is missing, falls through to 'normal'. */
 export function classifyLead(
   config: AssignmentConfig,
   lead: {
-    hIndex: number | null;
+    citationCount?: number | null;
+    /** Legacy alias — ignored by current rule, accepted so older callers compile. */
+    hIndex?: number | null;
     schoolTier: number | null;
-    authorEmail: string;
+    authorEmail?: string;
   },
 ): "strong" | "normal" {
-  const { min_h_index, max_school_tier, require_overseas } = config.strong_criteria;
+  const { min_citation, max_school_tier } = config.strong_criteria;
 
-  if (lead.hIndex === null || lead.hIndex < min_h_index) return "normal";
-  if (lead.schoolTier === null || lead.schoolTier > max_school_tier) return "normal";
-  if (require_overseas && !isOverseas(lead.authorEmail)) return "normal";
-
-  return "strong";
+  if ((lead.citationCount ?? 0) > min_citation) return "strong";
+  if (
+    lead.schoolTier !== null &&
+    lead.schoolTier !== undefined &&
+    lead.schoolTier >= 1 &&
+    lead.schoolTier <= max_school_tier
+  ) {
+    return "strong";
+  }
+  return "normal";
 }
 
-/** Pick the rep ID for a lead based on its tier, overseas status, category, and assignment config. */
+/** Pick the rep ID for a lead. Flat 3-way: strong → Leo, normal+overseas → Ethan,
+ *  normal+domestic → Chenyu. The trailing `_unused` arg keeps signature compat
+ *  with older call sites that passed `matchedDirections`. */
 export function assignRep(
   config: AssignmentConfig,
   tier: "strong" | "normal",
-  authorEmail?: string,
-  matchedDirections?: string[],
+  authorEmail?: string | null,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _unused?: unknown,
 ): number {
-  // Strong leads always go to the strong rep
-  if (tier === "strong") {
-    return config.assignment.strong.rep_id;
-  }
-
-  // Category routing: resolve lead's category and route to owning rep
-  const catRouting = config.assignment.category_routing;
-  if (catRouting?.enabled && matchedDirections && matchedDirections.length > 0) {
-    const category = resolveCategory(matchedDirections);
-    if (category && category in catRouting.routes) {
-      return catRouting.routes[category];
-    }
-  }
-
-  // Overseas override: all overseas leads go to designated rep
-  if (
-    authorEmail &&
-    config.assignment.overseas_override?.enabled &&
-    isOverseas(authorEmail)
-  ) {
-    return config.assignment.overseas_override.rep_id;
-  }
-
-  // Normal leads: round-robin
-  const repIds = config.assignment.normal.rep_ids;
-  if (repIds.length === 0) return config.assignment.strong.rep_id;
-  if (repIds.length === 1) return repIds[0];
-
-  const chosen = repIds[rrIndex % repIds.length];
-  rrIndex++;
-  return chosen;
+  if (tier === "strong") return config.assignment.strong.rep_id;
+  return isOverseas(authorEmail)
+    ? config.assignment.overseas.rep_id
+    : config.assignment.domestic.rep_id;
 }

@@ -109,12 +109,12 @@ export async function POST(req: NextRequest) {
     try {
       const config = await getAssignmentConfig();
       leadTier = classifyLead(config, {
+        citationCount,
         hIndex,
         schoolTier,
         authorEmail: emailed.email,
       });
-      const dirs: string[] = Array.isArray(matched_directions) ? matched_directions : [];
-      assignedRepId = assignRep(config, leadTier, emailed.email, dirs);
+      assignedRepId = assignRep(config, leadTier, emailed.email);
     } catch {
       // Classification/assignment failure is non-blocking
     }
