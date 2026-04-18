@@ -209,40 +209,65 @@ export default function SettingsPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-24">
-        <Loader2 className="h-6 w-6 animate-spin text-neutral-500" />
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "96px 0" }}>
+        <Loader2 className="h-6 w-6 animate-spin" style={{ color: "var(--text-tertiary)" }} />
       </div>
     );
   }
+
+  const inputStyle: React.CSSProperties = {
+    width: "100%",
+    borderRadius: "var(--radius-sm)",
+    border: "1px solid var(--border)",
+    background: "var(--card)",
+    padding: "8px 12px",
+    fontSize: 13,
+    color: "var(--text)",
+    outline: "none",
+    fontFamily: "var(--font-body)",
+  };
 
   return (
     <div>
       {/* Flash message */}
       {flash && (
-        <div className="fixed top-4 right-4 z-50 rounded-lg bg-neutral-800 border border-neutral-700 px-4 py-2.5 text-[13px] text-white shadow-xl animate-in fade-in slide-in-from-top-2">
+        <div
+          style={{
+            position: "fixed", top: 16, right: 16, zIndex: 50,
+            borderRadius: "var(--radius-sm)",
+            background: "var(--text)", color: "white",
+            border: "1px solid var(--text)",
+            padding: "10px 16px", fontSize: 13,
+            boxShadow: "var(--shadow-md)",
+          }}
+          className="animate-slide-in"
+        >
           {flash}
         </div>
       )}
 
       {/* Page Header */}
-      <div className="mb-8">
-        <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
-        <p className="text-[13px] text-neutral-500 mt-0.5">
-          Manage sales reps and lead assignment rules
-        </p>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 28 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 14 }}>
+          <h1 className="page-title">Settings</h1>
+          <span className="lead-count">Reps & assignment</span>
+        </div>
       </div>
 
       {/* ═══ Assignment Rules ═══ */}
-      <div className="rounded-xl border border-neutral-800 bg-neutral-900/50 p-5 mb-6">
-        <div className="flex items-center gap-2 mb-5">
-          <Settings className="h-4 w-4 text-neutral-400" />
-          <h2 className="text-sm font-semibold">Assignment Rules</h2>
+      <div id="assignment" className="section-card" style={{ marginBottom: 24, scrollMarginTop: 24 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+          <Settings style={{ width: 16, height: 16, color: "var(--text-secondary)" }} />
+          <h3 style={{ marginBottom: 0 }}>Assignment Rules</h3>
         </div>
+        <p style={{ fontSize: 12.5, color: "var(--text-tertiary)", marginBottom: 20, lineHeight: 1.5 }}>
+          Define what makes a Strong lead and how leads are routed to your sales reps.
+        </p>
 
-        <div className="grid grid-cols-3 gap-4 mb-5">
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 20 }}>
           {/* Min h-index */}
           <div>
-            <label className="block text-[11px] font-medium text-neutral-500 mb-1.5">
+            <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em" }}>
               Min h-index (Strong)
             </label>
             <input
@@ -257,13 +282,13 @@ export default function SettingsPage() {
                   },
                 })
               }
-              className="w-full rounded-lg border border-neutral-800 bg-white/[0.04] px-3 py-2 text-[13px] text-white focus:outline-none focus:border-neutral-600 transition-colors"
+              style={inputStyle}
             />
           </div>
 
           {/* Max school tier */}
           <div>
-            <label className="block text-[11px] font-medium text-neutral-500 mb-1.5">
+            <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em" }}>
               Max School Tier (Strong)
             </label>
             <input
@@ -278,16 +303,17 @@ export default function SettingsPage() {
                   },
                 })
               }
-              className="w-full rounded-lg border border-neutral-800 bg-white/[0.04] px-3 py-2 text-[13px] text-white focus:outline-none focus:border-neutral-600 transition-colors"
+              style={inputStyle}
             />
           </div>
 
           {/* Require overseas */}
           <div>
-            <label className="block text-[11px] font-medium text-neutral-500 mb-1.5">
+            <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em" }}>
               Require Overseas
             </label>
             <select
+              className="filter-select"
               value={config.strong_criteria.require_overseas ? "yes" : "no"}
               onChange={(e) =>
                 setConfig({
@@ -298,12 +324,7 @@ export default function SettingsPage() {
                   },
                 })
               }
-              className="w-full rounded-lg border border-neutral-800 bg-white/[0.04] px-3 py-2 text-[13px] text-white focus:outline-none focus:border-neutral-600 transition-colors appearance-none"
-              style={{
-                backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%23737373' viewBox='0 0 16 16'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E")`,
-                backgroundRepeat: "no-repeat",
-                backgroundPosition: "right 12px center",
-              }}
+              style={{ width: "100%", padding: "8px 28px 8px 12px", fontSize: 13 }}
             >
               <option value="yes">Yes — only non-.cn emails</option>
               <option value="no">No — all emails qualify</option>
@@ -312,12 +333,13 @@ export default function SettingsPage() {
         </div>
 
         {/* Assignment mapping */}
-        <div className="grid grid-cols-2 gap-4 mb-5">
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
           <div>
-            <label className="block text-[11px] font-medium text-neutral-500 mb-1.5">
+            <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em" }}>
               Strong Leads → Rep
             </label>
             <select
+              className="filter-select"
               value={config.assignment.strong.rep_id}
               onChange={(e) =>
                 setConfig({
@@ -328,12 +350,7 @@ export default function SettingsPage() {
                   },
                 })
               }
-              className="w-full rounded-lg border border-neutral-800 bg-white/[0.04] px-3 py-2 text-[13px] text-white focus:outline-none focus:border-neutral-600 transition-colors appearance-none"
-              style={{
-                backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%23737373' viewBox='0 0 16 16'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E")`,
-                backgroundRepeat: "no-repeat",
-                backgroundPosition: "right 12px center",
-              }}
+              style={{ width: "100%", padding: "8px 28px 8px 12px", fontSize: 13 }}
             >
               {reps.filter((r) => r.active).map((r) => (
                 <option key={r.id} value={r.id}>{r.name}</option>
@@ -342,10 +359,10 @@ export default function SettingsPage() {
           </div>
 
           <div>
-            <label className="block text-[11px] font-medium text-neutral-500 mb-1.5">
+            <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em" }}>
               Normal Leads → Round Robin Reps
             </label>
-            <div className="flex flex-wrap gap-2">
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
               {reps.filter((r) => r.active).map((r) => {
                 const isSelected = config.assignment.normal.rep_ids.includes(r.id);
                 return (
@@ -364,11 +381,17 @@ export default function SettingsPage() {
                         },
                       });
                     }}
-                    className={`rounded-lg px-3 py-1.5 text-xs font-medium border transition-colors ${
-                      isSelected
-                        ? "bg-blue-500/15 border-blue-500/30 text-blue-400"
-                        : "bg-white/[0.04] border-neutral-800 text-neutral-500 hover:text-neutral-300"
-                    }`}
+                    style={{
+                      borderRadius: "var(--radius-sm)",
+                      padding: "6px 12px",
+                      fontSize: 12,
+                      fontWeight: 600,
+                      border: isSelected ? "1px solid #BFDBFE" : "1px solid var(--border)",
+                      background: isSelected ? "var(--blue-bg)" : "var(--card)",
+                      color: isSelected ? "var(--blue)" : "var(--text-secondary)",
+                      cursor: "pointer",
+                      transition: "all 0.15s ease",
+                    }}
                   >
                     {r.name}
                   </button>
@@ -379,12 +402,13 @@ export default function SettingsPage() {
         </div>
 
         {/* Overseas override */}
-        <div className="grid grid-cols-2 gap-4 mb-5">
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
           <div>
-            <label className="block text-[11px] font-medium text-neutral-500 mb-1.5">
+            <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em" }}>
               Overseas Override
             </label>
             <select
+              className="filter-select"
               value={config.assignment.overseas_override?.enabled ? "yes" : "no"}
               onChange={(e) =>
                 setConfig({
@@ -398,12 +422,7 @@ export default function SettingsPage() {
                   },
                 })
               }
-              className="w-full rounded-lg border border-neutral-800 bg-white/[0.04] px-3 py-2 text-[13px] text-white focus:outline-none focus:border-neutral-600 transition-colors appearance-none"
-              style={{
-                backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%23737373' viewBox='0 0 16 16'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E")`,
-                backgroundRepeat: "no-repeat",
-                backgroundPosition: "right 12px center",
-              }}
+              style={{ width: "100%", padding: "8px 28px 8px 12px", fontSize: 13 }}
             >
               <option value="yes">Yes — all overseas leads to one rep</option>
               <option value="no">No — follow normal round-robin</option>
@@ -412,10 +431,11 @@ export default function SettingsPage() {
 
           {config.assignment.overseas_override?.enabled && (
             <div>
-              <label className="block text-[11px] font-medium text-neutral-500 mb-1.5">
+              <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em" }}>
                 Overseas → Rep
               </label>
               <select
+                className="filter-select"
                 value={config.assignment.overseas_override?.rep_id ?? ""}
                 onChange={(e) =>
                   setConfig({
@@ -429,12 +449,7 @@ export default function SettingsPage() {
                     },
                   })
                 }
-                className="w-full rounded-lg border border-neutral-800 bg-white/[0.04] px-3 py-2 text-[13px] text-white focus:outline-none focus:border-neutral-600 transition-colors appearance-none"
-                style={{
-                  backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%23737373' viewBox='0 0 16 16'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E")`,
-                  backgroundRepeat: "no-repeat",
-                  backgroundPosition: "right 12px center",
-                }}
+                style={{ width: "100%", padding: "8px 28px 8px 12px", fontSize: 13 }}
               >
                 {reps.filter((r) => r.active).map((r) => (
                   <option key={r.id} value={r.id}>{r.name}</option>
@@ -445,43 +460,48 @@ export default function SettingsPage() {
         </div>
 
         {/* Preview */}
-        <div className="border-t border-neutral-800/50 pt-4 flex items-center justify-between">
-          <div className="flex flex-wrap gap-4 text-xs text-neutral-500">
+        <div style={{ borderTop: "1px solid var(--border-light)", paddingTop: 16, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 16, fontSize: 12, color: "var(--text-tertiary)" }}>
             <span>
-              Strong: h-index ≥ <strong className="text-neutral-400">{config.strong_criteria.min_h_index}</strong>,
-              tier ≤ <strong className="text-neutral-400">{config.strong_criteria.max_school_tier}</strong>
-              {" → "}<strong className="text-neutral-400">{reps.find((r) => r.id === config.assignment.strong.rep_id)?.name || "?"}</strong>
+              Strong: h-index ≥{" "}
+              <strong style={{ color: "var(--text)" }}>{config.strong_criteria.min_h_index}</strong>,
+              tier ≤{" "}
+              <strong style={{ color: "var(--text)" }}>{config.strong_criteria.max_school_tier}</strong>
+              {" → "}
+              <strong style={{ color: "var(--text)" }}>
+                {reps.find((r) => r.id === config.assignment.strong.rep_id)?.name || "?"}
+              </strong>
             </span>
             {config.assignment.overseas_override?.enabled && (
               <span>
-                Overseas → <strong className="text-neutral-400">
+                Overseas →{" "}
+                <strong style={{ color: "var(--text)" }}>
                   {reps.find((r) => r.id === config.assignment.overseas_override?.rep_id)?.name || "?"}
                 </strong>
               </span>
             )}
             <span>
-              Rest: round-robin → <strong className="text-neutral-400">
-                {config.assignment.normal.rep_ids.map((id) => reps.find((r) => r.id === id)?.name || "?").join(", ")}
+              Rest: round-robin →{" "}
+              <strong style={{ color: "var(--text)" }}>
+                {config.assignment.normal.rep_ids
+                  .map((id) => reps.find((r) => r.id === id)?.name || "?")
+                  .join(", ")}
               </strong>
             </span>
           </div>
-          <button
-            onClick={handleSaveConfig}
-            disabled={savingConfig}
-            className="flex items-center gap-1.5 rounded-lg bg-white px-3.5 py-[7px] text-[13px] font-medium text-black hover:bg-neutral-200 disabled:opacity-50 transition-colors"
-          >
-            {savingConfig ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+          <button onClick={handleSaveConfig} disabled={savingConfig} className="btn btn-primary">
+            {savingConfig ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save />}
             Save Rules
           </button>
         </div>
       </div>
 
       {/* ═══ Category Routing ═══ */}
-      <div className="rounded-xl border border-neutral-800 bg-neutral-900/50 p-5 mb-6">
-        <div className="flex items-center justify-between mb-5">
-          <div className="flex items-center gap-2">
-            <Tag className="h-4 w-4 text-neutral-400" />
-            <h2 className="text-sm font-semibold">Category Routing</h2>
+      <div className="section-card" style={{ marginBottom: 24 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Tag style={{ width: 16, height: 16, color: "var(--text-secondary)" }} />
+            <h3 style={{ marginBottom: 0 }}>Category Routing</h3>
           </div>
           <button
             onClick={() => {
@@ -491,17 +511,37 @@ export default function SettingsPage() {
                 category_routing: { ...current, enabled: !current.enabled },
               });
             }}
-            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-              config.category_routing?.enabled ? "bg-blue-500" : "bg-neutral-700"
-            }`}
+            style={{
+              position: "relative",
+              display: "inline-flex",
+              alignItems: "center",
+              height: 22,
+              width: 40,
+              borderRadius: 999,
+              background: config.category_routing?.enabled ? "var(--blue)" : "var(--border)",
+              border: "none",
+              cursor: "pointer",
+              transition: "background 0.15s ease",
+              padding: 0,
+            }}
           >
             <span
-              className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${
-                config.category_routing?.enabled ? "translate-x-[18px]" : "translate-x-[3px]"
-              }`}
+              style={{
+                display: "inline-block",
+                height: 16,
+                width: 16,
+                borderRadius: "50%",
+                background: "white",
+                transition: "transform 0.15s ease",
+                transform: config.category_routing?.enabled ? "translateX(21px)" : "translateX(3px)",
+                boxShadow: "0 1px 2px rgba(0,0,0,0.15)",
+              }}
             />
           </button>
         </div>
+        <p style={{ fontSize: 12.5, color: "var(--text-tertiary)", marginBottom: 20, lineHeight: 1.5 }}>
+          Override default round-robin by routing leads to specific reps based on their research category.
+        </p>
 
         {config.category_routing?.enabled && (() => {
           const routes = config.category_routing?.routes ?? DEFAULT_CATEGORY_ROUTES;
@@ -515,11 +555,25 @@ export default function SettingsPage() {
 
           return (
             <>
-              <div className="grid grid-cols-3 gap-3 mb-4">
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 16 }}>
                 {RESEARCH_CATEGORIES.map((cat) => (
-                  <div key={cat} className="flex items-center justify-between rounded-lg border border-neutral-800/50 bg-white/[0.02] px-3 py-2.5">
-                    <span className="text-[12px] text-neutral-300 truncate mr-2">{cat}</span>
+                  <div
+                    key={cat}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      borderRadius: "var(--radius-sm)",
+                      border: "1px solid var(--border-light)",
+                      background: "var(--bg)",
+                      padding: "10px 12px",
+                    }}
+                  >
+                    <span style={{ fontSize: 12, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginRight: 8 }}>
+                      {cat}
+                    </span>
                     <select
+                      className="filter-select"
                       value={routes[cat] ?? DEFAULT_CATEGORY_ROUTES[cat]}
                       onChange={(e) => {
                         const newRoutes = { ...routes, [cat]: parseInt(e.target.value) };
@@ -531,12 +585,7 @@ export default function SettingsPage() {
                           },
                         });
                       }}
-                      className="rounded-md border border-neutral-800 bg-white/[0.04] px-2 py-1 text-[11px] text-white focus:outline-none focus:border-neutral-600 transition-colors appearance-none pr-5"
-                      style={{
-                        backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' fill='%23737373' viewBox='0 0 16 16'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E")`,
-                        backgroundRepeat: "no-repeat",
-                        backgroundPosition: "right 6px center",
-                      }}
+                      style={{ padding: "4px 22px 4px 8px", fontSize: 11 }}
                     >
                       {activeReps.map((r) => (
                         <option key={r.id} value={r.id}>{r.name}</option>
@@ -547,10 +596,11 @@ export default function SettingsPage() {
               </div>
 
               {/* Summary */}
-              <div className="flex flex-wrap gap-3 text-xs text-neutral-500">
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 12, fontSize: 12, color: "var(--text-tertiary)" }}>
                 {[...repCounts.entries()].map(([name, count]) => (
                   <span key={name}>
-                    <strong className="text-neutral-400">{name}</strong>: {count} {count === 1 ? "category" : "categories"}
+                    <strong style={{ color: "var(--text)" }}>{name}</strong>: {count}{" "}
+                    {count === 1 ? "category" : "categories"}
                   </span>
                 ))}
               </div>
@@ -559,106 +609,115 @@ export default function SettingsPage() {
         })()}
 
         {!config.category_routing?.enabled && (
-          <p className="text-[12px] text-neutral-600">
+          <p style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
             When enabled, leads are routed to reps based on their research category instead of the default round-robin.
           </p>
         )}
       </div>
 
       {/* ═══ Sales Reps ═══ */}
-      <div className="rounded-xl border border-neutral-800 bg-neutral-900/50 p-5">
-        <div className="flex items-center justify-between mb-5">
-          <div className="flex items-center gap-2">
-            <User className="h-4 w-4 text-neutral-400" />
-            <h2 className="text-sm font-semibold">Sales Reps</h2>
-            <span className="text-[11px] text-neutral-600 bg-white/[0.06] rounded-full px-2 py-0.5">
-              {reps.filter((r) => r.active).length} active
-            </span>
+      <div className="section-card">
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <User style={{ width: 16, height: 16, color: "var(--text-secondary)" }} />
+            <h3 style={{ marginBottom: 0 }}>Sales Reps</h3>
+            <span className="lead-count">{reps.filter((r) => r.active).length} active</span>
           </div>
           {!showNewRep && (
-            <button
-              onClick={() => setShowNewRep(true)}
-              className="flex items-center gap-1.5 rounded-lg border border-neutral-800 px-3 py-[6px] text-[12px] font-medium text-neutral-400 hover:text-white hover:bg-white/[0.05] transition-colors"
-            >
-              <Plus className="h-3.5 w-3.5" />
+            <button onClick={() => setShowNewRep(true)} className="btn">
+              <Plus />
               Add Rep
             </button>
           )}
         </div>
+        <p style={{ fontSize: 12.5, color: "var(--text-tertiary)", marginBottom: 20, lineHeight: 1.5 }}>
+          Sender identities used when emailing leads. Email and WeChat ID appear in the outgoing message footer.
+        </p>
 
-        <div className="space-y-3">
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           {/* Existing reps */}
           {reps.map((rep) => (
             <div
               key={rep.id}
-              className={`rounded-lg border border-neutral-800/50 p-4 transition-opacity ${
-                !rep.active ? "opacity-50" : ""
-              }`}
+              style={{
+                borderRadius: "var(--radius)",
+                border: "1px solid var(--border)",
+                background: "var(--card)",
+                padding: 16,
+                opacity: rep.active ? 1 : 0.5,
+                transition: "opacity 0.15s ease",
+              }}
             >
-              <div className="grid grid-cols-4 gap-3 mb-3">
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 12 }}>
                 <div>
-                  <label className="block text-[10px] font-medium text-neutral-600 mb-1">Name</label>
+                  <label style={{ display: "block", fontSize: 10, fontWeight: 600, color: "var(--text-tertiary)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                    Name
+                  </label>
                   <input
                     type="text"
                     value={rep.name}
                     onChange={(e) => updateRepField(rep.id, "name", e.target.value)}
-                    className="w-full rounded-md border border-neutral-800 bg-white/[0.04] px-2.5 py-1.5 text-[13px] text-white focus:outline-none focus:border-neutral-600"
+                    style={inputStyle}
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-medium text-neutral-600 mb-1">Sender Email</label>
+                  <label style={{ display: "block", fontSize: 10, fontWeight: 600, color: "var(--text-tertiary)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                    Sender Email
+                  </label>
                   <input
                     type="email"
                     value={rep.sender_email}
                     onChange={(e) => updateRepField(rep.id, "sender_email", e.target.value)}
-                    className="w-full rounded-md border border-neutral-800 bg-white/[0.04] px-2.5 py-1.5 text-[13px] text-white focus:outline-none focus:border-neutral-600"
+                    style={inputStyle}
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-medium text-neutral-600 mb-1">Sender Name</label>
+                  <label style={{ display: "block", fontSize: 10, fontWeight: 600, color: "var(--text-tertiary)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                    Sender Name
+                  </label>
                   <input
                     type="text"
                     value={rep.sender_name}
                     onChange={(e) => updateRepField(rep.id, "sender_name", e.target.value)}
-                    className="w-full rounded-md border border-neutral-800 bg-white/[0.04] px-2.5 py-1.5 text-[13px] text-white focus:outline-none focus:border-neutral-600"
+                    style={inputStyle}
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-medium text-neutral-600 mb-1">WeChat ID</label>
+                  <label style={{ display: "block", fontSize: 10, fontWeight: 600, color: "var(--text-tertiary)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                    WeChat ID
+                  </label>
                   <input
                     type="text"
                     value={rep.wechat_id}
                     onChange={(e) => updateRepField(rep.id, "wechat_id", e.target.value)}
-                    className="w-full rounded-md border border-neutral-800 bg-white/[0.04] px-2.5 py-1.5 text-[13px] text-white focus:outline-none focus:border-neutral-600"
+                    style={inputStyle}
                   />
                 </div>
               </div>
-              <div className="flex items-center justify-between">
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <button
                   onClick={() => handleToggleActive(rep)}
-                  className={`text-[11px] font-medium transition-colors ${
-                    rep.active
-                      ? "text-neutral-500 hover:text-red-400"
-                      : "text-emerald-600 hover:text-emerald-400"
-                  }`}
-                >
-                  {savingRep === rep.id ? (
-                    <Loader2 className="h-3 w-3 animate-spin inline mr-1" />
-                  ) : rep.active ? (
-                    <Trash2 className="h-3 w-3 inline mr-1" />
-                  ) : null}
-                  {rep.active ? "Deactivate" : "Reactivate"}
-                </button>
-                <button
-                  onClick={() => handleSaveRep(rep)}
-                  disabled={savingRep === rep.id}
-                  className="flex items-center gap-1 rounded-md bg-white/[0.06] px-2.5 py-1 text-[11px] font-medium text-neutral-300 hover:bg-white/[0.1] disabled:opacity-50 transition-colors"
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 600,
+                    color: rep.active ? "var(--text-tertiary)" : "var(--green)",
+                    background: "transparent",
+                    border: "none",
+                    cursor: "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 4,
+                  }}
                 >
                   {savingRep === rep.id ? (
                     <Loader2 className="h-3 w-3 animate-spin" />
-                  ) : (
-                    <Save className="h-3 w-3" />
-                  )}
+                  ) : rep.active ? (
+                    <Trash2 style={{ width: 12, height: 12 }} />
+                  ) : null}
+                  {rep.active ? "Deactivate" : "Reactivate"}
+                </button>
+                <button onClick={() => handleSaveRep(rep)} disabled={savingRep === rep.id} className="btn">
+                  {savingRep === rep.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save />}
                   Save
                 </button>
               </div>
@@ -667,62 +726,78 @@ export default function SettingsPage() {
 
           {/* New rep form */}
           {showNewRep && (
-            <div className="rounded-lg border border-blue-500/20 bg-blue-500/[0.03] p-4">
-              <p className="text-xs font-semibold text-blue-400 mb-3">New Sales Rep</p>
-              <div className="grid grid-cols-4 gap-3 mb-3">
+            <div
+              style={{
+                borderRadius: "var(--radius)",
+                border: "1px solid #BFDBFE",
+                background: "var(--blue-bg)",
+                padding: 16,
+              }}
+            >
+              <p style={{ fontSize: 12, fontWeight: 600, color: "var(--blue)", marginBottom: 12, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                New Sales Rep
+              </p>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 12 }}>
                 <div>
-                  <label className="block text-[10px] font-medium text-neutral-600 mb-1">Name</label>
+                  <label style={{ display: "block", fontSize: 10, fontWeight: 600, color: "var(--text-tertiary)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                    Name
+                  </label>
                   <input
                     type="text"
                     value={newRep.name}
                     onChange={(e) => setNewRep({ ...newRep, name: e.target.value })}
                     placeholder="Leo"
-                    className="w-full rounded-md border border-neutral-800 bg-white/[0.04] px-2.5 py-1.5 text-[13px] text-white placeholder-neutral-700 focus:outline-none focus:border-neutral-600"
+                    style={inputStyle}
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-medium text-neutral-600 mb-1">Sender Email</label>
+                  <label style={{ display: "block", fontSize: 10, fontWeight: 600, color: "var(--text-tertiary)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                    Sender Email
+                  </label>
                   <input
                     type="email"
                     value={newRep.sender_email}
                     onChange={(e) => setNewRep({ ...newRep, sender_email: e.target.value })}
                     placeholder="leo@company.com"
-                    className="w-full rounded-md border border-neutral-800 bg-white/[0.04] px-2.5 py-1.5 text-[13px] text-white placeholder-neutral-700 focus:outline-none focus:border-neutral-600"
+                    style={inputStyle}
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-medium text-neutral-600 mb-1">Sender Name</label>
+                  <label style={{ display: "block", fontSize: 10, fontWeight: 600, color: "var(--text-tertiary)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                    Sender Name
+                  </label>
                   <input
                     type="text"
                     value={newRep.sender_name}
                     onChange={(e) => setNewRep({ ...newRep, sender_name: e.target.value })}
                     placeholder="Leo Chen"
-                    className="w-full rounded-md border border-neutral-800 bg-white/[0.04] px-2.5 py-1.5 text-[13px] text-white placeholder-neutral-700 focus:outline-none focus:border-neutral-600"
+                    style={inputStyle}
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-medium text-neutral-600 mb-1">WeChat ID</label>
+                  <label style={{ display: "block", fontSize: 10, fontWeight: 600, color: "var(--text-tertiary)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                    WeChat ID
+                  </label>
                   <input
                     type="text"
                     value={newRep.wechat_id}
                     onChange={(e) => setNewRep({ ...newRep, wechat_id: e.target.value })}
                     placeholder="leo_wx"
-                    className="w-full rounded-md border border-neutral-800 bg-white/[0.04] px-2.5 py-1.5 text-[13px] text-white placeholder-neutral-700 focus:outline-none focus:border-neutral-600"
+                    style={inputStyle}
                   />
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={handleCreateRep}
-                  disabled={savingRep === "new"}
-                  className="flex items-center gap-1.5 rounded-lg bg-white px-3 py-[6px] text-[12px] font-medium text-black hover:bg-neutral-200 disabled:opacity-50 transition-colors"
-                >
-                  {savingRep === "new" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <button onClick={handleCreateRep} disabled={savingRep === "new"} className="btn btn-primary">
+                  {savingRep === "new" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus />}
                   Add Rep
                 </button>
                 <button
-                  onClick={() => { setShowNewRep(false); setNewRep(EMPTY_REP); }}
-                  className="rounded-lg border border-neutral-800 px-3 py-[6px] text-[12px] text-neutral-500 hover:text-white transition-colors"
+                  onClick={() => {
+                    setShowNewRep(false);
+                    setNewRep(EMPTY_REP);
+                  }}
+                  className="btn"
                 >
                   Cancel
                 </button>
@@ -731,13 +806,14 @@ export default function SettingsPage() {
           )}
 
           {reps.length === 0 && !showNewRep && (
-            <div className="text-center py-8">
-              <User className="h-8 w-8 mx-auto mb-3 text-neutral-700" />
-              <p className="text-sm text-neutral-500 mb-3">No sales reps yet</p>
-              <button
-                onClick={() => setShowNewRep(true)}
-                className="rounded-lg bg-white px-3.5 py-[7px] text-[13px] font-medium text-black hover:bg-neutral-200 transition-colors"
-              >
+            <div className="empty-state" style={{ border: "none", padding: "32px 0" }}>
+              <div className="empty-icon">
+                <User style={{ width: 20, height: 20 }} />
+              </div>
+              <h3>No sales reps yet</h3>
+              <p>Add your first rep to start assigning leads.</p>
+              <button onClick={() => setShowNewRep(true)} className="btn btn-primary" style={{ marginTop: 14 }}>
+                <Plus />
                 Add First Rep
               </button>
             </div>

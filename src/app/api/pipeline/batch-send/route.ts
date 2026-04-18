@@ -3,6 +3,7 @@ import { supabase } from "@/lib/db";
 import { resend } from "@/lib/resend";
 import { recordContact } from "@/lib/scanner";
 import { getRep } from "@/lib/assignment";
+import { checkSendAllowed } from "@/lib/contact-guard";
 
 /**
  * POST /api/pipeline/batch-send
@@ -21,11 +22,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Max 50 at a time" }, { status: 400 });
     }
 
-    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-
     let sent = 0;
     let skipped = 0;
     const errors: string[] = [];
+    const blocks: Record<string, number> = {};
 
     for (const id of ids) {
       const { data: lead } = await supabase
@@ -40,20 +40,10 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
-      if (lead.status !== "ready") {
+      const guard = await checkSendAllowed(lead);
+      if (!guard.ok) {
         skipped++;
-        continue;
-      }
-
-      if (!lead.draft_subject || !lead.draft_html) {
-        errors.push(`${id}: no draft`);
-        skipped++;
-        continue;
-      }
-
-      // Age gate
-      if (lead.published_at && new Date(lead.published_at) > oneDayAgo) {
-        skipped++;
+        blocks[guard.code] = (blocks[guard.code] || 0) + 1;
         continue;
       }
 
@@ -108,7 +98,7 @@ export async function POST(req: NextRequest) {
       await new Promise((r) => setTimeout(r, 500));
     }
 
-    return NextResponse.json({ sent, skipped, errors });
+    return NextResponse.json({ sent, skipped, errors, blocks });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Batch send failed";
     return NextResponse.json({ error: message }, { status: 500 });

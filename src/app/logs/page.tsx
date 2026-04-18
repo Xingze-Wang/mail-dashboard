@@ -38,90 +38,112 @@ export default function LogsPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-semibold text-white tracking-tight">Logs</h1>
-          <p className="text-sm text-neutral-400 mt-1">Webhook events and email activity timeline</p>
+      {/* ── Page Header ── */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 28 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 14 }}>
+          <h1 className="page-title">Logs</h1>
+          <span className="lead-count">Webhook events</span>
         </div>
-        <button
-          onClick={fetchLogs}
-          className="rounded-lg border border-neutral-700 p-2 text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
-        >
-          <RefreshCw className="h-4 w-4" />
+        <button onClick={fetchLogs} className="btn">
+          <RefreshCw />
+          Refresh
         </button>
       </div>
 
-      {/* Type Filter */}
-      <div className="flex gap-1 mb-6 border-b border-neutral-800 pb-3 overflow-x-auto">
-        {eventTypes.map((t) => {
-          const label = t === "all" ? "All" : t.replace("email.", "");
-          return (
-            <button
-              key={t}
-              onClick={() => setTypeFilter(t === "all" ? null : t)}
-              className={`rounded-md px-3 py-1.5 text-[12px] font-medium transition-colors whitespace-nowrap ${
-                (t === "all" && !typeFilter) || t === typeFilter
-                  ? "bg-neutral-800 text-white"
-                  : "text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/50"
-              }`}
-            >
-              {label.charAt(0).toUpperCase() + label.slice(1)}
-            </button>
-          );
-        })}
+      {/* ── Type Filter ── */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 24, alignItems: "center" }}>
+        <div className="status-tabs" style={{ overflowX: "auto" }}>
+          {eventTypes.map((t) => {
+            const label = t === "all" ? "All" : t.replace("email.", "");
+            const isActive = (t === "all" && !typeFilter) || t === typeFilter;
+            return (
+              <button
+                key={t}
+                onClick={() => setTypeFilter(t === "all" ? null : t)}
+                className={`status-tab ${isActive ? "active" : ""}`}
+              >
+                {label.charAt(0).toUpperCase() + label.slice(1)}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      {/* Event Timeline */}
-      <div className="rounded-xl border border-neutral-800 bg-neutral-900/50">
-        {loading ? (
-          <div className="p-5 text-center text-sm text-neutral-500 animate-pulse">Loading...</div>
-        ) : filteredEvents.length === 0 ? (
-          <div className="p-8 text-center">
-            <Activity className="h-8 w-8 mx-auto mb-3 text-neutral-600" />
-            <p className="text-sm text-neutral-500">
-              No events yet. Events will appear here as emails are sent and delivered.
-            </p>
+      {/* ── Event Timeline ── */}
+      {loading ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="skeleton" style={{ height: 50 }} />
+          ))}
+        </div>
+      ) : filteredEvents.length === 0 ? (
+        <div className="empty-state">
+          <div className="empty-icon">
+            <Activity style={{ width: 20, height: 20 }} />
           </div>
-        ) : (
-          <div className="divide-y divide-neutral-800/50">
-            {filteredEvents.map((event) => {
-              const status = event.type.replace("email.", "");
-              return (
-                <div key={event.id} className="flex items-center gap-4 px-5 py-3.5 hover:bg-neutral-800/20 transition-colors">
-                  {/* Timeline dot */}
-                  <div className="flex flex-col items-center">
-                    <span className={`h-2 w-2 rounded-full ${getStatusDot(status)}`} />
-                  </div>
+          <h3>No events yet</h3>
+          <p>Webhook events will appear here as emails are sent and delivered.</p>
+        </div>
+      ) : (
+        <div className="section-card" style={{ padding: 0 }}>
+          {filteredEvents.map((event, i, arr) => {
+            const status = event.type.replace("email.", "");
+            return (
+              <div
+                key={event.id}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 16,
+                  padding: "14px 24px",
+                  borderBottom: i === arr.length - 1 ? "none" : "1px solid var(--border-light)",
+                  transition: "background 0.15s ease",
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+              >
+                {/* Timeline dot */}
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+                  <span className={`h-2 w-2 rounded-full ${getStatusDot(status)}`} />
+                </div>
 
-                  {/* Event info */}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className={`text-[13px] font-medium capitalize ${getStatusColor(status)}`}>
-                        {status}
+                {/* Event info */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span className={`text-[13px] capitalize ${getStatusColor(status)}`} style={{ fontWeight: 600 }}>
+                      {status}
+                    </span>
+                    {event.to && (
+                      <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
+                        to <span style={{ color: "var(--text-secondary)" }}>{event.to}</span>
                       </span>
-                      {event.to && (
-                        <span className="text-[12px] text-neutral-500">
-                          to <span className="text-neutral-400">{event.to}</span>
-                        </span>
-                      )}
-                    </div>
-                    {event.subject && (
-                      <p className="text-[12px] text-neutral-500 truncate mt-0.5">
-                        {event.subject}
-                      </p>
                     )}
                   </div>
-
-                  {/* Timestamp */}
-                  <span className="text-[11px] text-neutral-500 flex-shrink-0">
-                    {new Date(event.createdAt).toLocaleString()}
-                  </span>
+                  {event.subject && (
+                    <p
+                      style={{
+                        fontSize: 12,
+                        color: "var(--text-tertiary)",
+                        marginTop: 2,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {event.subject}
+                    </p>
+                  )}
                 </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+
+                {/* Timestamp */}
+                <span style={{ fontSize: 11, color: "var(--text-tertiary)", flexShrink: 0 }}>
+                  {new Date(event.createdAt).toLocaleString()}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

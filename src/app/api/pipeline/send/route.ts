@@ -3,6 +3,7 @@ import { supabase } from "@/lib/db";
 import { resend } from "@/lib/resend";
 import { recordContact } from "@/lib/scanner";
 import { getRep } from "@/lib/assignment";
+import { checkSendAllowed, SEND_MIN_AGE_DAYS, CONTACT_DEDUP_DAYS } from "@/lib/contact-guard";
 
 export async function POST(req: NextRequest) {
   try {
@@ -13,7 +14,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing required field: id" }, { status: 400 });
     }
 
-    // Fetch the lead
     const { data: lead } = await supabase
       .from("pipeline_leads")
       .select("*")
@@ -24,25 +24,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Lead not found" }, { status: 404 });
     }
 
-    if (lead.status !== "ready") {
+    const guard = await checkSendAllowed(lead);
+    if (!guard.ok) {
+      const messages: Record<string, string> = {
+        bad_status: `Lead status is '${"status" in guard ? guard.status : ""}', must be 'ready'`,
+        no_draft: "Lead has no draft",
+        too_new: `Paper must be at least ${SEND_MIN_AGE_DAYS} days old`,
+        already_contacted: `Recipient was contacted within the last ${CONTACT_DEDUP_DAYS} days`,
+      };
+      const httpStatus = guard.code === "bad_status" || guard.code === "no_draft" ? 400 : 409;
       return NextResponse.json(
-        { error: `Lead status is '${lead.status}', must be 'ready' to send` },
-        { status: 400 },
+        { ...guard, error: messages[guard.code] },
+        { status: httpStatus },
       );
-    }
-
-    // Age gate: paper must be at least 1 day old
-    if (lead.published_at) {
-      const publishedDate = new Date(lead.published_at);
-      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-
-      if (publishedDate > oneDayAgo) {
-        const availableAt = new Date(publishedDate.getTime() + 24 * 60 * 60 * 1000);
-        return NextResponse.json(
-          { error: "Paper must be at least 1 day old", availableAt: availableAt.toISOString() },
-          { status: 400 },
-        );
-      }
     }
 
     // Look up assigned rep (fall back to env vars)
@@ -87,14 +81,22 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: emailError.message }, { status: 500 });
     }
 
-    // Update pipeline lead status
-    await supabase
+    const { error: updateError } = await supabase
       .from("pipeline_leads")
       .update({ status: "sent", sent_at: new Date().toISOString() })
-      .eq("id", id);
+      .eq("id", id)
+      .select()
+      .single();
 
-    // Record in contact history (1-year dedup)
-    await recordContact(lead.author_email, lead.title, lead.draft_subject);
+    if (updateError) {
+      console.error("pipeline_leads update failed after send", { id, updateError });
+    }
+
+    // Contact history bookkeeping — fire-and-forget so the response doesn't
+    // wait on the persons table upsert (which is the slow hop).
+    recordContact(lead.author_email, lead.title, lead.draft_subject).catch((e) => {
+      console.error("recordContact failed (non-blocking)", e);
+    });
 
     return NextResponse.json({ success: true, emailId: email.id });
   } catch (error: unknown) {

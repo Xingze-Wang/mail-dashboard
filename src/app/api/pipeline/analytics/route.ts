@@ -113,18 +113,99 @@ export async function GET() {
       conversionRate,
       daily,
       hIndexDist,
-      sources: [
-        {
-          source: "arXiv",
-          total: totalLeads,
-          strong: strongLeads,
-          normal: totalLeads - strongLeads,
-          sent: sentLeads,
-          wechat: wechatCount,
-          convRate: conversionRate,
-        },
-      ],
+      sources: buildSourceBreakdown(leads, reps ?? [], wechat),
     },
     sales: { reps: repStats },
+  });
+}
+
+/* ── Per-channel breakdown with per-rep allocation ──────────────────── */
+
+interface RawLead {
+  id: number;
+  status: string;
+  lead_tier: string | null;
+  assigned_rep_id: number | null;
+  source: string | null;
+  author_email: string | null;
+}
+
+interface RawRep {
+  id: number;
+  name: string;
+}
+
+interface RawWechat {
+  query: string | null;
+}
+
+// Always show these channels even if no leads yet, so the UI tells
+// the user "we know this exists, scraper hasn't shipped data".
+const KNOWN_CHANNELS = ["arXiv", "GitHub", "Hugging Face"] as const;
+
+function normalizeSource(raw: string | null): string {
+  if (!raw) return "arXiv"; // legacy rows with null source default to arXiv
+  const s = raw.trim().toLowerCase();
+  if (s === "arxiv") return "arXiv";
+  if (s === "github" || s === "gh") return "GitHub";
+  if (s === "huggingface" || s === "hugging_face" || s === "hf") return "Hugging Face";
+  return raw;
+}
+
+function buildSourceBreakdown(
+  leads: RawLead[],
+  reps: RawRep[],
+  wechat: RawWechat[],
+) {
+  const wechatEmails = new Set(
+    wechat.map((w) => (w.query ?? "").toLowerCase()).filter(Boolean),
+  );
+
+  const grouped = new Map<string, RawLead[]>();
+  for (const ch of KNOWN_CHANNELS) grouped.set(ch, []);
+  for (const lead of leads) {
+    const channel = normalizeSource(lead.source);
+    if (!grouped.has(channel)) grouped.set(channel, []);
+    grouped.get(channel)!.push(lead);
+  }
+
+  const repNameById = new Map(reps.map((r) => [r.id, r.name]));
+
+  return Array.from(grouped.entries()).map(([source, channelLeads]) => {
+    const total = channelLeads.length;
+    const strong = channelLeads.filter((l) => l.lead_tier === "strong").length;
+    const normal = total - strong;
+    const sent = channelLeads.filter((l) => l.status === "sent" || l.status === "replied").length;
+    const replied = channelLeads.filter((l) => l.status === "replied").length;
+    const channelWechat = channelLeads.filter((l) =>
+      wechatEmails.has((l.author_email ?? "").toLowerCase()),
+    ).length;
+    const convRate = sent > 0 ? Math.round((channelWechat / sent) * 1000) / 10 : 0;
+
+    // Per-rep allocation within this channel
+    const repCounts = new Map<number | null, number>();
+    for (const lead of channelLeads) {
+      const k = lead.assigned_rep_id ?? null;
+      repCounts.set(k, (repCounts.get(k) ?? 0) + 1);
+    }
+    const reps = Array.from(repCounts.entries())
+      .map(([repId, count]) => ({
+        repId,
+        repName: repId === null ? "Unassigned" : (repNameById.get(repId) ?? `Rep #${repId}`),
+        count,
+      }))
+      .sort((a, b) => b.count - a.count);
+
+    return {
+      source,
+      total,
+      strong,
+      normal,
+      sent,
+      replied,
+      wechat: channelWechat,
+      convRate,
+      reps,
+    };
   });
 }

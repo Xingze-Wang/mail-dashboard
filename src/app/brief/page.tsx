@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from "react";
 import {
-  Search,
   FileText,
   User,
   Mail,
@@ -55,30 +54,19 @@ interface Brief {
   createdAt: string;
 }
 
-function computeBadge(level: string | null) {
-  switch (level) {
-    case "heavy":
-      return "bg-red-500/20 text-red-400";
-    case "moderate":
-      return "bg-yellow-500/20 text-yellow-400";
-    case "light":
-      return "bg-green-500/20 text-green-400";
-    default:
-      return "bg-neutral-500/20 text-neutral-400";
-  }
+function computeBadgeClass(level: string | null) {
+  if (level === "heavy") return "badge-compute heavy";
+  if (level === "moderate") return "badge-compute moderate";
+  if (level === "light") return "badge-compute light";
+  return "badge-compute";
 }
 
-function statusBadge(status: string) {
-  switch (status) {
-    case "sent":
-      return "bg-green-500/20 text-green-400";
-    case "ready":
-      return "bg-blue-500/20 text-blue-400";
-    case "skipped":
-      return "bg-neutral-500/20 text-neutral-400";
-    default:
-      return "bg-yellow-500/20 text-yellow-400";
-  }
+function statusBadgeClass(status: string) {
+  if (status === "sent") return "badge-status sent";
+  if (status === "ready") return "badge-status ready";
+  if (status === "skipped") return "badge-status skipped";
+  if (status === "replied") return "badge-status replied";
+  return "badge-status nurture";
 }
 
 function tierLabel(tier: number | null) {
@@ -102,58 +90,63 @@ function ResultCard({
   return (
     <button
       onClick={onSelect}
-      className="w-full text-left rounded-lg border border-neutral-800 bg-neutral-900/50 p-4 hover:border-neutral-600 hover:bg-neutral-900 transition-colors"
+      className="lead-card"
+      style={{ width: "100%", textAlign: "left", padding: 16, cursor: "pointer", display: "block" }}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-sm font-semibold text-white truncate">
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 14, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {brief.personName}
             </span>
             {isMismatch && (
-              <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] bg-amber-500/20 text-amber-400">
-                <AlertTriangle className="h-3 w-3" />
+              <span
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 4,
+                  borderRadius: 20, padding: "2px 10px", fontSize: 11, fontWeight: 600,
+                  background: "#FFFBEB", color: "var(--gold)", border: "1px solid #FDE68A",
+                }}
+              >
+                <AlertTriangle style={{ width: 12, height: 12 }} />
                 Co-author
               </span>
             )}
             {brief.outreach.status === "sent" && (
-              <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] bg-green-500/20 text-green-400">
-                <Send className="h-3 w-3" />
+              <span className="badge-status sent" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                <Send style={{ width: 12, height: 12 }} />
                 Emailed
               </span>
             )}
           </div>
-          <p className="text-[13px] text-neutral-300 truncate mb-1.5">
+          <p style={{ fontSize: 13, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginBottom: 6 }}>
             {brief.paper.title}
           </p>
-          <div className="flex items-center gap-3 text-[11px] text-neutral-500">
+          <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 11, color: "var(--text-tertiary)", flexWrap: "wrap" }}>
             {brief.research.schoolName && (
-              <span className="flex items-center gap-1">
-                <GraduationCap className="h-3 w-3" />
+              <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <GraduationCap style={{ width: 12, height: 12 }} />
                 {brief.research.schoolName}
               </span>
             )}
             {brief.research.computeLevel && (
-              <span
-                className={`rounded px-1.5 py-0.5 ${computeBadge(brief.research.computeLevel)}`}
-              >
+              <span className={computeBadgeClass(brief.research.computeLevel)}>
                 {brief.research.computeLevel}
               </span>
             )}
             {brief.paper.publishedAt && (
-              <span className="flex items-center gap-1">
-                <Clock className="h-3 w-3" />
+              <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <Clock style={{ width: 12, height: 12 }} />
                 {formatDate(brief.paper.publishedAt)}
               </span>
             )}
           </div>
         </div>
-        <div className="text-neutral-600 mt-1">
-          <FileText className="h-4 w-4" />
+        <div style={{ color: "var(--text-tertiary)", marginTop: 4 }}>
+          <FileText style={{ width: 16, height: 16 }} />
         </div>
       </div>
       {isMismatch && (
-        <p className="mt-2 text-[11px] text-amber-400/80 leading-relaxed">
+        <p style={{ marginTop: 8, fontSize: 11, color: "var(--gold)", lineHeight: 1.6 }}>
           We emailed {brief.authorMismatch!.emailedPerson} — this person is a
           co-author on the same paper
         </p>
@@ -216,64 +209,53 @@ function DetailView({
   };
 
   return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <button
-          onClick={onBack}
-          className="flex items-center gap-1.5 text-[13px] text-neutral-400 hover:text-white transition-colors"
-        >
-          <ArrowLeft className="h-3.5 w-3.5" />
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <button onClick={onBack} className="btn">
+          <ArrowLeft />
           Back to results
         </button>
 
         {wechatMarked ? (
-          <span className="rounded-full bg-green-500/20 px-3 py-1 text-[12px] text-green-400 font-medium">
+          <span className="badge-status replied" style={{ padding: "5px 14px" }}>
             Added on WeChat
           </span>
         ) : (
-          <button
-            onClick={markWechat}
-            disabled={wechatSaving}
-            className="rounded-lg bg-green-600 px-4 py-1.5 text-[12px] font-medium text-white hover:bg-green-500 disabled:opacity-50 transition-colors"
-          >
+          <button onClick={markWechat} disabled={wechatSaving} className="btn btn-primary">
             {wechatSaving ? "Saving..." : "Mark: Added on WeChat"}
           </button>
         )}
       </div>
 
       {/* AI Summary — the main thing sales reads */}
-      <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 p-5">
-        <h3 className="text-[13px] font-semibold text-blue-300 mb-3">
+      <div style={{ borderRadius: 10, border: "1px solid #BFDBFE", background: "var(--blue-bg)", padding: 20 }}>
+        <h3 style={{ fontFamily: "var(--font-heading)", fontSize: 16, fontWeight: 600, color: "var(--blue)", marginBottom: 12, letterSpacing: "-0.01em" }}>
           Sales Brief
         </h3>
         {summaryLoading ? (
-          <p className="text-[13px] text-neutral-500 animate-pulse">
-            Generating brief...
-          </p>
+          <p style={{ fontSize: 13, color: "var(--text-tertiary)" }}>Generating brief...</p>
         ) : summary ? (
-          <p className="text-[13px] text-neutral-200 leading-relaxed whitespace-pre-line">
+          <p style={{ fontSize: 13, color: "var(--text)", lineHeight: 1.7, whiteSpace: "pre-line" }}>
             {summary}
           </p>
         ) : (
-          <p className="text-[12px] text-neutral-500">
-            Unable to generate summary
-          </p>
+          <p style={{ fontSize: 12, color: "var(--text-tertiary)" }}>Unable to generate summary</p>
         )}
       </div>
 
       {/* Header */}
-      <div className="rounded-lg border border-neutral-800 bg-neutral-900/50 p-5">
-        <div className="flex items-start justify-between gap-4">
+      <div className="section-card" style={{ padding: 20 }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16 }}>
           <div>
-            <h2 className="text-lg font-semibold text-white mb-1">
+            <h2 style={{ fontFamily: "var(--font-heading)", fontSize: 20, fontWeight: 600, color: "var(--text)", marginBottom: 4, letterSpacing: "-0.01em" }}>
               {brief.personName}
             </h2>
             {research.schoolName && (
-              <div className="flex items-center gap-2 text-[13px] text-neutral-400 mb-2">
-                <GraduationCap className="h-3.5 w-3.5" />
+              <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-secondary)", marginBottom: 8 }}>
+                <GraduationCap style={{ width: 14, height: 14 }} />
                 {research.schoolName}
                 {tierLabel(research.schoolTier) && (
-                  <span className="text-neutral-600">
+                  <span style={{ color: "var(--text-tertiary)" }}>
                     ({tierLabel(research.schoolTier)})
                   </span>
                 )}
@@ -281,13 +263,8 @@ function DetailView({
             )}
           </div>
           {paper.pdfUrl && (
-            <a
-              href={paper.pdfUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1.5 rounded-md bg-neutral-800 px-3 py-1.5 text-[12px] text-neutral-300 hover:bg-neutral-700 transition-colors"
-            >
-              <ExternalLink className="h-3 w-3" />
+            <a href={paper.pdfUrl} target="_blank" rel="noopener noreferrer" className="btn">
+              <ExternalLink />
               PDF
             </a>
           )}
@@ -296,14 +273,14 @@ function DetailView({
 
       {/* Author mismatch warning */}
       {authorMismatch && (
-        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4">
-          <div className="flex items-start gap-2.5">
-            <AlertTriangle className="h-4 w-4 text-amber-400 mt-0.5 shrink-0" />
+        <div style={{ borderRadius: 10, border: "1px solid #FDE68A", background: "#FFFBEB", padding: 16 }}>
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+            <AlertTriangle style={{ width: 16, height: 16, color: "var(--gold)", marginTop: 2, flexShrink: 0 }} />
             <div>
-              <p className="text-[13px] font-medium text-amber-300 mb-1">
+              <p style={{ fontSize: 13, fontWeight: 600, color: "var(--gold)", marginBottom: 4 }}>
                 Author Mismatch
               </p>
-              <p className="text-[12px] text-amber-400/80 leading-relaxed">
+              <p style={{ fontSize: 12, color: "var(--gold)", opacity: 0.9, lineHeight: 1.6 }}>
                 {authorMismatch.note}
               </p>
             </div>
@@ -312,19 +289,19 @@ function DetailView({
       )}
 
       {/* Paper info */}
-      <div className="rounded-lg border border-neutral-800 bg-neutral-900/50 p-5">
-        <h3 className="text-[13px] font-semibold text-neutral-300 mb-3 flex items-center gap-2">
-          <FileText className="h-3.5 w-3.5" />
+      <div className="section-card" style={{ padding: 20 }}>
+        <h3 style={{ fontFamily: "var(--font-heading)", fontSize: 14, fontWeight: 600, color: "var(--text)", marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
+          <FileText style={{ width: 14, height: 14 }} />
           Paper
         </h3>
-        <p className="text-[14px] text-white font-medium mb-2">
+        <p style={{ fontSize: 14, color: "var(--text)", fontWeight: 600, marginBottom: 8 }}>
           {paper.title}
         </p>
-        <p className="text-[12px] text-neutral-500 mb-3">
+        <p style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 12 }}>
           {paper.authors}
         </p>
         {paper.abstract && (
-          <p className="text-[12px] text-neutral-400 leading-relaxed">
+          <p style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.6 }}>
             {paper.abstract.length > 600
               ? paper.abstract.slice(0, 600) + "..."
               : paper.abstract}
@@ -333,22 +310,22 @@ function DetailView({
       </div>
 
       {/* Research profile */}
-      <div className="rounded-lg border border-neutral-800 bg-neutral-900/50 p-5">
-        <h3 className="text-[13px] font-semibold text-neutral-300 mb-3 flex items-center gap-2">
-          <Cpu className="h-3.5 w-3.5" />
+      <div className="section-card" style={{ padding: 20 }}>
+        <h3 style={{ fontFamily: "var(--font-heading)", fontSize: 14, fontWeight: 600, color: "var(--text)", marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
+          <Cpu style={{ width: 14, height: 14 }} />
           Research Profile
         </h3>
-        <div className="grid grid-cols-2 gap-4">
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
           {research.computeLevel && (
             <div>
-              <p className="text-[11px] text-neutral-500 mb-1">Compute Need</p>
-              <span
-                className={`inline-block rounded px-2 py-0.5 text-[12px] font-medium ${computeBadge(research.computeLevel)}`}
-              >
+              <p style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em", fontWeight: 600 }}>
+                Compute Need
+              </p>
+              <span className={computeBadgeClass(research.computeLevel)}>
                 {research.computeLevel}
               </span>
               {research.computeConfidence != null && (
-                <span className="ml-2 text-[11px] text-neutral-600">
+                <span style={{ marginLeft: 8, fontSize: 11, color: "var(--text-tertiary)" }}>
                   {Math.round(research.computeConfidence * 100)}% conf
                 </span>
               )}
@@ -356,16 +333,13 @@ function DetailView({
           )}
           {research.directions.length > 0 && (
             <div>
-              <p className="text-[11px] text-neutral-500 mb-1">
-                <Compass className="h-3 w-3 inline mr-1" />
+              <p style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em", fontWeight: 600 }}>
+                <Compass style={{ width: 12, height: 12, display: "inline", marginRight: 4 }} />
                 Directions
               </p>
-              <div className="flex flex-wrap gap-1">
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
                 {research.directions.map((d) => (
-                  <span
-                    key={d}
-                    className="rounded px-1.5 py-0.5 text-[11px] bg-blue-500/15 text-blue-400"
-                  >
+                  <span key={d} className="direction-tag" style={{ background: "var(--blue-bg)", color: "var(--blue)", borderColor: "#BFDBFE" }}>
                     {d}
                   </span>
                 ))}
@@ -374,49 +348,43 @@ function DetailView({
           )}
         </div>
         {research.computeReason && (
-          <p className="mt-3 text-[12px] text-neutral-400 leading-relaxed">
+          <p style={{ marginTop: 12, fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.6 }}>
             {research.computeReason}
           </p>
         )}
       </div>
 
       {/* Outreach status */}
-      <div className="rounded-lg border border-neutral-800 bg-neutral-900/50 p-5">
-        <h3 className="text-[13px] font-semibold text-neutral-300 mb-3 flex items-center gap-2">
-          <Mail className="h-3.5 w-3.5" />
+      <div className="section-card" style={{ padding: 20 }}>
+        <h3 style={{ fontFamily: "var(--font-heading)", fontSize: 14, fontWeight: 600, color: "var(--text)", marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
+          <Mail style={{ width: 14, height: 14 }} />
           Outreach
         </h3>
-        <div className="space-y-2 text-[12px]">
-          <div className="flex items-center justify-between">
-            <span className="text-neutral-500">Emailed to</span>
-            <span className="text-neutral-300">{outreach.emailedTo}</span>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span style={{ color: "var(--text-tertiary)" }}>Emailed to</span>
+            <span style={{ color: "var(--text)" }}>{outreach.emailedTo}</span>
           </div>
           {outreach.emailedName && (
-            <div className="flex items-center justify-between">
-              <span className="text-neutral-500">Contact name</span>
-              <span className="text-neutral-300">{outreach.emailedName}</span>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span style={{ color: "var(--text-tertiary)" }}>Contact name</span>
+              <span style={{ color: "var(--text)" }}>{outreach.emailedName}</span>
             </div>
           )}
-          <div className="flex items-center justify-between">
-            <span className="text-neutral-500">Status</span>
-            <span
-              className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${statusBadge(outreach.status)}`}
-            >
-              {outreach.status}
-            </span>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span style={{ color: "var(--text-tertiary)" }}>Status</span>
+            <span className={statusBadgeClass(outreach.status)}>{outreach.status}</span>
           </div>
           {outreach.sentAt && (
-            <div className="flex items-center justify-between">
-              <span className="text-neutral-500">Sent at</span>
-              <span className="text-neutral-300">
-                {formatDate(outreach.sentAt)}
-              </span>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span style={{ color: "var(--text-tertiary)" }}>Sent at</span>
+              <span style={{ color: "var(--text)" }}>{formatDate(outreach.sentAt)}</span>
             </div>
           )}
           {outreach.subject && (
-            <div className="pt-2 border-t border-neutral-800">
-              <p className="text-neutral-500 mb-1">Subject</p>
-              <p className="text-neutral-300">{outreach.subject}</p>
+            <div style={{ paddingTop: 8, borderTop: "1px solid var(--border-light)" }}>
+              <p style={{ color: "var(--text-tertiary)", marginBottom: 4 }}>Subject</p>
+              <p style={{ color: "var(--text)" }}>{outreach.subject}</p>
             </div>
           )}
         </div>
@@ -452,38 +420,111 @@ export default function BriefPage() {
     }
   }
 
-  return (
-    <div className="p-6 max-w-3xl mx-auto">
-      {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-lg font-semibold text-white flex items-center gap-2 mb-1">
-          <User className="h-5 w-5" />
-          Sales Brief
-        </h1>
-        <p className="text-[13px] text-neutral-500">
-          Type a name to look up who they are, what paper, and what we sent.
-        </p>
-      </div>
+  const isEmpty = !selected && results === null;
 
-      {/* Search */}
-      {!selected && (
-        <form onSubmit={handleSearch} className="mb-6">
-          <div className="flex gap-2">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-500" />
+  return (
+    <div style={{ maxWidth: 880, margin: "0 auto" }}>
+      {/* Header — only show in non-hero mode */}
+      {!isEmpty && (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 14 }}>
+            <h1 className="page-title" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <User style={{ width: 24, height: 24 }} />
+              Sales Brief
+            </h1>
+            <span className="lead-count">Look up authors</span>
+          </div>
+        </div>
+      )}
+
+      {/* Hero search — when empty / first load */}
+      {isEmpty && (
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            minHeight: "60vh",
+            padding: "0 16px",
+          }}
+        >
+          <div
+            style={{
+              width: 56,
+              height: 56,
+              borderRadius: 16,
+              background: "var(--bg)",
+              border: "1px solid var(--border-light)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              marginBottom: 18,
+              color: "var(--text-secondary)",
+            }}
+          >
+            <User style={{ width: 26, height: 26 }} />
+          </div>
+          <h1
+            className="page-title"
+            style={{ fontSize: 32, marginBottom: 10, textAlign: "center" }}
+          >
+            Sales Brief
+          </h1>
+          <p
+            style={{
+              fontSize: 13.5,
+              color: "var(--text-secondary)",
+              marginBottom: 28,
+              textAlign: "center",
+              maxWidth: 480,
+              lineHeight: 1.6,
+            }}
+          >
+            Look up an author by name to see their paper, research profile, and outreach history.
+          </p>
+          <form onSubmit={handleSearch} style={{ width: "100%", maxWidth: 540 }}>
+            <div style={{ display: "flex", gap: 10 }}>
               <input
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Enter first name, e.g. Jiahao"
-                className="w-full rounded-lg border border-neutral-800 bg-neutral-900 py-2.5 pl-10 pr-4 text-[13px] text-white placeholder:text-neutral-600 focus:outline-none focus:border-neutral-600 transition-colors"
+                className="search-input"
+                style={{ flex: 1, padding: "12px 16px 12px 38px", fontSize: 14, backgroundPosition: "12px center" }}
                 autoFocus
+              />
+              <button
+                type="submit"
+                disabled={loading || query.trim().length < 2}
+                className="btn btn-primary"
+                style={{ padding: "10px 20px" }}
+              >
+                {loading ? "Searching..." : "Search"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Condensed search row — once results are showing */}
+      {!isEmpty && !selected && (
+        <form onSubmit={handleSearch} style={{ marginBottom: 24 }}>
+          <div style={{ display: "flex", gap: 8 }}>
+            <div style={{ position: "relative", flex: 1 }}>
+              <input
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Enter first name, e.g. Jiahao"
+                className="search-input"
+                style={{ width: "100%" }}
               />
             </div>
             <button
               type="submit"
               disabled={loading || query.trim().length < 2}
-              className="rounded-lg bg-white px-5 py-2.5 text-[13px] font-medium text-black hover:bg-neutral-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              className="btn btn-primary"
             >
               {loading ? "Searching..." : "Search"}
             </button>
@@ -493,32 +534,25 @@ export default function BriefPage() {
 
       {/* Results */}
       {selected ? (
-        <DetailView
-          brief={selected}
-          onBack={() => setSelected(null)}
-        />
+        <DetailView brief={selected} onBack={() => setSelected(null)} />
       ) : results !== null ? (
         results.length === 0 ? (
-          <div className="text-center py-12">
-            <User className="h-8 w-8 text-neutral-700 mx-auto mb-3" />
-            <p className="text-[13px] text-neutral-500">
-              No matches found for &ldquo;{query}&rdquo;
-            </p>
-            <p className="text-[11px] text-neutral-600 mt-1">
-              Try a different spelling or check the pipeline
+          <div className="empty-state">
+            <div className="empty-icon">
+              <User style={{ width: 20, height: 20 }} />
+            </div>
+            <h3>No matches found</h3>
+            <p>
+              Nothing for &ldquo;{query}&rdquo;. Try a different spelling or check the pipeline.
             </p>
           </div>
         ) : (
-          <div className="space-y-2">
-            <p className="text-[12px] text-neutral-500 mb-3">
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <p style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 4 }}>
               {results.length} result{results.length !== 1 && "s"} for &ldquo;{query}&rdquo;
             </p>
             {results.map((b) => (
-              <ResultCard
-                key={b.id}
-                brief={b}
-                onSelect={() => setSelected(b)}
-              />
+              <ResultCard key={b.id} brief={b} onSelect={() => setSelected(b)} />
             ))}
           </div>
         )

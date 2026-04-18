@@ -23,42 +23,42 @@ export function formatDate(date: Date | string) {
 export function getStatusColor(status: string) {
   switch (status) {
     case "delivered":
-      return "text-green-400";
+      return "text-[var(--green)]";
     case "sent":
-      return "text-blue-400";
+      return "text-[var(--blue)]";
     case "opened":
-      return "text-purple-400";
+      return "text-[var(--purple)]";
     case "clicked":
-      return "text-indigo-400";
+      return "text-[var(--blue)]";
     case "bounced":
-      return "text-red-400";
+      return "text-[var(--coral)]";
     case "complained":
-      return "text-orange-400";
+      return "text-[#C2410C]";
     case "queued":
-      return "text-neutral-400";
+      return "text-[var(--text-secondary)]";
     default:
-      return "text-neutral-500";
+      return "text-[var(--text-tertiary)]";
   }
 }
 
 export function getStatusDot(status: string) {
   switch (status) {
     case "delivered":
-      return "bg-green-400";
+      return "bg-[var(--green)]";
     case "sent":
-      return "bg-blue-400";
+      return "bg-[var(--blue)]";
     case "opened":
-      return "bg-purple-400";
+      return "bg-[var(--purple)]";
     case "clicked":
-      return "bg-indigo-400";
+      return "bg-[var(--blue)]";
     case "bounced":
-      return "bg-red-400";
+      return "bg-[var(--coral)]";
     case "complained":
-      return "bg-orange-400";
+      return "bg-[#C2410C]";
     case "queued":
-      return "bg-neutral-400";
+      return "bg-[var(--text-secondary)]";
     default:
-      return "bg-neutral-500";
+      return "bg-[var(--text-tertiary)]";
   }
 }
 

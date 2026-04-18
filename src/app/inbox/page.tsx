@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { RefreshCw, Reply, Mail, MailOpen, Send } from "lucide-react";
+import { RefreshCw, Reply, Mail, Send } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 import { sanitizeHtml } from "@/lib/sanitize";
 
@@ -42,6 +42,34 @@ export default function InboxPage() {
     fetchInbox();
   }, []);
 
+  // While the inbox page is mounted, ask the sidebar to poll faster.
+  useEffect(() => {
+    window.dispatchEvent(new Event("inbox:fast-poll-on"));
+    return () => {
+      window.dispatchEvent(new Event("inbox:fast-poll-off"));
+    };
+  }, []);
+
+  const markRead = (email: InboundEmail) => {
+    if (email.isRead) return;
+    // Optimistic UI; reconcile via next fetch if it fails.
+    setEmails((prev) =>
+      prev.map((e) => (e.id === email.id ? { ...e, isRead: true } : e)),
+    );
+    if (selected?.id === email.id) {
+      setSelected({ ...email, isRead: true });
+    }
+    fetch(`/api/inbound/${email.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ isRead: true }),
+    })
+      .then((r) => {
+        if (r.ok) window.dispatchEvent(new Event("inbox:read"));
+      })
+      .catch(() => { /* keep optimistic */ });
+  };
+
   const handleReply = async () => {
     if (!selected || !replyBody.trim()) return;
     setSending(true);
@@ -80,105 +108,252 @@ On ${date}, ${selected.from} wrote:
     }
   };
 
-  // Note: sanitizeHtml uses DOMPurify for safe rendering
+  // sanitizeHtml is DOMPurify-based — safe from XSS
   const sanitized = selected?.html ? sanitizeHtml(selected.html) : "";
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-semibold text-white tracking-tight">Inbox</h1>
-          <p className="text-sm text-neutral-400 mt-1">{total} received emails</p>
+      {/* ── Page Header ── */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 28 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 14 }}>
+          <h1 className="page-title">Inbox</h1>
+          <span className="lead-count">{total} received</span>
         </div>
-        <button
-          onClick={fetchInbox}
-          className="rounded-lg border border-neutral-700 p-2 text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
-        >
-          <RefreshCw className="h-4 w-4" />
+        <button onClick={fetchInbox} className="btn">
+          <RefreshCw />
+          Refresh
         </button>
       </div>
 
-      <div className="flex gap-4 h-[calc(100vh-180px)]">
-        {/* Email List */}
-        <div className="w-[380px] rounded-xl border border-neutral-800 bg-neutral-900/50 overflow-auto flex-shrink-0">
+      <div style={{ display: "flex", gap: 16, height: "calc(100vh - 180px)" }}>
+        {/* ── Email List ── */}
+        <div
+          style={{
+            width: 380,
+            background: "var(--card)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--radius)",
+            boxShadow: "var(--shadow-sm)",
+            overflow: "auto",
+            flexShrink: 0,
+          }}
+        >
           {loading ? (
-            <div className="p-5 text-center text-sm text-neutral-500 animate-pulse">Loading...</div>
+            <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="skeleton" style={{ height: 56 }} />
+              ))}
+            </div>
           ) : emails.length === 0 ? (
-            <div className="p-5 text-center text-sm text-neutral-500">
-              <Mail className="h-8 w-8 mx-auto mb-3 text-neutral-600" />
-              No inbound emails yet.
+            <div className="empty-state" style={{ padding: "48px 20px", border: "none" }}>
+              <div className="empty-icon">
+                <Mail style={{ width: 20, height: 20 }} />
+              </div>
+              <h3>No inbound mail</h3>
+              <p>Replies and inbound emails will appear here.</p>
             </div>
           ) : (
-            <div className="divide-y divide-neutral-800/50">
-              {emails.map((email) => (
-                <button
-                  key={email.id}
-                  onClick={() => { setSelected(email); setReplyOpen(false); setReplyBody(""); }}
-                  className={`w-full text-left px-4 py-3 hover:bg-neutral-800/30 transition-colors ${
-                    selected?.id === email.id ? "bg-neutral-800/50" : ""
-                  }`}
-                >
-                  <div className="flex items-center gap-2 mb-1">
-                    {email.isRead ? (
-                      <MailOpen className="h-3.5 w-3.5 text-neutral-500 flex-shrink-0" />
-                    ) : (
-                      <Mail className="h-3.5 w-3.5 text-blue-400 flex-shrink-0" />
-                    )}
-                    <span className={`text-[13px] truncate ${email.isRead ? "text-neutral-400" : "text-white font-medium"}`}>
-                      {email.from}
-                    </span>
-                    <span className="text-[11px] text-neutral-500 ml-auto flex-shrink-0">
-                      {formatDate(email.createdAt)}
-                    </span>
-                  </div>
-                  <p className={`text-[12px] truncate pl-5 ${email.isRead ? "text-neutral-500" : "text-neutral-300"}`}>
-                    {email.subject}
-                  </p>
-                  {email.text && (
-                    <p className="text-[11px] text-neutral-600 truncate pl-5 mt-0.5">
-                      {email.text.slice(0, 80)}
-                    </p>
-                  )}
-                </button>
-              ))}
+            <div>
+              {emails.map((email) => {
+                const isSelected = selected?.id === email.id;
+                const initials = email.from
+                  .replace(/<.*>/g, "")
+                  .trim()
+                  .split(/[\s@]+/)
+                  .filter(Boolean)
+                  .slice(0, 2)
+                  .map((s) => s[0]?.toUpperCase() ?? "")
+                  .join("") || "?";
+                return (
+                  <button
+                    key={email.id}
+                    onClick={() => {
+                      setSelected(email);
+                      setReplyOpen(false);
+                      setReplyBody("");
+                      markRead(email);
+                    }}
+                    className={`inbox-row ${isSelected ? "is-selected" : ""}`}
+                  >
+                    <div
+                      className="author-avatar"
+                      style={{
+                        width: 30,
+                        height: 30,
+                        marginTop: 1,
+                        background: email.isRead
+                          ? "linear-gradient(135deg, #F0F0EE, #E5E5E5)"
+                          : "linear-gradient(135deg, #DBEAFE, #BFDBFE)",
+                        color: email.isRead ? "var(--text-tertiary)" : "#1D4ED8",
+                      }}
+                    >
+                      {initials}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span
+                          style={{
+                            fontSize: 13,
+                            color: email.isRead ? "var(--text-secondary)" : "var(--text)",
+                            fontWeight: email.isRead ? 500 : 600,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                            flex: 1,
+                            minWidth: 0,
+                          }}
+                        >
+                          {email.from}
+                        </span>
+                        {!email.isRead && (
+                          <span
+                            style={{
+                              width: 6,
+                              height: 6,
+                              borderRadius: 3,
+                              background: "var(--blue)",
+                              flexShrink: 0,
+                            }}
+                          />
+                        )}
+                        <span
+                          style={{
+                            fontSize: 11,
+                            color: "var(--text-tertiary)",
+                            flexShrink: 0,
+                            fontVariantNumeric: "tabular-nums",
+                          }}
+                        >
+                          {formatDate(email.createdAt)}
+                        </span>
+                      </div>
+                      <p
+                        style={{
+                          fontSize: 12.5,
+                          color: email.isRead ? "var(--text-tertiary)" : "var(--text)",
+                          fontWeight: email.isRead ? 400 : 500,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                          marginTop: 2,
+                        }}
+                      >
+                        {email.subject}
+                      </p>
+                      {email.text && (
+                        <p
+                          style={{
+                            fontSize: 11.5,
+                            color: "var(--text-tertiary)",
+                            marginTop: 2,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {email.text.slice(0, 90)}
+                        </p>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>
 
-        {/* Email Detail + Inline Reply */}
-        <div className="flex-1 rounded-xl border border-neutral-800 bg-neutral-900/50 overflow-auto flex flex-col">
+        {/* ── Email Detail + Inline Reply ── */}
+        <div
+          style={{
+            flex: 1,
+            background: "var(--card)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--radius)",
+            boxShadow: "var(--shadow-sm)",
+            overflow: "auto",
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
           {selected ? (
             <>
               {/* Header */}
-              <div className="border-b border-neutral-800 px-6 py-4 flex-shrink-0">
-                <div className="flex items-center justify-between mb-2">
-                  <h2 className="text-[16px] font-semibold text-white">{selected.subject}</h2>
+              <div
+                style={{
+                  borderBottom: "1px solid var(--border-light)",
+                  padding: "20px 24px",
+                  flexShrink: 0,
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    marginBottom: 8,
+                  }}
+                >
+                  <h2
+                    style={{
+                      fontFamily: "var(--font-heading)",
+                      fontSize: 18,
+                      fontWeight: 600,
+                      color: "var(--text)",
+                      letterSpacing: "-0.01em",
+                    }}
+                  >
+                    {selected.subject}
+                  </h2>
                   {!replyOpen && (
-                    <button
-                      onClick={() => setReplyOpen(true)}
-                      className="flex items-center gap-2 rounded-lg bg-white px-3 py-1.5 text-[12px] font-medium text-black hover:bg-neutral-200 transition-colors"
-                    >
-                      <Reply className="h-3.5 w-3.5" />
+                    <button onClick={() => setReplyOpen(true)} className="btn btn-primary">
+                      <Reply />
                       Reply
                     </button>
                   )}
                 </div>
-                <div className="flex items-center gap-4 text-[12px] text-neutral-400">
-                  <span>From: <span className="text-neutral-300">{selected.from}</span></span>
-                  <span>To: <span className="text-neutral-300">{selected.to}</span></span>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 16,
+                    fontSize: 12,
+                    color: "var(--text-tertiary)",
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <span>
+                    From: <span style={{ color: "var(--text)" }}>{selected.from}</span>
+                  </span>
+                  <span>
+                    To: <span style={{ color: "var(--text)" }}>{selected.to}</span>
+                  </span>
                   <span>{new Date(selected.createdAt).toLocaleString()}</span>
                 </div>
               </div>
 
               {/* Email Body */}
-              <div className="p-6 flex-1 overflow-auto">
+              <div style={{ padding: 24, flex: 1, overflow: "auto" }}>
                 {sanitized ? (
                   <div
-                    className="email-content rounded-lg bg-white text-black p-5"
+                    className="email-content"
+                    style={{
+                      borderRadius: 8,
+                      background: "#FFFFFF",
+                      color: "#1A1A1A",
+                      padding: 20,
+                      border: "1px solid var(--border-light)",
+                    }}
                     dangerouslySetInnerHTML={{ __html: sanitized }}
                   />
                 ) : (
-                  <pre className="text-[13px] text-neutral-300 whitespace-pre-wrap font-sans">
+                  <pre
+                    style={{
+                      fontSize: 13,
+                      color: "var(--text)",
+                      whiteSpace: "pre-wrap",
+                      fontFamily: "var(--font-body)",
+                    }}
+                  >
                     {selected.text || "(no content)"}
                   </pre>
                 )}
@@ -196,10 +371,23 @@ On ${date}, ${selected.from} wrote:
 
               {/* Inline Reply — Gmail style */}
               {replyOpen && (
-                <div className="border-t border-neutral-800 px-6 py-4 flex-shrink-0">
-                  <div className="rounded-lg border border-neutral-700 bg-neutral-900 p-4">
-                    <div className="text-[12px] text-neutral-400 mb-3">
-                      Reply to <span className="text-neutral-200">{selected.from}</span>
+                <div
+                  style={{
+                    borderTop: "1px solid var(--border-light)",
+                    padding: "20px 24px",
+                    flexShrink: 0,
+                  }}
+                >
+                  <div
+                    style={{
+                      borderRadius: 10,
+                      border: "1px solid var(--border)",
+                      background: "var(--bg)",
+                      padding: 16,
+                    }}
+                  >
+                    <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 12 }}>
+                      Reply to <span style={{ color: "var(--text)" }}>{selected.from}</span>
                     </div>
                     <textarea
                       value={replyBody}
@@ -207,27 +395,55 @@ On ${date}, ${selected.from} wrote:
                       placeholder="Write your reply..."
                       rows={4}
                       autoFocus
-                      className="w-full bg-transparent text-[13px] text-white placeholder:text-neutral-600 focus:outline-none resize-none mb-3"
+                      style={{
+                        width: "100%",
+                        background: "transparent",
+                        fontSize: 13,
+                        color: "var(--text)",
+                        border: "none",
+                        resize: "none",
+                        outline: "none",
+                        marginBottom: 12,
+                        fontFamily: "var(--font-body)",
+                      }}
                     />
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                         <button
                           onClick={handleReply}
                           disabled={sending || !replyBody.trim()}
-                          className="flex items-center gap-2 rounded-lg bg-white px-4 py-1.5 text-[12px] font-medium text-black hover:bg-neutral-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                          className="btn-send"
                         >
-                          <Send className="h-3 w-3" />
+                          <Send />
                           {sending ? "Sending..." : "Send"}
                         </button>
                         <button
-                          onClick={() => { setReplyOpen(false); setReplyBody(""); setSendResult(null); }}
-                          className="rounded-lg px-3 py-1.5 text-[12px] text-neutral-400 hover:text-white transition-colors"
+                          onClick={() => {
+                            setReplyOpen(false);
+                            setReplyBody("");
+                            setSendResult(null);
+                          }}
+                          className="btn"
+                          style={{ background: "transparent", border: "none" }}
                         >
                           Cancel
                         </button>
                       </div>
                       {sendResult && (
-                        <span className={`text-[12px] ${sendResult.startsWith("Error") ? "text-red-400" : "text-green-400"}`}>
+                        <span
+                          style={{
+                            fontSize: 12,
+                            color: sendResult.startsWith("Error")
+                              ? "var(--coral)"
+                              : "var(--green)",
+                          }}
+                        >
                           {sendResult}
                         </span>
                       )}
@@ -237,8 +453,21 @@ On ${date}, ${selected.from} wrote:
               )}
             </>
           ) : (
-            <div className="flex items-center justify-center h-full text-neutral-500 text-sm">
-              Select an email to read
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                height: "100%",
+              }}
+            >
+              <div className="empty-state" style={{ border: "none", padding: 24 }}>
+                <div className="empty-icon">
+                  <Mail style={{ width: 20, height: 20 }} />
+                </div>
+                <h3>Nothing selected</h3>
+                <p>Pick an email from the list to read or reply.</p>
+              </div>
             </div>
           )}
         </div>

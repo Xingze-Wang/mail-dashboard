@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
+import { wasRecentlyContacted } from "@/lib/contact-guard";
 
 /**
  * POST /api/pipeline/import
@@ -59,11 +60,22 @@ export async function POST(req: NextRequest) {
     let imported = 0;
     let skipped = 0;
     const errors: string[] = [];
+    const blockedByGuard: { email: string; lastContactedAt: string }[] = [];
 
     for (const lead of leads) {
       const email = lead.authorEmail as string;
       if (!email) {
         errors.push("Missing authorEmail");
+        skipped++;
+        continue;
+      }
+
+      // Backstop the Python-side dedup: refuse to import a lead for any
+      // recipient we've already emailed in the last 365 days, regardless
+      // of what Python's local JSON thinks.
+      const contact = await wasRecentlyContacted(email);
+      if (contact.contacted) {
+        blockedByGuard.push({ email, lastContactedAt: contact.lastAt! });
         skipped++;
         continue;
       }
@@ -111,7 +123,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    return NextResponse.json({ imported, skipped, errors });
+    return NextResponse.json({ imported, skipped, errors, blockedByGuard });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Import failed";
     return NextResponse.json({ error: message }, { status: 500 });
