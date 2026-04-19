@@ -1,18 +1,25 @@
 "use client";
 
-// Email draft preview uses dangerouslySetInnerHTML; sanitized via sanitizeHtml() (DOMPurify).
+/**
+ * Paper-shaped lead card for the design-D pipeline stream.
+ *
+ * Renders a single arXiv pipeline_leads row using the dx-* card geometry.
+ * Adapts inner content (draft snippet vs enriching placeholder vs sent
+ * follow-up) based on lead.status. Click expands inline editor for the
+ * draft.
+ *
+ * draftHtml is sanitized with sanitizeHtml() (DOMPurify) before any DOM
+ * insertion. The plaintext snippet is also derived through a sanitize +
+ * strip pass so we never inject raw HTML into the snippet either.
+ */
+
 import { memo, useMemo, useState } from "react";
 import {
-  Clock, Loader2, ChevronDown, ChevronUp, Pencil, X,
-  Activity, BookOpen, Send, ExternalLink, Mail,
+  Loader2, Send, Pencil, X, ExternalLink, Mail, Clock,
 } from "lucide-react";
 import { sanitizeHtml } from "@/lib/sanitize";
-import {
-  Lead, Rep,
-  canSend,
-  paperAge, shortDate,
-} from "./types";
-import { colorForRep } from "./repColors";
+import { Lead, Rep, canSend } from "./types";
+import { colorForRep, initialsFor } from "./repColors";
 
 interface Props {
   lead: Lead;
@@ -29,54 +36,77 @@ interface Props {
   onSaveEdit: (id: string, subject: string, html: string) => Promise<void>;
 }
 
-const AVATAR_PALETTES = [
-  { bg: "linear-gradient(135deg, #DBEAFE, #BFDBFE)", color: "#1D4ED8" },
-  { bg: "linear-gradient(135deg, #FCE7F3, #FBCFE8)", color: "#BE185D" },
-  { bg: "linear-gradient(135deg, #D1FAE5, #A7F3D0)", color: "#047857" },
-  { bg: "linear-gradient(135deg, #FEF3C7, #FDE68A)", color: "#92400E" },
-  { bg: "linear-gradient(135deg, #E0E7FF, #C7D2FE)", color: "#4338CA" },
-  { bg: "linear-gradient(135deg, #FFE4E6, #FECDD3)", color: "#BE123C" },
-];
+/* ── Helpers ─────────────────────────────────────────────────────── */
 
-function paletteFor(seed: string) {
-  let h = 0;
-  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
-  return AVATAR_PALETTES[h % AVATAR_PALETTES.length];
+function htmlToText(html: string): string {
+  // sanitizeHtml() runs DOMPurify; we then strip remaining tags for the
+  // 2-line preview. Output is plain text only — never reaches innerHTML.
+  const cleaned = sanitizeHtml(html);
+  if (typeof document === "undefined") {
+    return cleaned.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  }
+  const div = document.createElement("div");
+  div.innerHTML = cleaned;
+  return (div.textContent || div.innerText || "").replace(/\s+/g, " ").trim();
 }
 
-function initials(name: string | null) {
-  if (!name) return "??";
-  return name
-    .split(/\s+/)
-    .map((p) => p[0])
-    .filter(Boolean)
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
+function relativeTime(iso: string | null): string {
+  if (!iso) return "";
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 0) return "future";
+  const min = Math.floor(ms / 60_000);
+  if (min < 1) return "just now";
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  if (day < 30) return `${day}d ago`;
+  const mo = Math.floor(day / 30);
+  return `${mo}mo ago`;
 }
 
-function statusLabel(s: string) {
+function statusFor(lead: Lead): "ready" | "sent" | "replied" | "enriching" | "discovered" | "skipped" | "new" {
+  if (lead.status === "replied") return "replied";
+  if (lead.status === "sent") return "sent";
+  if (lead.status === "ready") return "ready";
+  if (lead.status === "skipped") return "skipped";
+  if (lead.status === "new" && (!lead.draftHtml || !lead.authorEmail)) return "enriching";
+  return "new";
+}
+
+function statusLabel(s: string): string {
   switch (s) {
-    case "new":      return "New";
-    case "ready":    return "Ready";
-    case "sent":     return "Contacted";
-    case "replied":  return "Qualified";
-    case "skipped":  return "Skipped";
-    default:         return s;
+    case "ready":      return "Ready";
+    case "sent":       return "Sent";
+    case "replied":    return "Replied";
+    case "enriching":  return "Enriching";
+    case "discovered": return "Discovered";
+    case "skipped":    return "Skipped";
+    case "new":        return "New";
+    default:           return s;
   }
 }
+
+/* ── Component ───────────────────────────────────────────────────── */
 
 function LeadRowInner({
   lead, reps, isExpanded, isExcluded, isSending, showStatusBadge,
   onToggleExpand, onToggleExclude, onSend, onSkip, onRepChange, onSaveEdit,
 }: Props) {
   const sendCheck = canSend(lead);
-  const directions = useMemo(
-    () => lead.matchedDirections?.split(",").filter(Boolean) || [],
-    [lead.matchedDirections],
-  );
-  // sanitizeHtml runs DOMPurify on lead.draftHtml before it touches the DOM.
-  const sanitized = useMemo(
+  const status = statusFor(lead);
+  const tierClass = lead.leadTier === "strong" ? "strong" : "normal";
+
+  const draftSnippet = useMemo(() => {
+    if (!lead.draftHtml) return "";
+    const text = htmlToText(lead.draftHtml);
+    return text.length > 200 ? text.slice(0, 200) + "…" : text;
+  }, [lead.draftHtml]);
+
+  // sanitizedDraft is fed to dangerouslySetInnerHTML for the expanded
+  // preview only. DOMPurify strips scripts/handlers; matches existing
+  // .pipeline-email-preview convention used elsewhere in the app.
+  const sanitizedDraft = useMemo(
     () => (lead.draftHtml ? sanitizeHtml(lead.draftHtml) : ""),
     [lead.draftHtml],
   );
@@ -102,294 +132,276 @@ function LeadRowInner({
     }
   };
 
-  const palette = paletteFor(lead.authorEmail || lead.id);
-  const tierClass = lead.leadTier === "strong" ? "strong" : "normal";
-  const computeLevel = lead.computeLevel && lead.computeLevel !== "none" ? lead.computeLevel : null;
-  const cardClass = [
-    "lead-card",
-    isExcluded && "is-excluded",
-    isExpanded && "is-expanded",
-  ].filter(Boolean).join(" ");
+  const currentRep = reps.find((r) => r.id === lead.assignedRepId) ?? null;
+  const repName = currentRep?.name ?? null;
+  const repColor = colorForRep(repName);
 
-  const labelTiny = { fontSize: 10, fontWeight: 600, color: "var(--text-tertiary)", textTransform: "uppercase" as const, letterSpacing: "0.06em", marginBottom: 4 };
+  const hasMeta =
+    lead.citationCount !== null ||
+    lead.hIndex !== null ||
+    lead.publishedAt ||
+    lead.sentAt;
+
+  const cardClass = ["dx-card", status, isExcluded && "is-excluded"]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <div className={cardClass}>
-      <div className="cursor-pointer" onClick={() => onToggleExpand(lead.id)}>
-        {/* ── Top row: badges + title ── */}
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 16, marginBottom: 12 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-            {showStatusBadge && (
-              <span className={`badge-status ${lead.status}`}>{statusLabel(lead.status)}</span>
+      {/* Head: badges + meta */}
+      <div className="dx-card-head">
+        <span className="dx-src-badge arxiv">
+          <span className="dx-src-dot" />
+          arXiv
+        </span>
+        {showStatusBadge && (
+          <span className={`dx-status-badge ${status}`}>
+            <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6" /></svg>
+            {statusLabel(status)}
+          </span>
+        )}
+        <span className={`dx-tier-badge ${tierClass}`}>
+          {tierClass === "strong" ? "Strong" : "Normal"}
+        </span>
+        {hasMeta && (
+          <span className="dx-head-meta">
+            {lead.citationCount !== null && lead.citationCount > 0 && (
+              <>
+                <span>{lead.citationCount.toLocaleString()} cites</span>
+                {(lead.hIndex !== null || lead.publishedAt) && <span className="dx-meta-dot" />}
+              </>
             )}
-            {computeLevel && (
-              <span className={`badge-compute ${computeLevel}`}>{computeLevel}</span>
+            {lead.hIndex !== null && (
+              <>
+                <span>h-index {lead.hIndex}</span>
+                {(lead.publishedAt || lead.sentAt) && <span className="dx-meta-dot" />}
+              </>
             )}
-            <span className={`badge-tier ${tierClass}`}>
-              {tierClass === "strong" ? "Strong" : "Normal"}
-            </span>
-          </div>
-          <h3 className="lead-title" style={{ flex: 1, minWidth: 0 }}>
-            {lead.title}
-          </h3>
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); onToggleExpand(lead.id); }}
-            style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--text-tertiary)" }}
-            aria-label={isExpanded ? "Collapse" : "Expand"}
-          >
-            {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-          </button>
-        </div>
-
-        {/* ── Bottom row: author + pills + actions ── */}
-        <div
-          className="lead-card-body"
-          style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 20, flexWrap: "wrap" }}
-        >
-          <div className="lead-meta" style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap", minWidth: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <div className="author-avatar" style={{ background: palette.bg, color: palette.color }}>
-                {initials(lead.authorName)}
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
-                <span style={{ fontSize: 13, fontWeight: 600, color: "#1A1A1A", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {lead.authorName || "Unknown"}
-                </span>
-                <span style={{ fontSize: 11.5, color: "var(--text-tertiary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {lead.authorEmail}
-                  {lead.schoolName && ` · ${lead.schoolName}`}
-                </span>
-              </div>
-            </div>
-
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              {lead.hIndex !== null && (
-                <span className={`pill ${lead.hIndex >= 20 ? "high-h" : ""}`}>
-                  <Activity />
-                  h-index {lead.hIndex}
-                </span>
-              )}
-              {lead.citationCount !== null && lead.citationCount > 0 && (
-                <span className="pill">
-                  <BookOpen />
-                  {lead.citationCount.toLocaleString()} citations
-                </span>
-              )}
-              {!sendCheck.ok && sendCheck.availableIn && (
-                <span className="pill" style={{ color: "#B45309", borderColor: "#FDE68A", background: "#FFFBEB" }}>
-                  <Clock />
-                  {sendCheck.availableIn}
-                </span>
-              )}
-            </div>
-          </div>
-
-          <div
-            className="lead-actions"
-            style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {directions.length > 0 && (
-              <div style={{ display: "flex", gap: 6 }}>
-                {directions.slice(0, 2).map((d) => (
-                  <span key={d} className="direction-tag">{d}</span>
-                ))}
-              </div>
-            )}
-
-            {reps.length > 0 && (() => {
-              const currentRep = reps.find((r) => r.id === lead.assignedRepId);
-              const repColor = colorForRep(currentRep?.name ?? null);
-              return (
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                  <span
-                    aria-hidden
-                    style={{
-                      width: 8, height: 8, borderRadius: 4,
-                      background: repColor, flexShrink: 0,
-                    }}
-                  />
-                  <select
-                    className="rep-select"
-                    value={lead.assignedRepId ?? ""}
-                    onChange={(e) => onRepChange(lead.id, parseInt(e.target.value))}
-                    style={{ borderLeft: `3px solid ${repColor}` }}
-                  >
-                    {reps.map((r) => (
-                      <option key={r.id} value={r.id}>{r.name}</option>
-                    ))}
-                  </select>
-                </span>
-              );
-            })()}
-
-            {lead.status === "ready" && (
-              <button
-                type="button"
-                onClick={() => onSend(lead)}
-                disabled={!sendCheck.ok || isSending}
-                className="btn-send"
-              >
-                {isSending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send />}
-                Send
-              </button>
-            )}
-
-            {lead.status === "ready" && sendCheck.ok && (
-              <button
-                type="button"
-                onClick={() => onToggleExclude(lead.id)}
-                className="btn"
-                style={{ padding: "6px 8px" }}
-                title={isExcluded ? "Include in batch" : "Exclude from batch"}
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            )}
-          </div>
-        </div>
+            {lead.sentAt ? (
+              <span>sent {relativeTime(lead.sentAt)}</span>
+            ) : lead.publishedAt ? (
+              <span>{relativeTime(lead.publishedAt)}</span>
+            ) : null}
+          </span>
+        )}
       </div>
 
-      {/* ── Expanded panel ── */}
-      {isExpanded && (
-        <div className="animate-row-expand" style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--border-light)" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 32px", marginBottom: 16 }}>
-            <div>
-              <p style={labelTiny}>Contact</p>
-              <p style={{ fontSize: 13, color: "#1A1A1A" }}>{lead.authorEmail}</p>
-            </div>
-            <div>
-              <p style={labelTiny}>Semantic Scholar</p>
-              {lead.s2AuthorId ? (
-                <a
-                  href={`https://www.semanticscholar.org/author/${lead.s2AuthorId}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 13, color: "#2563EB" }}
-                >
-                  Profile <ExternalLink className="h-3 w-3" />
-                </a>
-              ) : (
-                <p style={{ fontSize: 13, color: "var(--text-tertiary)" }}>Not found</p>
-              )}
-            </div>
-            {lead.hIndex !== null && (
-              <div>
-                <p style={labelTiny}>h-index</p>
-                <p style={{ fontFamily: "var(--font-heading)", fontSize: 22, fontWeight: 600, color: "#1A1A1A" }}>{lead.hIndex}</p>
-              </div>
-            )}
-            {lead.citationCount !== null && (
-              <div>
-                <p style={labelTiny}>Total Citations</p>
-                <p style={{ fontFamily: "var(--font-heading)", fontSize: 22, fontWeight: 600, color: "#1A1A1A" }}>{lead.citationCount.toLocaleString()}</p>
-              </div>
-            )}
+      {/* Title */}
+      <h3 className="dx-card-title">{lead.title}</h3>
+
+      {/* Author row */}
+      <div className="dx-author-row">
+        <span className="dx-au-name">{lead.authorName || "Unknown"}</span>
+        {lead.schoolName && (
+          <>
+            <span className="dx-au-sep">·</span>
+            <span className="dx-au-org">{lead.schoolName}</span>
+          </>
+        )}
+        <span className="dx-au-sep">·</span>
+        <span
+          className="dx-au-email"
+          style={status === "enriching" && !lead.authorEmail ? { color: "var(--dx-text-3)" } : undefined}
+        >
+          {lead.authorEmail || "resolving email…"}
+        </span>
+      </div>
+
+      {/* Draft snippet (only if we have a draft and not currently editing) */}
+      {!editing && draftSnippet && (
+        <div className="dx-draft-snippet">
+          <div className="dx-draft-label">
+            <Pencil style={{ width: 10, height: 10 }} />
+            Draft{repName ? ` · ${repName}` : ""}
           </div>
-
-          {lead.abstract && (
-            <div style={{ paddingTop: 12, borderTop: "1px solid var(--border-light)" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                <p style={{ ...labelTiny, marginBottom: 0 }}>Latest Paper</p>
-                {lead.pdfUrl && (
-                  <a
-                    href={lead.pdfUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 11, color: "#2563EB" }}
-                  >
-                    arXiv <ExternalLink className="h-2.5 w-2.5" />
-                  </a>
-                )}
-              </div>
-              <p style={{ fontSize: 12.5, color: "var(--text-secondary)", lineHeight: 1.6 }}>
-                {lead.abstract.slice(0, 400)}{lead.abstract.length > 400 ? "…" : ""}
-              </p>
-            </div>
-          )}
-
-          {lead.computeReason && (
-            <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border-light)" }}>
-              <p style={labelTiny}>Compute Signal</p>
-              <p style={{ fontSize: 12.5, color: "var(--text-secondary)" }}>{lead.computeReason}</p>
-            </div>
-          )}
-
-          <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border-light)" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-              <p style={{ ...labelTiny, marginBottom: 0, display: "inline-flex", alignItems: "center", gap: 6 }}>
-                <Mail className="h-3 w-3" />
-                Email Draft
-              </p>
-              <div style={{ display: "flex", gap: 12 }}>
-                {lead.status === "ready" && !editing && (
-                  <button
-                    type="button"
-                    onClick={startEdit}
-                    style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, color: "var(--text-secondary)", background: "transparent", border: "none", cursor: "pointer" }}
-                  >
-                    <Pencil className="h-3 w-3" />
-                    Edit
-                  </button>
-                )}
-                {lead.status === "ready" && (
-                  <button
-                    type="button"
-                    onClick={() => onSkip(lead.id)}
-                    style={{ fontSize: 12, color: "var(--text-tertiary)", background: "transparent", border: "none", cursor: "pointer" }}
-                  >
-                    Skip
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {editing ? (
-              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                <input
-                  type="text"
-                  value={editSubject}
-                  onChange={(e) => setEditSubject(e.target.value)}
-                  placeholder="Subject"
-                  style={{ padding: "8px 12px", fontSize: 13, border: "1px solid var(--border)", borderRadius: 6, background: "var(--card)" }}
-                />
-                <textarea
-                  value={editHtml}
-                  onChange={(e) => setEditHtml(e.target.value)}
-                  rows={10}
-                  style={{ padding: "8px 12px", fontSize: 12, fontFamily: "ui-monospace, SFMono-Regular, monospace", border: "1px solid var(--border)", borderRadius: 6, background: "var(--card)", resize: "none" }}
-                />
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button type="button" onClick={save} disabled={saving} className="btn btn-primary">
-                    {saving ? "Saving…" : "Save"}
-                  </button>
-                  <button type="button" onClick={() => setEditing(false)} className="btn">
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            ) : sanitized ? (
-              <>
-                <p style={{ fontSize: 12.5, color: "#1A1A1A", marginBottom: 8 }}>Subject: {lead.draftSubject}</p>
-                <div
-                  className="pipeline-email-preview"
-                  style={{ borderRadius: 8, background: "#FFFFFF", border: "1px solid var(--border-light)", padding: 16, fontSize: 13 }}
-                  dangerouslySetInnerHTML={{ __html: sanitized }}
-                />
-              </>
-            ) : (
-              <p style={{ fontSize: 12.5, color: "var(--text-tertiary)", fontStyle: "italic" }}>No draft generated yet</p>
-            )}
-          </div>
-
-          {lead.sentAt && (
-            <div style={{ marginTop: 12, paddingTop: 8, borderTop: "1px solid var(--border-light)", fontSize: 11, color: "#16A34A" }}>
-              Sent {shortDate(lead.sentAt)} · created {shortDate(lead.createdAt)} · age {paperAge(lead.publishedAt).text}
-            </div>
-          )}
+          {lead.draftSubject && <div className="dx-draft-subj">{lead.draftSubject}</div>}
+          <div className="dx-draft-body">{draftSnippet}</div>
         </div>
       )}
+
+      {/* Inline editor */}
+      {editing && (
+        <div className="dx-edit-area">
+          <input
+            type="text"
+            value={editSubject}
+            onChange={(e) => setEditSubject(e.target.value)}
+            placeholder="Subject"
+          />
+          <textarea
+            value={editHtml}
+            onChange={(e) => setEditHtml(e.target.value)}
+            rows={10}
+          />
+          <div style={{ display: "flex", gap: 8 }}>
+            <button type="button" onClick={save} disabled={saving} className="dx-primary">
+              {saving ? "Saving…" : "Save draft"}
+            </button>
+            <button type="button" onClick={() => setEditing(false)} className="dx-secondary">
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Expanded preview (sanitized HTML — DOMPurify in sanitizeHtml). */}
+      {isExpanded && !editing && sanitizedDraft && (
+        <div
+          className="pipeline-email-preview"
+          style={{
+            marginBottom: 14,
+            borderRadius: 8,
+            background: "#FFFFFF",
+            border: "1px solid var(--dx-border-soft)",
+            padding: 16,
+            fontSize: 13,
+          }}
+          dangerouslySetInnerHTML={{ __html: sanitizedDraft }}
+        />
+      )}
+
+      {/* Foot */}
+      <div className="dx-card-foot">
+        <span className="dx-foot-meta">
+          {status === "enriching" ? (
+            <span style={{ color: "var(--dx-amber)" }}>
+              <Loader2 style={{ display: "inline", width: 12, height: 12, marginRight: 4 }} className="animate-spin" />
+              Enrichment in progress
+            </span>
+          ) : status === "sent" ? (
+            <>
+              Sent by
+              <span className="dx-rep-chip">
+                <span className="dx-rp-dot" style={{ background: repColor }}>
+                  {repName ? initialsFor(repName).slice(0, 1) : "?"}
+                </span>
+                {repName ?? "Unassigned"}
+              </span>
+              · awaiting reply
+            </>
+          ) : status === "replied" ? (
+            <>
+              Owned by
+              <span className="dx-rep-chip">
+                <span className="dx-rp-dot" style={{ background: repColor }}>
+                  {repName ? initialsFor(repName).slice(0, 1) : "?"}
+                </span>
+                {repName ?? "Unassigned"}
+              </span>
+            </>
+          ) : (
+            <>
+              Assigned to
+              {reps.length > 0 ? (
+                <select
+                  className="dx-select-light"
+                  value={lead.assignedRepId ?? ""}
+                  onChange={(e) => onRepChange(lead.id, parseInt(e.target.value, 10))}
+                  style={{ marginLeft: 4 }}
+                  aria-label="Reassign rep"
+                >
+                  <option value="">Unassigned</option>
+                  {reps.map((r) => (
+                    <option key={r.id} value={r.id}>{r.name}</option>
+                  ))}
+                </select>
+              ) : (
+                <span className="dx-rep-chip">{repName ?? "Unassigned"}</span>
+              )}
+            </>
+          )}
+          {!sendCheck.ok && sendCheck.availableIn && status === "ready" && (
+            <span style={{ marginLeft: 8, color: "var(--dx-amber)", display: "inline-flex", alignItems: "center", gap: 4 }}>
+              <Clock style={{ width: 11, height: 11 }} />
+              {sendCheck.availableIn}
+            </span>
+          )}
+        </span>
+
+        <div className="dx-foot-actions" onClick={(e) => e.stopPropagation()}>
+          {lead.pdfUrl && (
+            <a
+              href={lead.pdfUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="dx-ghost"
+              title="Open arXiv paper"
+            >
+              <ExternalLink />
+              arXiv
+            </a>
+          )}
+
+          {status === "ready" && (
+            <>
+              <button type="button" className="dx-ghost" onClick={() => onSkip(lead.id)}>
+                Skip
+              </button>
+              {!editing ? (
+                <button type="button" className="dx-secondary" onClick={isExpanded ? startEdit : () => onToggleExpand(lead.id)}>
+                  <Mail />
+                  {isExpanded ? "Edit draft" : "View draft"}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="dx-secondary"
+                onClick={() => onToggleExclude(lead.id)}
+                title={isExcluded ? "Include in batch" : "Exclude from batch"}
+                style={{ padding: "6px 8px" }}
+              >
+                <X style={{ width: 13, height: 13 }} />
+              </button>
+              <button
+                type="button"
+                className="dx-primary"
+                disabled={!sendCheck.ok || isSending}
+                onClick={() => onSend(lead)}
+              >
+                {isSending ? <Loader2 className="animate-spin" /> : <Send />}
+                Send
+              </button>
+            </>
+          )}
+
+          {status === "sent" && (
+            <>
+              <button type="button" className="dx-ghost" onClick={() => onToggleExpand(lead.id)}>
+                {isExpanded ? "Hide" : "Open thread"}
+              </button>
+              <button type="button" className="dx-secondary">Follow up</button>
+            </>
+          )}
+
+          {status === "replied" && (
+            <>
+              <button type="button" className="dx-ghost" onClick={() => onToggleExpand(lead.id)}>
+                {isExpanded ? "Hide" : "Open thread"}
+              </button>
+              <button type="button" className="dx-primary">WeChat</button>
+            </>
+          )}
+
+          {status === "enriching" && (
+            <>
+              <button type="button" className="dx-ghost" onClick={() => onSkip(lead.id)}>Skip</button>
+              <button type="button" className="dx-secondary">Manual lookup</button>
+            </>
+          )}
+
+          {status === "skipped" && (
+            <button type="button" className="dx-ghost" onClick={() => onToggleExpand(lead.id)}>
+              {isExpanded ? "Hide details" : "View"}
+            </button>
+          )}
+
+          {status === "new" && (
+            <button type="button" className="dx-ghost" onClick={() => onToggleExpand(lead.id)}>
+              {isExpanded ? "Hide" : "View"}
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

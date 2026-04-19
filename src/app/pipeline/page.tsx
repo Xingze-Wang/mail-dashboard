@@ -1,15 +1,58 @@
 "use client";
 
+/**
+ * Pipeline page — design-D "Refined card stream".
+ *
+ * Layout (top → bottom):
+ *   1. Top bar: breadcrumb + page title + action buttons
+ *   2. Stat strip: 5 stat cards with mini-sparklines
+ *   3. Page tabs: Leads | Channels | Sales (sub-tab strip)
+ *   4. (Leads tab only) Channel filter bar: All / arXiv / HF / GitHub / PH
+ *   5. (Leads tab only) Stream toolbar: status chips + rep pills + sort
+ *   6. (Leads tab only) Card stream — paper cards (LeadRow) for arXiv,
+ *                       discovery cards (DiscoveryCard) for HF/GH/PH.
+ *
+ * Two-axis filter model:
+ *   - PAGE tabs (Leads/Channels/Sales) switch between the lead stream and
+ *     the analytics dashboards.
+ *   - INSIDE the lead stream, the channel bar acts as a *source filter*
+ *     ("All" merges arXiv pipeline_leads with HF/GH/PH discovery_leads;
+ *     individual channels show only their slice). The status chip group
+ *     filters arXiv leads only.
+ *
+ * Backend wiring:
+ *   - GET /api/pipeline             — arXiv pipeline_leads (existing)
+ *   - GET /api/pipeline/analytics   — channel/source counts & sparkline data
+ *   - GET /api/discovery            — HF/GH/PH rows from discovery_leads
+ *                                     (graceful empty if migration 004 not run)
+ *   - POST endpoints unchanged (scan, send, batch-send, /api/pipeline/[id], …)
+ *
+ * Discovery card actions (find email / promote / mute) are stubs that
+ * toast "Coming soon" — the promotion path is not yet wired. View profile
+ * does open `profile_url` in a new tab.
+ */
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import { Zap, Send, Loader2, Download, Settings as SettingsIcon, Plus } from "lucide-react";
-import { SegmentedControl } from "@/components/ui/segmented-control";
+import {
+  Zap, Send, Loader2, Download, Settings as SettingsIcon, Plus,
+  ChevronUp, FileText, Globe, Star,
+} from "lucide-react";
+
+/* Inline GitHub mark — lucide-react in this project doesn't ship a Github
+   icon, and the mockup uses the official mark inline. */
+const GithubMark = () => (
+  <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
+    <path d="M12 .3a12 12 0 00-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2 0 1.9 1.2 1.9 1.2 1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-6 0-1.2.5-2.3 1.3-3.1-.2-.4-.6-1.6.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 016 0C17.3 4.7 18.3 5 18.3 5c.7 1.6.2 2.8.1 3.2.8.8 1.3 1.9 1.3 3.1 0 4.6-2.8 5.6-5.5 5.9.5.4.9 1.1.9 2.3v3.3c0 .3.2.7.8.6A12 12 0 0012 .3" />
+  </svg>
+);
 import { useToast } from "@/components/ui/toaster";
-import { RESEARCH_CATEGORIES, getLeadCategories } from "@/lib/directions";
-import { Analytics, Lead, Rep, canSend, shortDate } from "./types";
+import { Analytics, DiscoveryLead, Lead, Rep, canSend } from "./types";
 import { LeadRow } from "./LeadRow";
+import { DiscoveryCard } from "./DiscoveryCard";
 import { AddLeadModal } from "./AddLeadModal";
+import { paletteFor, initialsFor } from "./repColors";
 
 const ChannelsTab = dynamic(() => import("./ChannelsTab").then((m) => m.ChannelsTab), {
   loading: () => <TabLoader />,
@@ -18,12 +61,11 @@ const SalesTab = dynamic(() => import("./SalesTab").then((m) => m.SalesTab), {
   loading: () => <TabLoader />,
 });
 
-/* ── CSV export helpers ─────────────────────────────────────────────── */
+/* ── CSV export helpers (preserved) ──────────────────────────────────── */
 
 function csvCell(v: unknown): string {
   if (v === null || v === undefined) return "";
   const s = String(v);
-  // RFC 4180: wrap in quotes if it contains ", , or newline; double up internal quotes.
   if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
   return s;
 }
@@ -32,10 +74,7 @@ function leadsToCsv(leads: Lead[], reps: Rep[]): string {
   const repName = (id: number | null) =>
     id == null ? "" : reps.find((r) => r.id === id)?.name ?? `#${id}`;
   const rows = [
-    [
-      "title", "author", "email", "school",
-      "hIndex", "citations", "tier", "status", "sentAt", "repName",
-    ],
+    ["title", "author", "email", "school", "hIndex", "citations", "tier", "status", "sentAt", "repName"],
     ...leads.map((l) => [
       l.title,
       l.authorName ?? "",
@@ -61,13 +100,18 @@ function downloadCsv(filename: string, body: string) {
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  // Free memory after the click is processed.
   setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function shortDateForFilename(): string {
+  const d = new Date();
+  const months = ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"];
+  return `${months[d.getMonth()]}-${d.getDate()}-${d.getFullYear()}`;
 }
 
 function TabLoader() {
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
       {Array.from({ length: 4 }).map((_, i) => (
         <div key={i} className="skeleton" style={{ height: 88 }} />
       ))}
@@ -75,23 +119,140 @@ function TabLoader() {
   );
 }
 
-const STATUS_FILTERS = [
-  { key: "all",     label: "All" },
+/* ── Stat strip ──────────────────────────────────────────────────────── */
+
+interface StatDef {
+  label: string;
+  value: string;
+  unit?: string;
+  trend?: { kind: "up" | "down" | "flat"; text: string };
+  spark: { color: string; points: string };
+}
+
+function Sparkline({ color, points }: { color: string; points: string }) {
+  const fill = color.replace("rgb", "rgba").replace(")", ",0.08)");
+  // For hex colors, fall back to a generic light fill via opacity attribute.
+  const isHex = color.startsWith("#");
+  return (
+    <svg className="dx-sparkline" viewBox="0 0 200 32" preserveAspectRatio="none">
+      <polyline fill="none" stroke={color} strokeWidth="1.6" points={points} />
+      {isHex ? (
+        <polyline fill={color} fillOpacity={0.08} stroke="none" points={`${points} 200,32 0,32`} />
+      ) : (
+        <polyline fill={fill} stroke="none" points={`${points} 200,32 0,32`} />
+      )}
+    </svg>
+  );
+}
+
+function StatCard({ stat }: { stat: StatDef }) {
+  return (
+    <div className="dx-stat">
+      <div className="dx-stat-head">
+        <span className="dx-stat-label">{stat.label}</span>
+        {stat.trend && (
+          <span className={`dx-stat-trend ${stat.trend.kind === "flat" ? "flat" : stat.trend.kind === "down" ? "down" : ""}`}>
+            {stat.trend.kind === "up" && (
+              <ChevronUp style={{ width: 9, height: 9, strokeWidth: 3 }} />
+            )}
+            {stat.trend.text}
+          </span>
+        )}
+      </div>
+      <div className="dx-stat-value">
+        {stat.value}
+        {stat.unit && <span className="dx-unit">{stat.unit}</span>}
+      </div>
+      <Sparkline color={stat.spark.color} points={stat.spark.points} />
+    </div>
+  );
+}
+
+/* Build sparkline points from a daily-counts array (last 30d → 12 samples). */
+function dailyToSparkline(daily: Array<{ date: string; strong: number; normal: number }> | undefined): string {
+  if (!daily || daily.length === 0) {
+    return "0,16 50,16 100,16 150,16 200,16";
+  }
+  const values = daily.map((d) => d.strong + d.normal);
+  const max = Math.max(...values, 1);
+  const min = Math.min(...values, 0);
+  const range = max - min || 1;
+  const step = 200 / Math.max(1, values.length - 1);
+  return values
+    .map((v, i) => {
+      const x = Math.round(i * step);
+      const y = Math.round(28 - ((v - min) / range) * 24); // invert + leave headroom
+      return `${x},${y}`;
+    })
+    .join(" ");
+}
+
+/* ── Channel + Status filter constants ────────────────────────────────── */
+
+const CHANNELS = [
+  { key: "all",    label: "All",           color: undefined },
+  { key: "arxiv",  label: "arXiv",         color: "var(--dx-src-arxiv)" },
+  { key: "hf",     label: "Hugging Face",  color: "var(--dx-src-hf)" },
+  { key: "github", label: "GitHub",        color: "var(--dx-src-gh)" },
+  { key: "ph",     label: "Product Hunt",  color: "var(--dx-src-ph)" },
+] as const;
+type ChannelKey = (typeof CHANNELS)[number]["key"];
+
+const STATUS_CHIPS = [
+  { key: "all",     label: "All status" },
   { key: "ready",   label: "Ready" },
   { key: "new",     label: "New" },
   { key: "sent",    label: "Sent" },
   { key: "replied", label: "Replied" },
   { key: "skipped", label: "Skipped" },
 ] as const;
+type StatusKey = (typeof STATUS_CHIPS)[number]["key"];
 
-const DATE_FILTERS = [
-  { key: "today", label: "Today" },
-  { key: "week",  label: "This Week" },
-  { key: "all",   label: "All Time" },
+const SORT_OPTIONS = [
+  { key: "newest",   label: "Sort: Newest" },
+  { key: "score",    label: "Sort: Score" },
+  { key: "tier",     label: "Sort: Tier" },
+  { key: "activity", label: "Sort: Last activity" },
 ] as const;
+type SortKey = (typeof SORT_OPTIONS)[number]["key"];
 
-type StatusKey = (typeof STATUS_FILTERS)[number]["key"];
-type DateKey = (typeof DATE_FILTERS)[number]["key"];
+/* Channel icons (inline SVGs from the mockup so they look identical). */
+function ChannelIcon({ ch }: { ch: ChannelKey }) {
+  switch (ch) {
+    case "all":
+      return (
+        <span className="dx-ch-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9"/></svg>
+        </span>
+      );
+    case "arxiv":
+      return (
+        <span className="dx-ch-icon" style={{ color: "var(--dx-src-arxiv)" }}>
+          <FileText />
+        </span>
+      );
+    case "hf":
+      return (
+        <span className="dx-ch-icon" style={{ color: "var(--dx-src-hf)" }}>
+          <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="9"/></svg>
+        </span>
+      );
+    case "github":
+      return (
+        <span className="dx-ch-icon" style={{ color: "var(--dx-src-gh)" }}>
+          <GithubMark />
+        </span>
+      );
+    case "ph":
+      return (
+        <span className="dx-ch-icon" style={{ color: "var(--dx-src-ph)" }}>
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.6 0 12 0zm.7 13.5h-3v3.5H7V6.9h5.7c2.6 0 4.5 1.5 4.5 3.3 0 1.8-1.9 3.3-4.5 3.3z"/></svg>
+        </span>
+      );
+  }
+}
+
+/* ── Page component ───────────────────────────────────────────────────── */
 
 export default function PipelinePage() {
   const { toast } = useToast();
@@ -99,16 +260,14 @@ export default function PipelinePage() {
 
   const [addLeadOpen, setAddLeadOpen] = useState(false);
   const [leads, setLeads] = useState<Lead[]>([]);
-  const [total, setTotal] = useState(0);
+  const [discoveryLeads, setDiscoveryLeads] = useState<DiscoveryLead[]>([]);
+  const [discoveryBySource, setDiscoveryBySource] = useState<{ hf: number; ph: number; github: number }>({ hf: 0, ph: 0, github: 0 });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [channelFilter, setChannelFilter] = useState<ChannelKey>("all");
   const [statusFilter, setStatusFilter] = useState<StatusKey>("all");
-  const [tierFilter, setTierFilter] = useState("all");
-  const [repFilter, setRepFilter] = useState("all");
-  const [categoryFilter, setCategoryFilter] = useState("all");
-  const [dateRange, setDateRange] = useState<DateKey>("today");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [repFilter, setRepFilter] = useState<number | "all">("all");
+  const [sort, setSort] = useState<SortKey>("newest");
   const [scanning, setScanning] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [sending, setSending] = useState<string | null>(null);
@@ -121,45 +280,43 @@ export default function PipelinePage() {
 
   const hasInitialised = useRef(false);
 
-  useEffect(() => {
-    const h = setTimeout(() => setDebouncedQuery(searchQuery.trim()), 180);
-    return () => clearTimeout(h);
-  }, [searchQuery]);
+  /* ── Fetchers ────────────────────────────────────────────────────── */
 
   const fetchLeads = useCallback(
     (signal?: AbortSignal) => {
       if (!hasInitialised.current) setLoading(true);
       else setRefreshing(true);
-
-      const params = new URLSearchParams({ limit: "200" });
-      if (statusFilter !== "all") params.set("status", statusFilter);
-      if (tierFilter !== "all") params.set("tier", tierFilter);
-      if (repFilter !== "all") params.set("rep_id", repFilter);
-      if (dateRange !== "all") params.set("date", dateRange);
-
-      return fetch(`/api/pipeline?${params}`, { signal })
+      return fetch(`/api/pipeline?limit=200`, { signal })
         .then((r) => r.json())
         .then((data) => {
           setLeads(data.leads || []);
-          setTotal(data.total || 0);
         })
-        .catch((err) => {
-          if (err.name !== "AbortError") console.error(err);
-        })
+        .catch((err) => { if (err.name !== "AbortError") console.error(err); })
         .finally(() => {
           hasInitialised.current = true;
           setLoading(false);
           setRefreshing(false);
         });
     },
-    [statusFilter, tierFilter, repFilter, dateRange],
+    [],
   );
+
+  const fetchDiscovery = useCallback((signal?: AbortSignal) => {
+    return fetch(`/api/discovery?source=hf,github,ph&limit=100`, { signal })
+      .then((r) => r.json())
+      .then((data) => {
+        setDiscoveryLeads(data.leads || []);
+        setDiscoveryBySource(data.bySource || { hf: 0, ph: 0, github: 0 });
+      })
+      .catch((err) => { if (err.name !== "AbortError") console.error(err); });
+  }, []);
 
   useEffect(() => {
     const ctrl = new AbortController();
     fetchLeads(ctrl.signal);
+    fetchDiscovery(ctrl.signal);
     return () => ctrl.abort();
-  }, [fetchLeads]);
+  }, [fetchLeads, fetchDiscovery]);
 
   useEffect(() => {
     const ctrl = new AbortController();
@@ -184,27 +341,96 @@ export default function PipelinePage() {
 
   const refreshAnalytics = useCallback(() => setAnalytics(null), []);
 
-  const filteredLeads = useMemo(() => {
+  /* ── Channel counts ──────────────────────────────────────────────── */
+
+  const channelCounts = useMemo(() => {
+    const arxivTotal = analytics?.channels.sources.find((s) => s.source === "arXiv")?.total ?? leads.length;
+    const hf = discoveryBySource.hf ?? 0;
+    const gh = discoveryBySource.github ?? 0;
+    const ph = discoveryBySource.ph ?? 0;
+    return {
+      all: arxivTotal + hf + gh + ph,
+      arxiv: arxivTotal,
+      hf,
+      github: gh,
+      ph,
+    };
+  }, [analytics, leads.length, discoveryBySource]);
+
+  /* ── Filtered + sorted streams ───────────────────────────────────── */
+
+  const filteredArxivLeads = useMemo(() => {
     let result = leads;
-    if (categoryFilter !== "all") {
-      result = result.filter((l) => getLeadCategories(l.matchedDirections).includes(categoryFilter as never));
+    if (statusFilter !== "all") {
+      result = result.filter((l) => {
+        if (statusFilter === "ready" && l.status !== "ready") return false;
+        if (statusFilter === "new" && l.status !== "new") return false;
+        if (statusFilter === "sent" && l.status !== "sent") return false;
+        if (statusFilter === "replied" && l.status !== "replied") return false;
+        if (statusFilter === "skipped" && l.status !== "skipped") return false;
+        return true;
+      });
     }
-    if (debouncedQuery) {
-      const q = debouncedQuery.toLowerCase();
-      result = result.filter(
-        (l) =>
-          l.title.toLowerCase().includes(q) ||
-          l.authorName?.toLowerCase().includes(q) ||
-          l.authorEmail.toLowerCase().includes(q) ||
-          l.schoolName?.toLowerCase().includes(q),
-      );
+    if (repFilter !== "all") {
+      result = result.filter((l) => l.assignedRepId === repFilter);
     }
     return result;
-  }, [leads, debouncedQuery, categoryFilter]);
+  }, [leads, statusFilter, repFilter]);
+
+  const filteredDiscovery = useMemo(() => {
+    let result = discoveryLeads;
+    if (channelFilter === "hf") result = result.filter((d) => d.source === "hf");
+    else if (channelFilter === "github") result = result.filter((d) => d.source === "github");
+    else if (channelFilter === "ph") result = result.filter((d) => d.source === "ph");
+    else if (channelFilter === "arxiv") result = [];
+    return result;
+  }, [discoveryLeads, channelFilter]);
+
+  const showArxiv = channelFilter === "all" || channelFilter === "arxiv";
+
+  const sortedArxiv = useMemo(() => {
+    if (!showArxiv) return [];
+    const arr = [...filteredArxivLeads];
+    arr.sort((a, b) => {
+      switch (sort) {
+        case "score":
+          return (b.citationCount ?? 0) - (a.citationCount ?? 0);
+        case "tier":
+          if ((a.leadTier === "strong") === (b.leadTier === "strong")) return 0;
+          return a.leadTier === "strong" ? -1 : 1;
+        case "activity":
+          return new Date(b.sentAt ?? b.createdAt).getTime() - new Date(a.sentAt ?? a.createdAt).getTime();
+        case "newest":
+        default:
+          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      }
+    });
+    return arr;
+  }, [filteredArxivLeads, sort, showArxiv]);
+
+  const sortedDiscovery = useMemo(() => {
+    const arr = [...filteredDiscovery];
+    arr.sort((a, b) => {
+      switch (sort) {
+        case "score":
+          return b.score - a.score;
+        case "tier":
+          return b.score - a.score; // discovery has no tier; fall back to score
+        case "activity":
+          return new Date(b.lastSeen).getTime() - new Date(a.lastSeen).getTime();
+        case "newest":
+        default:
+          return new Date(b.firstSeen).getTime() - new Date(a.firstSeen).getTime();
+      }
+    });
+    return arr;
+  }, [filteredDiscovery, sort]);
+
+  /* ── Batch actions ───────────────────────────────────────────────── */
 
   const batchLeads = useMemo(
-    () => filteredLeads.filter((l) => canSend(l).ok && !excluded.has(l.id)),
-    [filteredLeads, excluded],
+    () => sortedArxiv.filter((l) => canSend(l).ok && !excluded.has(l.id)),
+    [sortedArxiv, excluded],
   );
   const batchStrong = batchLeads.filter((l) => l.leadTier === "strong").length;
   const batchNormal = batchLeads.length - batchStrong;
@@ -339,20 +565,18 @@ export default function PipelinePage() {
   };
 
   const handleExport = useCallback(() => {
-    if (filteredLeads.length === 0) {
+    const exportable = sortedArxiv;
+    if (exportable.length === 0) {
       toast({ variant: "info", title: "Nothing to export", description: "No leads match the current filters." });
       return;
     }
-    const today = shortDate(new Date().toISOString())
-      .toLowerCase()
-      .replace(/,?\s+/g, "-");
-    downloadCsv(`pipeline-${today}.csv`, leadsToCsv(filteredLeads, reps));
+    downloadCsv(`pipeline-${shortDateForFilename()}.csv`, leadsToCsv(exportable, reps));
     toast({
       variant: "success",
-      title: `Exported ${filteredLeads.length} leads`,
-      description: `pipeline-${today}.csv`,
+      title: `Exported ${exportable.length} leads`,
+      description: `pipeline-${shortDateForFilename()}.csv`,
     });
-  }, [filteredLeads, reps, toast]);
+  }, [sortedArxiv, reps, toast]);
 
   const handleOpenSettings = useCallback(() => {
     router.push("/settings#assignment");
@@ -364,48 +588,132 @@ export default function PipelinePage() {
     refreshAnalytics();
   }, [fetchLeads, refreshAnalytics, toast]);
 
-  const headerCount = total || filteredLeads.length;
-  const dateSuffix =
-    dateRange === "today" ? " today" : dateRange === "week" ? " this week" : "";
+  const handleDiscoveryAction = useCallback(
+    (action: "find" | "promote" | "mute" | "view", lead: DiscoveryLead) => {
+      const labels: Record<typeof action, string> = {
+        find: "Find email",
+        promote: "Promote to lead",
+        mute: "Mute",
+        view: "View profile",
+      };
+      toast({
+        variant: "info",
+        title: `${labels[action]} — coming soon`,
+        description: `${lead.fullname || lead.externalId} (${lead.source})`,
+      });
+    },
+    [toast],
+  );
+
+  /* ── Stat strip data ────────────────────────────────────────────── */
+
+  const statDefs: StatDef[] = useMemo(() => {
+    const ch = analytics?.channels;
+    const totalLeads = (ch?.totalLeads ?? leads.length) + (discoveryBySource.hf + discoveryBySource.github + discoveryBySource.ph);
+    const thisWeek = ch?.leadsThisWeek ?? 0;
+    const sent = ch?.sentLeads ?? 0;
+    const ready = leads.filter((l) => l.status === "ready").length;
+    const conv = ch?.conversionRate ?? 0;
+    const sparkPoints = dailyToSparkline(ch?.daily);
+    return [
+      {
+        label: "Total leads",
+        value: totalLeads.toLocaleString(),
+        trend: thisWeek > 0 ? { kind: "up", text: `+${thisWeek}` } : { kind: "flat", text: "±0" },
+        spark: { color: "#15803D", points: sparkPoints },
+      },
+      {
+        label: "This week",
+        value: String(thisWeek),
+        trend: { kind: thisWeek > 0 ? "up" : "flat", text: thisWeek > 0 ? "+new" : "±0" },
+        spark: { color: "#1D4ED8", points: sparkPoints },
+      },
+      {
+        label: "Ready to send",
+        value: String(ready),
+        unit: leads.length > 0 ? `/${leads.length}` : undefined,
+        trend: ready > 0 ? { kind: "up", text: `+${ready}` } : { kind: "flat", text: "±0" },
+        spark: { color: "#B45309", points: sparkPoints },
+      },
+      {
+        label: "Sent · 7d",
+        value: String(sent),
+        trend: { kind: "flat", text: "±0" },
+        spark: { color: "#5A5A56", points: sparkPoints },
+      },
+      {
+        label: "Reply rate",
+        value: conv.toFixed(1),
+        unit: "%",
+        trend: conv > 0 ? { kind: "up", text: `${conv.toFixed(1)}%` } : { kind: "flat", text: "0%" },
+        spark: { color: "#6D28D9", points: sparkPoints },
+      },
+    ];
+  }, [analytics, leads, discoveryBySource]);
+
+  /* ── Render ──────────────────────────────────────────────────────── */
+
+  const allEmpty = sortedArxiv.length === 0 && sortedDiscovery.length === 0;
+  const showPHOnboarding = channelFilter === "ph" && sortedDiscovery.length === 0 && !loading;
 
   return (
     <div>
-      {/* ── Page Header ── */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 28 }}>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 14 }}>
-          <h1 className="page-title">Pipeline</h1>
-          <span className="lead-count">{headerCount} leads{dateSuffix}</span>
-          {refreshing && <Loader2 className="h-3.5 w-3.5 animate-spin" style={{ color: "var(--text-tertiary)" }} />}
+      {/* ── Top bar ── */}
+      <div className="dx-topbar">
+        <div>
+          <div className="dx-crumb">
+            <span>Workspace</span>
+            <span className="dx-sep">/</span>
+            <span>Pipeline</span>
+          </div>
+          <div className="dx-page-title">
+            Pipeline
+            <span className="dx-subtle">
+              {channelCounts.all.toLocaleString()} active leads
+              {refreshing && (
+                <Loader2 className="animate-spin" style={{ display: "inline", width: 12, height: 12, marginLeft: 8, color: "var(--dx-text-3)" }} />
+              )}
+            </span>
+          </div>
         </div>
-        <div style={{ display: "flex", gap: 10 }}>
-          <button onClick={handleReassignAll} className="btn">Re-assign</button>
-          <button onClick={handleScan} disabled={scanning} className="btn">
-            {scanning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap />}
+        <div className="dx-topbar-actions">
+          <button onClick={handleReassignAll} className="dx-secondary">
+            Re-assign
+          </button>
+          <button onClick={handleScan} disabled={scanning} className="dx-secondary">
+            {scanning ? <Loader2 style={{ width: 13, height: 13 }} className="animate-spin" /> : <Zap />}
             {scanning ? "Scanning…" : "Scan arXiv"}
           </button>
-          <button className="btn" type="button" onClick={handleExport}>
+          <button className="dx-secondary" type="button" onClick={handleExport}>
             <Download />
             Export
           </button>
-          <button className="btn" type="button" onClick={handleOpenSettings}>
+          <button className="dx-secondary" type="button" onClick={handleOpenSettings}>
             <SettingsIcon />
             Settings
           </button>
-          <button className="btn btn-primary" type="button" onClick={() => setAddLeadOpen(true)}>
+          <button className="dx-primary" type="button" onClick={() => setAddLeadOpen(true)}>
             <Plus />
-            Add Lead
+            Add lead
           </button>
         </div>
       </div>
 
-      {/* ── Page Tabs ── */}
-      <div className="page-tabs" style={{ marginBottom: 28 }}>
+      {/* ── Stat strip ── */}
+      <div className="dx-stat-strip">
+        {statDefs.map((s) => (
+          <StatCard key={s.label} stat={s} />
+        ))}
+      </div>
+
+      {/* ── Page tabs (Leads / Channels / Sales) ── */}
+      <div className="dx-page-tabs">
         {(["leads", "channels", "sales"] as const).map((tab) => (
           <button
             key={tab}
             type="button"
             onClick={() => setActiveTab(tab)}
-            className={`page-tab ${activeTab === tab ? "active" : ""}`}
+            className={`dx-page-tab ${activeTab === tab ? "active" : ""}`}
           >
             {tab.charAt(0).toUpperCase() + tab.slice(1)}
           </button>
@@ -415,131 +723,186 @@ export default function PipelinePage() {
       {/* ════ LEADS ════ */}
       {activeTab === "leads" && (
         <>
-          {/* Batch send banner */}
-          {batchLeads.length > 0 &&
-            statusFilter !== "sent" &&
-            statusFilter !== "skipped" &&
-            statusFilter !== "replied" && (
-              <div className="action-banner">
-                <div className="action-banner-icon">
-                  <Send style={{ width: 18, height: 18 }} />
-                </div>
-                <div className="action-banner-body">
-                  <p className="action-banner-title">
-                    {dateRange === "today" ? "Today’s Batch" : dateRange === "week" ? "This Week" : "All Leads"} — {batchLeads.length} ready to send
-                  </p>
-                  <div className="action-banner-meta">
-                    <span>
-                      <span className="action-banner-dot" style={{ background: "var(--gold)" }} />
-                      {batchStrong} strong
-                    </span>
-                    <span>
-                      <span className="action-banner-dot" style={{ background: "#93C5FD" }} />
-                      {batchNormal} normal
-                    </span>
-                  </div>
-                </div>
-                <button onClick={handleBatchSend} disabled={batchSending} className="btn btn-primary">
-                  {batchSending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send />}
-                  {batchSending ? "Sending…" : `Send All (${batchLeads.length})`}
+          {/* Channel filter bar */}
+          <div className="dx-channel-bar">
+            {CHANNELS.map((c) => (
+              <button
+                key={c.key}
+                type="button"
+                onClick={() => setChannelFilter(c.key)}
+                className={`dx-ch-tab ${channelFilter === c.key ? "active" : ""}`}
+              >
+                <ChannelIcon ch={c.key} />
+                {c.label}
+                <span className="dx-ch-count">{channelCounts[c.key].toLocaleString()}</span>
+              </button>
+            ))}
+          </div>
+
+          {/* Stream toolbar */}
+          <div className="dx-stream-toolbar">
+            <div className="dx-chip-group">
+              {STATUS_CHIPS.map((s) => (
+                <button
+                  key={s.key}
+                  type="button"
+                  onClick={() => setStatusFilter(s.key)}
+                  className={`dx-chip ${statusFilter === s.key ? "active" : ""}`}
+                >
+                  {s.label}
                 </button>
+              ))}
+            </div>
+
+            {reps.length > 0 && (
+              <div className="dx-rep-pills">
+                {reps.map((r) => {
+                  const palette = paletteFor(r.name);
+                  const active = repFilter === r.id;
+                  return (
+                    <button
+                      key={r.id}
+                      type="button"
+                      onClick={() => setRepFilter(active ? "all" : r.id)}
+                      className={`dx-rep-pill ${active ? "active" : ""}`}
+                    >
+                      <span className="dx-rp-dot" style={{ background: palette.solid }}>
+                        {initialsFor(r.name).slice(0, 1)}
+                      </span>
+                      {r.name}
+                    </button>
+                  );
+                })}
               </div>
             )}
 
-          {/* ── Filter Bar ── */}
-          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24, flexWrap: "wrap" }}>
-            <SegmentedControl value={dateRange} onChange={setDateRange} options={DATE_FILTERS} />
-            <div className="filter-divider" />
-            <SegmentedControl value={statusFilter} onChange={setStatusFilter} options={STATUS_FILTERS} />
+            <div className="dx-toolbar-spacer" />
 
-            <select className="filter-select" value={tierFilter} onChange={(e) => setTierFilter(e.target.value)}>
-              <option value="all">All Tiers</option>
-              <option value="strong">Strong</option>
-              <option value="normal">Normal</option>
-            </select>
-
-            <select className="filter-select" value={repFilter} onChange={(e) => setRepFilter(e.target.value)}>
-              <option value="all">All Reps</option>
-              {reps.map((r) => (
-                <option key={r.id} value={String(r.id)}>{r.name}</option>
+            <select
+              className="dx-select-light"
+              value={sort}
+              onChange={(e) => setSort(e.target.value as SortKey)}
+              aria-label="Sort cards"
+            >
+              {SORT_OPTIONS.map((o) => (
+                <option key={o.key} value={o.key}>{o.label}</option>
               ))}
             </select>
-
-            <select className="filter-select" value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
-              <option value="all">All Categories</option>
-              {RESEARCH_CATEGORIES.map((cat) => (
-                <option key={cat} value={cat}>{cat}</option>
-              ))}
-            </select>
-
-            <div style={{ marginLeft: "auto" }}>
-              <input
-                type="text"
-                className="search-input"
-                placeholder="Search leads…"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-            </div>
           </div>
 
-          {/* ── List ── */}
-          {loading ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {Array.from({ length: 6 }).map((_, i) => (
-                <div key={i} className="skeleton" style={{ height: 110 }} />
-              ))}
-            </div>
-          ) : filteredLeads.length === 0 ? (
-            <div className="empty-state">
-              <div className="empty-icon">
-                <Zap style={{ width: 20, height: 20 }} />
+          {/* Batch send banner — only meaningful when arXiv-ready slice is visible */}
+          {showArxiv && batchLeads.length > 0 && (statusFilter === "all" || statusFilter === "ready") && (
+            <div className="action-banner" style={{ marginBottom: 16, marginTop: 4 }}>
+              <div className="action-banner-icon">
+                <Send style={{ width: 18, height: 18 }} />
               </div>
-              <h3>
-                {dateRange === "today"
-                  ? "Nothing today yet"
-                  : dateRange === "week"
-                    ? "Nothing this week"
-                    : statusFilter === "all"
-                      ? "No leads yet"
-                      : `No ${statusFilter} leads`}
-              </h3>
-              <p>
-                {dateRange === "today"
-                  ? 'Click "Scan arXiv" above to discover today\u2019s papers.'
-                  : dateRange === "week"
-                    ? "No leads matched the current filters."
-                    : statusFilter === "all"
-                      ? 'Click "Scan arXiv" above to find papers.'
-                      : "Try widening your filters or check back later."}
-              </p>
-            </div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {filteredLeads.map((lead) => (
-                <LeadRow
-                  key={lead.id}
-                  lead={lead}
-                  reps={reps}
-                  isExpanded={expanded === lead.id}
-                  isExcluded={excluded.has(lead.id)}
-                  isSending={sending === lead.id}
-                  showStatusBadge={statusFilter === "all"}
-                  onToggleExpand={handleToggleExpand}
-                  onToggleExclude={handleToggleExclude}
-                  onSend={handleSend}
-                  onSkip={handleSkip}
-                  onRepChange={handleRepChange}
-                  onSaveEdit={handleSaveEdit}
-                />
-              ))}
+              <div className="action-banner-body">
+                <p className="action-banner-title">
+                  {batchLeads.length} ready to send
+                </p>
+                <div className="action-banner-meta">
+                  <span>
+                    <span className="action-banner-dot" style={{ background: "var(--gold)" }} />
+                    {batchStrong} strong
+                  </span>
+                  <span>
+                    <span className="action-banner-dot" style={{ background: "#93C5FD" }} />
+                    {batchNormal} normal
+                  </span>
+                </div>
+              </div>
+              <button onClick={handleBatchSend} disabled={batchSending} className="dx-primary">
+                {batchSending ? <Loader2 style={{ width: 13, height: 13 }} className="animate-spin" /> : <Send />}
+                {batchSending ? "Sending…" : `Send all (${batchLeads.length})`}
+              </button>
             </div>
           )}
+
+          {/* Stream */}
+          <div className="dx-stream">
+            {loading ? (
+              <>
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div key={i} className="skeleton" style={{ height: 130 }} />
+                ))}
+              </>
+            ) : showPHOnboarding ? (
+              <div className="dx-empty">
+                <div className="dx-empty-glyph">PH</div>
+                <div className="dx-empty-body">
+                  <div className="dx-empty-title">Product Hunt is just getting started</div>
+                  <div className="dx-empty-text">
+                    {channelCounts.ph === 0
+                      ? "We haven't ingested any Product Hunt makers yet. Connect your Product Hunt API key in Settings — we'll watch daily launches for Chinese-rooted makers and queue them here. Average channel volume after week 1: ~8 leads/day."
+                      : `${channelCounts.ph} Product Hunt makers in the funnel — none match the current filters. Adjust the rep filter or check back after the next scrape.`}
+                  </div>
+                </div>
+                <div className="dx-empty-actions">
+                  <button className="dx-secondary" type="button" onClick={handleOpenSettings}>Learn more</button>
+                  <button className="dx-primary" type="button" onClick={handleOpenSettings}>
+                    <Globe />
+                    Connect PH
+                  </button>
+                </div>
+              </div>
+            ) : allEmpty ? (
+              <div className="dx-empty">
+                <div className="dx-empty-glyph" style={{ background: "linear-gradient(135deg, #F0EFE9, #E8E7E1)", color: "var(--dx-text-2)" }}>
+                  <Star style={{ width: 22, height: 22 }} />
+                </div>
+                <div className="dx-empty-body">
+                  <div className="dx-empty-title">
+                    {channelFilter === "all"
+                      ? "No leads yet"
+                      : `No ${CHANNELS.find((c) => c.key === channelFilter)?.label} leads`}
+                  </div>
+                  <div className="dx-empty-text">
+                    {channelFilter === "arxiv" || channelFilter === "all"
+                      ? 'Click "Scan arXiv" above to discover today\u2019s papers, or add a lead manually.'
+                      : "No leads match the current filter combination. Try widening status or rep filters."}
+                  </div>
+                </div>
+                <div className="dx-empty-actions">
+                  <button className="dx-secondary" type="button" onClick={() => setAddLeadOpen(true)}>
+                    <Plus />
+                    Add lead
+                  </button>
+                  <button className="dx-primary" type="button" onClick={handleScan} disabled={scanning}>
+                    {scanning ? <Loader2 style={{ width: 13, height: 13 }} className="animate-spin" /> : <Zap />}
+                    Scan arXiv
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                {showArxiv && sortedArxiv.map((lead) => (
+                  <LeadRow
+                    key={lead.id}
+                    lead={lead}
+                    reps={reps}
+                    isExpanded={expanded === lead.id}
+                    isExcluded={excluded.has(lead.id)}
+                    isSending={sending === lead.id}
+                    showStatusBadge={statusFilter === "all"}
+                    onToggleExpand={handleToggleExpand}
+                    onToggleExclude={handleToggleExclude}
+                    onSend={handleSend}
+                    onSkip={handleSkip}
+                    onRepChange={handleRepChange}
+                    onSaveEdit={handleSaveEdit}
+                  />
+                ))}
+                {sortedDiscovery.map((d) => (
+                  <DiscoveryCard key={`${d.source}:${d.id}`} lead={d} onAction={handleDiscoveryAction} />
+                ))}
+              </>
+            )}
+          </div>
         </>
       )}
 
       {activeTab === "channels" && (analytics ? <ChannelsTab analytics={analytics} /> : <TabLoader />)}
-      {activeTab === "sales"    && (analytics ? <SalesTab analytics={analytics} />    : <TabLoader />)}
+      {activeTab === "sales" && (analytics ? <SalesTab analytics={analytics} /> : <TabLoader />)}
 
       <AddLeadModal
         open={addLeadOpen}
