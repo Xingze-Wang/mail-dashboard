@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Brain, TrendingUp, BarChart3, GitCompare, AlertTriangle } from "lucide-react";
+import { Star, TrendingUp, BarChart3, GitCompare, AlertTriangle } from "lucide-react";
 import {
   BarChart, Bar, LineChart, Line,
   XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell,
@@ -95,7 +95,7 @@ export default function ScorerPage() {
       <div>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 28 }}>
           <h1 className="page-title" style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <Brain className="h-6 w-6" />
+            <Star className="h-6 w-6" />
             Scorer
           </h1>
         </div>
@@ -116,12 +116,12 @@ export default function ScorerPage() {
     return (
       <div>
         <h1 className="page-title" style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
-          <Brain className="h-6 w-6" />
+          <Star className="h-6 w-6" />
           Scorer
         </h1>
         <div className="empty-state">
           <div className="empty-icon">
-            <Brain style={{ width: 22, height: 22 }} />
+            <Star style={{ width: 22, height: 22 }} />
           </div>
           <h3>No scorer model found</h3>
           <p>
@@ -145,7 +145,7 @@ export default function ScorerPage() {
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 28 }}>
         <div>
           <h1 className="page-title" style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <Brain className="h-6 w-6" />
+            <Star className="h-6 w-6" />
             Scorer
           </h1>
           <p style={{ fontSize: 13, color: "var(--text-secondary)", marginTop: 6 }}>

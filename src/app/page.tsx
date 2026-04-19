@@ -62,6 +62,7 @@ const statCards = [
   { key: "totalClicked", label: "Clicked", icon: MousePointerClick, color: "var(--purple)" },
   { key: "totalBounced", label: "Bounced", icon: AlertTriangle, color: "var(--coral)" },
   { key: "totalInbound", label: "Received", icon: Inbox, color: "var(--blue)" },
+  { key: "wechatTotal", label: "WeChat", icon: MessageCircle, color: "var(--green)" },
 ];
 
 export default function OverviewPage() {
@@ -103,8 +104,8 @@ export default function OverviewPage() {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 28 }}>
           <h1 className="page-title">Overview</h1>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 16, marginBottom: 24 }}>
-          {Array.from({ length: 5 }).map((_, i) => (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 16, marginBottom: 24 }}>
+          {Array.from({ length: 6 }).map((_, i) => (
             <div key={i} className="skeleton" style={{ height: 92 }} />
           ))}
         </div>
@@ -135,9 +136,11 @@ export default function OverviewPage() {
       </div>
 
       {/* ── Stat Cards ── */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 16, marginBottom: 24 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 16, marginBottom: 24 }}>
         {statCards.map((card) => {
-          const value = o[card.key as keyof typeof o];
+          const value = card.key === "wechatTotal"
+            ? (metrics.wechat?.total ?? 0)
+            : o[card.key as keyof typeof o];
           return (
             <div key={card.key} className="stat-card">
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>

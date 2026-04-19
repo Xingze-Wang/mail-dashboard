@@ -1,9 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { RefreshCw, Reply, Mail, Send } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { RefreshCw, Reply, Mail, Send, FileText } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 import { sanitizeHtml } from "@/lib/sanitize";
+
+const DRAFT_KEY_PREFIX = "inbox-reply-draft:";
+const draftKey = (id: string) => `${DRAFT_KEY_PREFIX}${id}`;
+const hasDraft = (id: string) =>
+  typeof window !== "undefined" && !!localStorage.getItem(draftKey(id));
 
 interface InboundEmail {
   id: string;
@@ -25,6 +30,22 @@ export default function InboxPage() {
   const [replyBody, setReplyBody] = useState("");
   const [sending, setSending] = useState(false);
   const [sendResult, setSendResult] = useState<string | null>(null);
+  const [draftSavedAt, setDraftSavedAt] = useState<number | null>(null);
+  const [draftIds, setDraftIds] = useState<Set<string>>(new Set());
+  const draftSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Discover which inbox rows already have saved drafts (for the badge).
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const ids = new Set<string>();
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k?.startsWith(DRAFT_KEY_PREFIX)) {
+        ids.add(k.slice(DRAFT_KEY_PREFIX.length));
+      }
+    }
+    setDraftIds(ids);
+  }, [emails]);
 
   const fetchInbox = () => {
     setLoading(true);
@@ -93,10 +114,19 @@ On ${date}, ${selected.from} wrote:
       const data = await res.json();
       if (res.ok) {
         setSendResult("Sent!");
+        if (selected) {
+          localStorage.removeItem(draftKey(selected.id));
+          setDraftIds((s) => {
+            const next = new Set(s);
+            next.delete(selected.id);
+            return next;
+          });
+        }
         setTimeout(() => {
           setReplyOpen(false);
           setReplyBody("");
           setSendResult(null);
+          setDraftSavedAt(null);
         }, 1500);
       } else {
         setSendResult(`Error: ${data.error}`);
@@ -169,8 +199,11 @@ On ${date}, ${selected.from} wrote:
                     key={email.id}
                     onClick={() => {
                       setSelected(email);
-                      setReplyOpen(false);
-                      setReplyBody("");
+                      const saved = localStorage.getItem(draftKey(email.id)) ?? "";
+                      setReplyBody(saved);
+                      setReplyOpen(saved.length > 0);
+                      setSendResult(null);
+                      setDraftSavedAt(null);
                       markRead(email);
                     }}
                     className={`inbox-row ${isSelected ? "is-selected" : ""}`}
@@ -215,6 +248,23 @@ On ${date}, ${selected.from} wrote:
                               flexShrink: 0,
                             }}
                           />
+                        )}
+                        {draftIds.has(email.id) && (
+                          <span
+                            title="Draft saved"
+                            style={{
+                              fontSize: 10,
+                              fontWeight: 600,
+                              padding: "1px 6px",
+                              borderRadius: 4,
+                              background: "rgba(245, 158, 11, 0.12)",
+                              color: "#92400E",
+                              flexShrink: 0,
+                              letterSpacing: "0.02em",
+                            }}
+                          >
+                            DRAFT
+                          </span>
                         )}
                         <span
                           style={{
@@ -391,7 +441,26 @@ On ${date}, ${selected.from} wrote:
                     </div>
                     <textarea
                       value={replyBody}
-                      onChange={(e) => setReplyBody(e.target.value)}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setReplyBody(v);
+                        if (!selected) return;
+                        if (draftSaveTimer.current) clearTimeout(draftSaveTimer.current);
+                        draftSaveTimer.current = setTimeout(() => {
+                          if (v.trim()) {
+                            localStorage.setItem(draftKey(selected.id), v);
+                            setDraftSavedAt(Date.now());
+                            setDraftIds((s) => new Set(s).add(selected.id));
+                          } else {
+                            localStorage.removeItem(draftKey(selected.id));
+                            setDraftIds((s) => {
+                              const next = new Set(s);
+                              next.delete(selected.id);
+                              return next;
+                            });
+                          }
+                        }, 600);
+                      }}
                       placeholder="Write your reply..."
                       rows={4}
                       autoFocus
@@ -425,28 +494,50 @@ On ${date}, ${selected.from} wrote:
                         </button>
                         <button
                           onClick={() => {
+                            if (!selected) return;
+                            if (replyBody.trim()) {
+                              localStorage.setItem(draftKey(selected.id), replyBody);
+                              setDraftSavedAt(Date.now());
+                              setDraftIds((s) => new Set(s).add(selected.id));
+                            }
                             setReplyOpen(false);
-                            setReplyBody("");
+                          }}
+                          disabled={!replyBody.trim()}
+                          className="btn"
+                        >
+                          <FileText />
+                          Save draft
+                        </button>
+                        <button
+                          onClick={() => {
+                            setReplyOpen(false);
                             setSendResult(null);
                           }}
                           className="btn"
                           style={{ background: "transparent", border: "none" }}
                         >
-                          Cancel
+                          Close
                         </button>
                       </div>
-                      {sendResult && (
-                        <span
-                          style={{
-                            fontSize: 12,
-                            color: sendResult.startsWith("Error")
-                              ? "var(--coral)"
-                              : "var(--green)",
-                          }}
-                        >
-                          {sendResult}
-                        </span>
-                      )}
+                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                        {draftSavedAt && (
+                          <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
+                            Draft saved
+                          </span>
+                        )}
+                        {sendResult && (
+                          <span
+                            style={{
+                              fontSize: 12,
+                              color: sendResult.startsWith("Error")
+                                ? "var(--coral)"
+                                : "var(--green)",
+                            }}
+                          >
+                            {sendResult}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
