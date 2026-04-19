@@ -1,0 +1,1777 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Pipeline / Command Grid · redesign-C</title>
+<!--
+  DESIGN NOTES — "Command / dense data grid"
+  ============================================
+  Three key decisions:
+
+  1. INFORMATION DENSITY OVER WHITESPACE.
+     Row height is 32px (vs ~64px on the v2 mockup). Tabular numerals,
+     monospace IDs, single-line cells with truncation. A 13" laptop fits
+     ~28 rows on screen. The grid IS the product; the chrome (header,
+     filters, status bar) collapses to <140px total vertical space.
+
+  2. KEYBOARD-FIRST. No icon needs to be hovered to discover.
+     Every action has a shortcut visible in tooltips/footer. ↑↓ moves the
+     row cursor (blue left rail), Enter expands inline (no navigation),
+     J/K is a vim-friendly alias, ⌘K opens the command palette teaser,
+     "/" focuses search, X toggles row select for bulk ops, R reassigns,
+     S sends. The bottom status bar is a permanent legend.
+
+  3. ONE GRID, FOUR LEAD SHAPES.
+     Person-leads (HF/GH/PH) and paper-leads (arXiv) are unified into a
+     single sortable table. Source-specific data lives in the inline
+     expand-row: arXiv → draft email preview, HF/GH/PH → bio + signals
+     JSON + "Find email" CTA. The Signals column holds compact tag-pills
+     (e.g. "cn:org · zh:name · 2k★") so a BD analyst can scan tier-worthiness
+     without expanding.
+
+  Sacrificed: marketing polish, gradients, illustrations, mobile.
+  This is a desktop power-tool. Mobile redirects to a read-only summary
+  (out of scope for mockup).
+-->
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  :root {
+    --bg: #fbfbfa;
+    --panel: #ffffff;
+    --line: #e6e6e3;
+    --line-strong: #d4d4d0;
+    --ink: #1a1a1a;
+    --ink-2: #595959;
+    --ink-3: #8a8a85;
+    --accent: #2563eb;
+    --accent-soft: #eff5ff;
+    --row-hover: #f5f5f3;
+    --row-cursor: #eff5ff;
+    --row-selected: #fef9c3;
+    --green: #15803d;
+    --green-soft: #dcfce7;
+    --amber: #b45309;
+    --amber-soft: #fef3c7;
+    --rose: #be123c;
+    --rose-soft: #ffe4e6;
+    --violet: #6d28d9;
+    --violet-soft: #ede9fe;
+    --slate-soft: #f1f5f9;
+  }
+  html, body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, "SF Pro Text", "Inter", system-ui, sans-serif;
+    font-size: 12.5px;
+    line-height: 1.35;
+    font-feature-settings: "tnum" 1, "ss01" 1;
+  }
+  .mono {
+    font-family: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, monospace;
+    font-feature-settings: "tnum" 1;
+    letter-spacing: -0.01em;
+  }
+
+  /* ——— Top bar / app shell ——— */
+  .topbar {
+    height: 36px;
+    border-bottom: 1px solid var(--line);
+    background: #fff;
+  }
+  .crumb { color: var(--ink-3); }
+  .crumb b { color: var(--ink); font-weight: 600; }
+  .kbd {
+    font-family: "SF Mono", ui-monospace, monospace;
+    font-size: 10.5px;
+    border: 1px solid var(--line-strong);
+    background: #fafaf8;
+    padding: 1px 5px;
+    border-radius: 4px;
+    color: var(--ink-2);
+    box-shadow: 0 1px 0 var(--line-strong);
+    line-height: 1;
+    display: inline-block;
+  }
+
+  /* ——— Stat strip ——— */
+  .stat-strip {
+    display: grid;
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+    border-bottom: 1px solid var(--line);
+    background: #fff;
+  }
+  .stat {
+    padding: 8px 12px;
+    border-right: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .stat:last-child { border-right: 0; }
+  .stat .label {
+    color: var(--ink-3);
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .stat .value {
+    font-size: 18px;
+    font-weight: 600;
+    line-height: 1.1;
+  }
+  .stat .delta {
+    font-size: 10.5px;
+    color: var(--ink-3);
+  }
+  .delta.up { color: var(--green); }
+  .delta.down { color: var(--rose); }
+
+  /* ——— Filter bar ——— */
+  .filterbar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--line);
+    background: #fff;
+    flex-wrap: wrap;
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 22px;
+    padding: 0 8px;
+    border: 1px solid var(--line-strong);
+    background: #fff;
+    border-radius: 4px;
+    font-size: 11.5px;
+    color: var(--ink-2);
+    cursor: pointer;
+  }
+  .chip:hover { background: var(--row-hover); }
+  .chip .caret { color: var(--ink-3); font-size: 9px; }
+  .chip.active {
+    background: var(--accent-soft);
+    border-color: #c7dbff;
+    color: var(--accent);
+  }
+  .chip .count {
+    background: rgba(37,99,235,0.12);
+    color: var(--accent);
+    border-radius: 3px;
+    padding: 0 4px;
+    font-size: 10.5px;
+    margin-left: 2px;
+  }
+  .search {
+    height: 22px;
+    border: 1px solid var(--line-strong);
+    border-radius: 4px;
+    padding: 0 8px 0 24px;
+    font-size: 11.5px;
+    width: 220px;
+    background: #fff url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238a8a85' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='7'/><path d='m21 21-4.3-4.3'/></svg>") no-repeat 6px center;
+  }
+  .search:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+  .slider-mini {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 22px;
+    padding: 0 8px;
+    border: 1px solid var(--line-strong);
+    border-radius: 4px;
+    font-size: 11.5px;
+    color: var(--ink-2);
+    background: #fff;
+  }
+  .slider-mini .track {
+    width: 60px;
+    height: 3px;
+    background: var(--line-strong);
+    border-radius: 2px;
+    position: relative;
+  }
+  .slider-mini .fill {
+    position: absolute;
+    left: 0;
+    top: 0;
+    height: 100%;
+    background: var(--accent);
+    border-radius: 2px;
+    width: 65%;
+  }
+  .slider-mini .knob {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    background: #fff;
+    border: 2px solid var(--accent);
+    border-radius: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+  }
+
+  .activechips {
+    display: flex;
+    gap: 6px;
+    padding: 5px 12px;
+    border-bottom: 1px solid var(--line);
+    background: #fafaf8;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .activechips .label {
+    font-size: 10.5px;
+    color: var(--ink-3);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-right: 2px;
+  }
+  .activechips .chip {
+    background: #fff;
+    height: 20px;
+    font-size: 11px;
+    padding-right: 4px;
+  }
+  .activechips .chip .x {
+    color: var(--ink-3);
+    margin-left: 2px;
+    padding: 0 2px;
+    border-radius: 2px;
+  }
+  .activechips .chip .x:hover { background: var(--line); color: var(--ink); }
+
+  /* ——— Table ——— */
+  .grid-wrap {
+    background: #fff;
+    border-bottom: 1px solid var(--line);
+    overflow-x: auto;
+  }
+  table.grid {
+    width: 100%;
+    min-width: 1480px;
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+  .grid thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: #f7f7f5;
+    border-bottom: 1px solid var(--line-strong);
+    padding: 0;
+    height: 28px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--ink-2);
+    text-align: left;
+    user-select: none;
+  }
+  .grid thead th .th-inner {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0 8px;
+    height: 100%;
+    border-right: 1px solid var(--line);
+    position: relative;
+  }
+  .grid thead th:last-child .th-inner { border-right: 0; }
+  .grid thead th .resize {
+    position: absolute;
+    right: -3px;
+    top: 0;
+    width: 6px;
+    height: 100%;
+    cursor: col-resize;
+  }
+  .grid thead th .resize:hover { background: var(--accent); opacity: 0.4; }
+  .sort-asc::after  { content: "↑"; color: var(--accent); font-size: 10px; margin-left: 2px; }
+  .sort-desc::after { content: "↓"; color: var(--accent); font-size: 10px; margin-left: 2px; }
+  .sort-2::before   { content: "2"; font-size: 9px; color: var(--ink-3); margin-right: 2px; vertical-align: super; }
+
+  .grid tbody td {
+    height: 32px;
+    padding: 0 8px;
+    border-bottom: 1px solid var(--line);
+    border-right: 1px solid var(--line);
+    vertical-align: middle;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 0;
+  }
+  .grid tbody td:last-child { border-right: 0; }
+  .grid tbody tr {
+    position: relative;
+    transition: background 60ms;
+  }
+  .grid tbody tr:hover td { background: var(--row-hover); }
+  .grid tbody tr.cursor td {
+    background: var(--row-cursor);
+    box-shadow: inset 2px 0 0 var(--accent);
+  }
+  .grid tbody tr.selected td {
+    background: var(--row-selected);
+  }
+  .grid tbody tr.selected.cursor td {
+    background: #fef3c7;
+    box-shadow: inset 2px 0 0 var(--accent);
+  }
+
+  /* ——— Pills / badges ——— */
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    height: 18px;
+    padding: 0 6px;
+    border-radius: 3px;
+    font-size: 10.5px;
+    font-weight: 500;
+    line-height: 1;
+    border: 1px solid transparent;
+  }
+  .pill .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+  .pill-discovered { background: var(--violet-soft); color: var(--violet); }
+  .pill-discovered .dot { background: var(--violet); }
+  .pill-enriching  { background: var(--amber-soft); color: var(--amber); }
+  .pill-enriching .dot { background: var(--amber); }
+  .pill-ready      { background: var(--accent-soft); color: var(--accent); }
+  .pill-ready .dot { background: var(--accent); }
+  .pill-sent       { background: var(--slate-soft); color: #475569; }
+  .pill-sent .dot  { background: #64748b; }
+  .pill-replied    { background: var(--green-soft); color: var(--green); }
+  .pill-replied .dot { background: var(--green); }
+
+  .tier {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 1px 5px;
+    border-radius: 3px;
+    border: 1px solid;
+  }
+  .tier-strong { color: #b45309; background: #fff7ed; border-color: #fed7aa; }
+  .tier-normal { color: var(--ink-2); background: #f6f6f3; border-color: var(--line-strong); }
+
+  /* ——— Source icons ——— */
+  .src {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .src-icon {
+    width: 16px;
+    height: 16px;
+    border-radius: 3px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9.5px;
+    font-weight: 700;
+    color: #fff;
+    flex-shrink: 0;
+  }
+  .src-arxiv { background: #b31b1b; }
+  .src-hf    { background: #ff9d00; color: #1a1a1a; }
+  .src-gh    { background: #1a1a1a; }
+  .src-ph    { background: #da552f; }
+  .src-name { font-size: 11px; color: var(--ink-2); }
+
+  .rep {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .rep-avatar {
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    color: #fff;
+    font-size: 9px;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .rep-leo    { background: #2563eb; }
+  .rep-ethan  { background: #059669; }
+  .rep-chenyu { background: #7c3aed; }
+  .rep-none   { background: #cbcbc5; color: #595959; }
+
+  /* signal mini-tags */
+  .sigs {
+    display: inline-flex;
+    gap: 3px;
+    overflow: hidden;
+  }
+  .sig {
+    font-family: "SF Mono", ui-monospace, monospace;
+    font-size: 10px;
+    padding: 1px 4px;
+    border-radius: 2px;
+    background: #f1f5f9;
+    color: #475569;
+    white-space: nowrap;
+  }
+  .sig.hot { background: #fef3c7; color: #92400e; }
+  .sig.cn  { background: #fee2e2; color: #b91c1c; }
+  .sig.ok  { background: #dcfce7; color: #166534; }
+
+  .score-bar {
+    display: inline-block;
+    width: 28px;
+    height: 4px;
+    background: var(--line);
+    border-radius: 2px;
+    margin-right: 6px;
+    vertical-align: middle;
+    position: relative;
+  }
+  .score-bar > span {
+    position: absolute; left: 0; top: 0;
+    height: 100%; border-radius: 2px;
+    background: var(--accent);
+  }
+
+  .icon-btn {
+    width: 20px; height: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 3px;
+    color: var(--ink-3);
+    cursor: pointer;
+  }
+  .icon-btn:hover { background: var(--line); color: var(--ink); }
+
+  /* ——— Inline expand row ——— */
+  .expand-row td {
+    padding: 0;
+    background: #fafaf8;
+    height: auto;
+    border-bottom: 2px solid var(--line-strong);
+  }
+  .expand-inner {
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    gap: 0;
+    padding: 0;
+  }
+  .expand-left {
+    padding: 12px 16px;
+    border-right: 1px solid var(--line);
+  }
+  .expand-right {
+    padding: 12px 16px;
+    background: #f4f4f1;
+  }
+  .expand-tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 10px;
+  }
+  .expand-tabs .tab {
+    padding: 4px 10px 6px;
+    font-size: 11.5px;
+    color: var(--ink-3);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+  }
+  .expand-tabs .tab.on { color: var(--ink); border-bottom-color: var(--accent); font-weight: 500; }
+  .draft-meta {
+    display: grid;
+    grid-template-columns: 60px 1fr;
+    gap: 4px 10px;
+    font-size: 11.5px;
+    margin-bottom: 10px;
+  }
+  .draft-meta .k { color: var(--ink-3); }
+  .draft-body {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 10px 12px;
+    font-size: 12px;
+    line-height: 1.55;
+    color: #1a1a1a;
+    max-height: 240px;
+    overflow: auto;
+  }
+  .draft-body p { margin-bottom: 8px; }
+  .signal-grid {
+    display: grid;
+    grid-template-columns: 90px 1fr;
+    gap: 4px 10px;
+    font-size: 11.5px;
+  }
+  .signal-grid .k { color: var(--ink-3); }
+  .signal-grid .v { color: var(--ink); }
+  .signal-grid .v.mono { font-family: "SF Mono", ui-monospace, monospace; font-size: 11px; }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 24px;
+    padding: 0 10px;
+    border-radius: 4px;
+    font-size: 11.5px;
+    font-weight: 500;
+    border: 1px solid var(--line-strong);
+    background: #fff;
+    color: var(--ink);
+    cursor: pointer;
+  }
+  .btn:hover { background: var(--row-hover); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary:hover { background: #1d4fcc; }
+  .btn.ghost { border-color: transparent; }
+  .btn .kbd {
+    background: rgba(255,255,255,0.15);
+    border-color: rgba(255,255,255,0.25);
+    color: rgba(255,255,255,0.85);
+    box-shadow: none;
+  }
+  .btn:not(.primary) .kbd { background: #fff; border-color: var(--line-strong); color: var(--ink-3); box-shadow: none; }
+
+  /* ——— Bulk action bar ——— */
+  .bulkbar {
+    position: fixed;
+    bottom: 38px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #1a1a1a;
+    color: #fff;
+    border-radius: 8px;
+    padding: 8px 10px 8px 14px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.18), 0 2px 8px rgba(0,0,0,0.12);
+    z-index: 50;
+  }
+  .bulkbar .count {
+    font-weight: 600;
+    margin-right: 6px;
+  }
+  .bulkbar .divider {
+    width: 1px;
+    height: 18px;
+    background: rgba(255,255,255,0.18);
+    margin: 0 4px;
+  }
+  .bulkbar .btn {
+    background: transparent;
+    border-color: rgba(255,255,255,0.2);
+    color: #fff;
+    height: 24px;
+  }
+  .bulkbar .btn:hover { background: rgba(255,255,255,0.1); }
+  .bulkbar .btn.primary { background: var(--accent); border-color: var(--accent); }
+  .bulkbar .btn .kbd {
+    background: rgba(0,0,0,0.4);
+    border-color: rgba(255,255,255,0.15);
+    color: rgba(255,255,255,0.7);
+  }
+
+  /* ——— Status bar (footer) ——— */
+  .statusbar {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    height: 26px;
+    background: #f7f7f5;
+    border-top: 1px solid var(--line-strong);
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    font-size: 11px;
+    color: var(--ink-3);
+    gap: 14px;
+    z-index: 40;
+  }
+  .statusbar .group {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .statusbar .sep {
+    width: 1px;
+    height: 12px;
+    background: var(--line-strong);
+  }
+
+  /* ——— Command palette teaser ——— */
+  .palette {
+    position: fixed;
+    top: 90px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 540px;
+    background: #fff;
+    border: 1px solid var(--line-strong);
+    border-radius: 10px;
+    box-shadow: 0 24px 64px rgba(0,0,0,0.18), 0 4px 16px rgba(0,0,0,0.08);
+    z-index: 60;
+    display: none;
+  }
+  .palette.show { display: block; }
+  .palette-input {
+    width: 100%;
+    padding: 12px 14px;
+    border: 0;
+    border-bottom: 1px solid var(--line);
+    font-size: 13px;
+    outline: none;
+  }
+  .palette-list { padding: 4px 0; max-height: 320px; overflow: auto; }
+  .palette-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 14px;
+    font-size: 12.5px;
+    color: var(--ink);
+    cursor: pointer;
+  }
+  .palette-item:hover, .palette-item.on { background: var(--row-cursor); }
+  .palette-item .ico { color: var(--ink-3); width: 14px; }
+  .palette-item .hint { margin-left: auto; color: var(--ink-3); font-size: 11px; }
+  .palette-section {
+    padding: 6px 14px 2px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--ink-3);
+  }
+
+  .checkbox {
+    width: 13px; height: 13px;
+    border: 1.5px solid var(--line-strong);
+    border-radius: 3px;
+    display: inline-block;
+    vertical-align: middle;
+    background: #fff;
+    cursor: pointer;
+    position: relative;
+  }
+  .checkbox.on {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  .checkbox.on::after {
+    content: "";
+    position: absolute;
+    left: 3px; top: 0px;
+    width: 4px; height: 8px;
+    border: solid #fff;
+    border-width: 0 1.5px 1.5px 0;
+    transform: rotate(45deg);
+  }
+  .checkbox.indeterminate {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  .checkbox.indeterminate::after {
+    content: "";
+    position: absolute;
+    left: 2px; top: 5px;
+    width: 7px; height: 2px;
+    background: #fff;
+  }
+
+  /* small overflow chevron */
+  .more {
+    font-size: 10px;
+    color: var(--ink-3);
+  }
+
+  body { padding-bottom: 30px; } /* room for status bar */
+</style>
+</head>
+<body>
+
+<!-- ============== TOP BAR ============== -->
+<div class="topbar flex items-center px-3 gap-3">
+  <div class="flex items-center gap-2">
+    <div class="w-4 h-4 rounded-sm bg-black"></div>
+    <span class="crumb"><b>BD</b> / pipeline / <b>all-leads</b></span>
+  </div>
+  <div class="flex items-center gap-1 ml-2">
+    <span class="kbd">⌘</span><span class="kbd">K</span>
+    <span class="text-[11px] text-[var(--ink-3)] ml-1">command</span>
+  </div>
+  <div class="ml-auto flex items-center gap-3 text-[11px] text-[var(--ink-3)]">
+    <span class="mono">v2.4.1</span>
+    <span class="flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-green-500"></span> live · synced 14s ago</span>
+    <div class="rep-avatar rep-leo" style="width:20px;height:20px;font-size:10px;">XW</div>
+  </div>
+</div>
+
+<!-- ============== STAT STRIP ============== -->
+<div class="stat-strip">
+  <div class="stat">
+    <span class="label">Total leads</span>
+    <span class="value mono">1,847</span>
+    <span class="delta up">+128 / 7d</span>
+  </div>
+  <div class="stat">
+    <span class="label">Discovered</span>
+    <span class="value mono">412</span>
+    <span class="delta">no email yet</span>
+  </div>
+  <div class="stat">
+    <span class="label">Enriching</span>
+    <span class="value mono">73</span>
+    <span class="delta">queue · ~2h</span>
+  </div>
+  <div class="stat">
+    <span class="label">Ready</span>
+    <span class="value mono">218</span>
+    <span class="delta up">+34 today</span>
+  </div>
+  <div class="stat">
+    <span class="label">Sent (7d)</span>
+    <span class="value mono">964</span>
+    <span class="delta">avg 138/d</span>
+  </div>
+  <div class="stat">
+    <span class="label">Replied</span>
+    <span class="value mono">114</span>
+    <span class="delta up">11.8% rate</span>
+  </div>
+  <div class="stat">
+    <span class="label">WeChat added</span>
+    <span class="value mono">47</span>
+    <span class="delta up">+6 / 7d</span>
+  </div>
+  <div class="stat">
+    <span class="label">Reply SLA</span>
+    <span class="value mono">38h</span>
+    <span class="delta down">+4h vs last wk</span>
+  </div>
+</div>
+
+<!-- ============== FILTER BAR ============== -->
+<div class="filterbar">
+  <input class="search" placeholder="Search names, orgs, titles… (/)" />
+  <span class="chip active">Source <span class="count">3</span><span class="caret">▾</span></span>
+  <span class="chip active">Status <span class="count">2</span><span class="caret">▾</span></span>
+  <span class="chip active">Rep <span class="count">All</span><span class="caret">▾</span></span>
+  <span class="chip">Tier: <b style="margin-left:3px;">Strong</b><span class="caret">▾</span></span>
+  <span class="slider-mini" title="Discovery score range">
+    score
+    <span class="track"><span class="fill"></span><span class="knob" style="left:65%;"></span></span>
+    <span class="mono">≥ 0.65</span>
+  </span>
+  <span class="chip">School tier <span class="caret">▾</span></span>
+  <span class="chip">Date <span class="caret">▾</span></span>
+  <span class="chip">Has email <span class="caret">▾</span></span>
+  <span class="chip">+ filter</span>
+  <div class="ml-auto flex items-center gap-2">
+    <span class="text-[11px] text-[var(--ink-3)]">View:</span>
+    <span class="chip active">All leads</span>
+    <span class="chip">My queue</span>
+    <span class="chip">Strong + ready</span>
+    <span class="chip">Discovery</span>
+    <span class="icon-btn" title="Save view">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/></svg>
+    </span>
+  </div>
+</div>
+
+<!-- active filter chips -->
+<div class="activechips">
+  <span class="label">Active</span>
+  <span class="chip">source: arXiv <span class="x">×</span></span>
+  <span class="chip">source: Hugging Face <span class="x">×</span></span>
+  <span class="chip">source: GitHub <span class="x">×</span></span>
+  <span class="chip">status: ready <span class="x">×</span></span>
+  <span class="chip">status: discovered <span class="x">×</span></span>
+  <span class="chip">score ≥ 0.65 <span class="x">×</span></span>
+  <span class="chip" style="border-style:dashed;">+ saved as "Today's outbound"</span>
+  <span class="ml-auto text-[11px] text-[var(--ink-3)] mono">487 of 1,847 · sorted by score↓, last_activity↓</span>
+</div>
+
+<!-- ============== GRID ============== -->
+<div class="grid-wrap">
+<table class="grid">
+  <colgroup>
+    <col style="width: 30px;">  <!-- checkbox -->
+    <col style="width: 110px;"> <!-- source -->
+    <col style="width: 220px;"> <!-- name / title -->
+    <col style="width: 70px;">  <!-- tier -->
+    <col style="width: 110px;"> <!-- status -->
+    <col style="width: 110px;"> <!-- rep -->
+    <col style="width: 90px;">  <!-- score -->
+    <col style="width: 220px;"> <!-- signals -->
+    <col style="width: 220px;"> <!-- school/org -->
+    <col style="width: 130px;"> <!-- last activity -->
+    <col style="width: 110px;"> <!-- actions -->
+  </colgroup>
+  <thead>
+    <tr>
+      <th><div class="th-inner"><span class="checkbox indeterminate"></span></div></th>
+      <th><div class="th-inner">Source<span class="resize"></span></div></th>
+      <th><div class="th-inner">Name / Title<span class="resize"></span></div></th>
+      <th><div class="th-inner">Tier<span class="resize"></span></div></th>
+      <th><div class="th-inner">Status<span class="resize"></span></div></th>
+      <th><div class="th-inner">Rep<span class="resize"></span></div></th>
+      <th><div class="th-inner sort-desc">Score<span class="resize"></span></div></th>
+      <th><div class="th-inner">Signals<span class="resize"></span></div></th>
+      <th><div class="th-inner">School / Org<span class="resize"></span></div></th>
+      <th><div class="th-inner sort-desc sort-2">Last activity<span class="resize"></span></div></th>
+      <th><div class="th-inner"></div></th>
+    </tr>
+  </thead>
+  <tbody>
+
+    <!-- ROW 1 — arXiv ready, cursor + selected, EXPANDED below -->
+    <tr class="cursor selected">
+      <td><span class="checkbox on"></span></td>
+      <td><span class="src"><span class="src-icon src-arxiv">aX</span><span class="src-name">arXiv</span></span></td>
+      <td title="Scaling Laws for Reward Model Overoptimization in Chinese LLMs"><b>Wang Bo</b> · <span class="text-[var(--ink-3)]">Scaling Laws for Reward Model Over…</span></td>
+      <td><span class="tier tier-strong">Strong</span></td>
+      <td><span class="pill pill-ready"><span class="dot"></span>Ready</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-leo">L</span>Leo</span></td>
+      <td><span class="score-bar"><span style="width:94%"></span></span><span class="mono">0.94</span></td>
+      <td><span class="sigs"><span class="sig cn">cn:org</span><span class="sig cn">zh:name</span><span class="sig hot">12k★</span><span class="sig">h-idx 28</span></span></td>
+      <td title="Tsinghua University · IIIS">Tsinghua University · IIIS</td>
+      <td class="mono text-[var(--ink-3)]">2m ago · draft</td>
+      <td>
+        <button class="btn primary" style="height:20px;padding:0 8px;font-size:11px;">Send <span class="kbd">S</span></button>
+      </td>
+    </tr>
+    <tr class="expand-row">
+      <td colspan="11">
+        <div class="expand-inner">
+          <div class="expand-left">
+            <div class="expand-tabs">
+              <span class="tab on">Draft email</span>
+              <span class="tab">Lead profile</span>
+              <span class="tab">Activity (3)</span>
+              <span class="tab">Notes</span>
+              <span class="tab">Raw JSON</span>
+              <span class="ml-auto text-[11px] text-[var(--ink-3)] flex items-center gap-2">
+                <span class="kbd">E</span> edit · <span class="kbd">⌘↵</span> send · <span class="kbd">Esc</span> collapse
+              </span>
+            </div>
+            <div class="draft-meta">
+              <span class="k">From</span><span>Leo &lt;leo@aiunion.cn&gt;</span>
+              <span class="k">To</span><span class="mono">wangbo@mails.tsinghua.edu.cn</span>
+              <span class="k">Subject</span><span><b>Re: Scaling Laws for Reward Model Overoptimization in Chinese LLMs — collaborate?</b></span>
+              <span class="k">Template</span><span>strong-cn-researcher.v3 <span class="text-[var(--ink-3)]">· assigned by router</span></span>
+            </div>
+            <div class="draft-body">
+              <p>王博士，您好，</p>
+              <p>我是 AI Union 的 Leo。拜读了您和团队最近在 arXiv 上的 <i>Scaling Laws for Reward Model Overoptimization in Chinese LLMs</i>，关于 KL penalty 在 RM scaling 下退化曲线的分析非常启发我们 — 我们最近在做面向中文金融场景的 RLHF pipeline，在 reward hacking 上踩了几乎一样的坑。</p>
+              <p>想请教您几个问题，也想看看是否有合作的可能。下周方便约 30 分钟线上聊聊吗？周三 / 周四下午我都可以配合您时区。</p>
+              <p>顺手附上我们之前发的一份内部 benchmark 简报（PDF 4 页），如果觉得有意思我们可以更深入聊。</p>
+              <p>祝研顺,<br>Leo</p>
+            </div>
+          </div>
+          <div class="expand-right">
+            <div class="text-[10.5px] uppercase tracking-wider text-[var(--ink-3)] mb-2">Lead profile</div>
+            <div class="signal-grid">
+              <span class="k">Lead ID</span><span class="v mono">pl_8f2a91c4</span>
+              <span class="k">arXiv ID</span><span class="v mono">2403.18421</span>
+              <span class="k">Author</span><span class="v">Wang Bo (王博)</span>
+              <span class="k">Email</span><span class="v mono">wangbo@mails.tsinghua.edu.cn</span>
+              <span class="k">School</span><span class="v">Tsinghua · IIIS</span>
+              <span class="k">School tier</span><span class="v">T1 · 985/211</span>
+              <span class="k">h-index</span><span class="v mono">28</span>
+              <span class="k">Citations</span><span class="v mono">12,418</span>
+              <span class="k">Co-authors</span><span class="v">7 · 4 in CN</span>
+              <span class="k">Routed to</span><span class="v">Leo · cite&gt;2k AND T1</span>
+              <span class="k">Created</span><span class="v mono">2026-04-14 09:12</span>
+            </div>
+            <div class="mt-3 flex gap-2 flex-wrap">
+              <button class="btn"><span>Edit lead</span></button>
+              <button class="btn"><span>Skip</span> <span class="kbd">⌫</span></button>
+              <button class="btn"><span>Reassign</span> <span class="kbd">R</span></button>
+            </div>
+          </div>
+        </div>
+      </td>
+    </tr>
+
+    <!-- ROW 2 — HF discovered no email -->
+    <tr>
+      <td><span class="checkbox on"></span></td>
+      <td><span class="src"><span class="src-icon src-hf">hf</span><span class="src-name">Hugging Face</span></span></td>
+      <td><b>qwen-ai</b> · <span class="text-[var(--ink-3)]">Junyang Lin</span></td>
+      <td><span class="tier tier-strong">Strong</span></td>
+      <td><span class="pill pill-discovered"><span class="dot"></span>Discovered</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-none">?</span><span class="text-[var(--ink-3)]">unassigned</span></span></td>
+      <td><span class="score-bar"><span style="width:91%"></span></span><span class="mono">0.91</span></td>
+      <td><span class="sigs"><span class="sig cn">cn:org</span><span class="sig hot">42k follow</span><span class="sig">114 models</span></span></td>
+      <td>Alibaba DAMO · Qwen team</td>
+      <td class="mono text-[var(--ink-3)]">14m ago</td>
+      <td>
+        <button class="btn" style="height:20px;padding:0 8px;font-size:11px;">Find email</button>
+      </td>
+    </tr>
+
+    <!-- ROW 3 — arXiv replied -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-arxiv">aX</span><span class="src-name">arXiv</span></span></td>
+      <td><b>Liu Jiaxiang</b> · <span class="text-[var(--ink-3)]">Sparse Mixture-of-Experts Routing un…</span></td>
+      <td><span class="tier tier-strong">Strong</span></td>
+      <td><span class="pill pill-replied"><span class="dot"></span>Replied</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-leo">L</span>Leo</span></td>
+      <td><span class="score-bar"><span style="width:88%"></span></span><span class="mono">0.88</span></td>
+      <td><span class="sigs"><span class="sig ok">+wechat</span><span class="sig">8.2k★</span><span class="sig">h-idx 21</span></span></td>
+      <td>Peking University · CFCS</td>
+      <td class="mono text-[var(--ink-3)]">38m ago</td>
+      <td><span class="more">⋯</span></td>
+    </tr>
+
+    <!-- ROW 4 — GH discovered -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-gh">gh</span><span class="src-name">GitHub</span></span></td>
+      <td><b>yuhan-li</b> · <span class="text-[var(--ink-3)]">jiaxiang/llm-router</span></td>
+      <td><span class="tier tier-normal">Normal</span></td>
+      <td><span class="pill pill-discovered"><span class="dot"></span>Discovered</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-none">?</span><span class="text-[var(--ink-3)]">unassigned</span></span></td>
+      <td><span class="score-bar"><span style="width:82%"></span></span><span class="mono">0.82</span></td>
+      <td><span class="sigs"><span class="sig cn">cn:bio</span><span class="sig">3.1k★</span><span class="sig">SH</span></span></td>
+      <td>Independent · Shanghai</td>
+      <td class="mono text-[var(--ink-3)]">52m ago</td>
+      <td>
+        <button class="btn" style="height:20px;padding:0 8px;font-size:11px;">Find email</button>
+      </td>
+    </tr>
+
+    <!-- ROW 5 — arXiv ready Ethan -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-arxiv">aX</span><span class="src-name">arXiv</span></span></td>
+      <td><b>Chen Yuxuan</b> · <span class="text-[var(--ink-3)]">Long-Context Retrieval with Hierarc…</span></td>
+      <td><span class="tier tier-normal">Normal</span></td>
+      <td><span class="pill pill-ready"><span class="dot"></span>Ready</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-ethan">E</span>Ethan</span></td>
+      <td><span class="score-bar"><span style="width:79%"></span></span><span class="mono">0.79</span></td>
+      <td><span class="sigs"><span class="sig">overseas</span><span class="sig">cite 412</span><span class="sig">PhD-3</span></span></td>
+      <td>UIUC · CS</td>
+      <td class="mono text-[var(--ink-3)]">1h ago · draft</td>
+      <td>
+        <button class="btn" style="height:20px;padding:0 8px;font-size:11px;">Send</button>
+      </td>
+    </tr>
+
+    <!-- ROW 6 — PH discovered -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-ph">ph</span><span class="src-name">Product Hunt</span></span></td>
+      <td><b>Mike Wang</b> · <span class="text-[var(--ink-3)]">FlowAI · agentic flow builder</span></td>
+      <td><span class="tier tier-normal">Normal</span></td>
+      <td><span class="pill pill-discovered"><span class="dot"></span>Discovered</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-none">?</span><span class="text-[var(--ink-3)]">unassigned</span></span></td>
+      <td><span class="score-bar"><span style="width:76%"></span></span><span class="mono">0.76</span></td>
+      <td><span class="sigs"><span class="sig">@mikeflow</span><span class="sig hot">#3 today</span><span class="sig cn">cn:hint</span></span></td>
+      <td>flowai.dev · Beijing→SF</td>
+      <td class="mono text-[var(--ink-3)]">1h ago</td>
+      <td>
+        <button class="btn" style="height:20px;padding:0 8px;font-size:11px;">Find email</button>
+      </td>
+    </tr>
+
+    <!-- ROW 7 — arXiv sent waiting -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-arxiv">aX</span><span class="src-name">arXiv</span></span></td>
+      <td><b>Zhang Wei</b> · <span class="text-[var(--ink-3)]">Diffusion Policies for Robot Manipul…</span></td>
+      <td><span class="tier tier-strong">Strong</span></td>
+      <td><span class="pill pill-sent"><span class="dot"></span>Sent</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-leo">L</span>Leo</span></td>
+      <td><span class="score-bar"><span style="width:86%"></span></span><span class="mono">0.86</span></td>
+      <td><span class="sigs"><span class="sig">opened 2×</span><span class="sig">cite 3.4k</span></span></td>
+      <td>SJTU · MoE Key Lab AI</td>
+      <td class="mono text-[var(--ink-3)]">2h ago</td>
+      <td><span class="more">⋯</span></td>
+    </tr>
+
+    <!-- ROW 8 — HF -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-hf">hf</span><span class="src-name">Hugging Face</span></span></td>
+      <td><b>deepseek-ai</b> · <span class="text-[var(--ink-3)]">org · 38 contributors</span></td>
+      <td><span class="tier tier-strong">Strong</span></td>
+      <td><span class="pill pill-enriching"><span class="dot"></span>Enriching</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-chenyu">C</span>Chenyu</span></td>
+      <td><span class="score-bar"><span style="width:97%"></span></span><span class="mono">0.97</span></td>
+      <td><span class="sigs"><span class="sig cn">cn:org</span><span class="sig hot">120k follow</span><span class="sig">42 models</span></span></td>
+      <td>DeepSeek · Hangzhou</td>
+      <td class="mono text-[var(--ink-3)]">2h ago</td>
+      <td><span class="more">⋯</span></td>
+    </tr>
+
+    <!-- ROW 9 — arXiv normal Chenyu .cn -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-arxiv">aX</span><span class="src-name">arXiv</span></span></td>
+      <td><b>Sun Yumeng</b> · <span class="text-[var(--ink-3)]">In-Context Learning Limits for Multil…</span></td>
+      <td><span class="tier tier-normal">Normal</span></td>
+      <td><span class="pill pill-ready"><span class="dot"></span>Ready</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-chenyu">C</span>Chenyu</span></td>
+      <td><span class="score-bar"><span style="width:71%"></span></span><span class="mono">0.71</span></td>
+      <td><span class="sigs"><span class="sig cn">.cn</span><span class="sig">cite 184</span></span></td>
+      <td>ZJU · CAD&CG Lab</td>
+      <td class="mono text-[var(--ink-3)]">3h ago · draft</td>
+      <td>
+        <button class="btn" style="height:20px;padding:0 8px;font-size:11px;">Send</button>
+      </td>
+    </tr>
+
+    <!-- ROW 10 — GH -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-gh">gh</span><span class="src-name">GitHub</span></span></td>
+      <td><b>haoxin-z</b> · <span class="text-[var(--ink-3)]">haoxin-z/vlm-eval-suite</span></td>
+      <td><span class="tier tier-strong">Strong</span></td>
+      <td><span class="pill pill-discovered"><span class="dot"></span>Discovered</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-none">?</span><span class="text-[var(--ink-3)]">unassigned</span></span></td>
+      <td><span class="score-bar"><span style="width:84%"></span></span><span class="mono">0.84</span></td>
+      <td><span class="sigs"><span class="sig cn">zh:name</span><span class="sig hot">5.6k★</span><span class="sig">PKU mail</span></span></td>
+      <td>Peking University · alum</td>
+      <td class="mono text-[var(--ink-3)]">4h ago</td>
+      <td>
+        <button class="btn" style="height:20px;padding:0 8px;font-size:11px;">Find email</button>
+      </td>
+    </tr>
+
+    <!-- ROW 11 — arXiv replied normal -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-arxiv">aX</span><span class="src-name">arXiv</span></span></td>
+      <td><b>Zhao Mingyu</b> · <span class="text-[var(--ink-3)]">Speculative Decoding with Draft-and-…</span></td>
+      <td><span class="tier tier-normal">Normal</span></td>
+      <td><span class="pill pill-replied"><span class="dot"></span>Replied</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-ethan">E</span>Ethan</span></td>
+      <td><span class="score-bar"><span style="width:73%"></span></span><span class="mono">0.73</span></td>
+      <td><span class="sigs"><span class="sig ok">+wechat</span><span class="sig">cite 240</span></span></td>
+      <td>CMU LTI</td>
+      <td class="mono text-[var(--ink-3)]">5h ago</td>
+      <td><span class="more">⋯</span></td>
+    </tr>
+
+    <!-- ROW 12 — HF -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-hf">hf</span><span class="src-name">Hugging Face</span></span></td>
+      <td><b>internlm</b> · <span class="text-[var(--ink-3)]">org · Shanghai AI Lab</span></td>
+      <td><span class="tier tier-strong">Strong</span></td>
+      <td><span class="pill pill-discovered"><span class="dot"></span>Discovered</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-none">?</span><span class="text-[var(--ink-3)]">unassigned</span></span></td>
+      <td><span class="score-bar"><span style="width:89%"></span></span><span class="mono">0.89</span></td>
+      <td><span class="sigs"><span class="sig cn">cn:org</span><span class="sig">28 models</span><span class="sig">68k DL</span></span></td>
+      <td>Shanghai AI Lab</td>
+      <td class="mono text-[var(--ink-3)]">5h ago</td>
+      <td>
+        <button class="btn" style="height:20px;padding:0 8px;font-size:11px;">Find email</button>
+      </td>
+    </tr>
+
+    <!-- ROW 13 — arXiv -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-arxiv">aX</span><span class="src-name">arXiv</span></span></td>
+      <td><b>Lin Xiaoyu</b> · <span class="text-[var(--ink-3)]">RAG-Bench: A Chinese Knowledge-Inte…</span></td>
+      <td><span class="tier tier-normal">Normal</span></td>
+      <td><span class="pill pill-ready"><span class="dot"></span>Ready</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-chenyu">C</span>Chenyu</span></td>
+      <td><span class="score-bar"><span style="width:69%"></span></span><span class="mono">0.69</span></td>
+      <td><span class="sigs"><span class="sig cn">.cn</span><span class="sig">PhD-2</span></span></td>
+      <td>Fudan · NLP Lab</td>
+      <td class="mono text-[var(--ink-3)]">6h ago · draft</td>
+      <td>
+        <button class="btn" style="height:20px;padding:0 8px;font-size:11px;">Send</button>
+      </td>
+    </tr>
+
+    <!-- ROW 14 — PH -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-ph">ph</span><span class="src-name">Product Hunt</span></span></td>
+      <td><b>Lily Chen</b> · <span class="text-[var(--ink-3)]">Notation · AI for Chinese students</span></td>
+      <td><span class="tier tier-normal">Normal</span></td>
+      <td><span class="pill pill-discovered"><span class="dot"></span>Discovered</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-none">?</span><span class="text-[var(--ink-3)]">unassigned</span></span></td>
+      <td><span class="score-bar"><span style="width:74%"></span></span><span class="mono">0.74</span></td>
+      <td><span class="sigs"><span class="sig">@lilyc</span><span class="sig">#11 today</span><span class="sig cn">zh:name</span></span></td>
+      <td>notation.ai · Toronto</td>
+      <td class="mono text-[var(--ink-3)]">7h ago</td>
+      <td>
+        <button class="btn" style="height:20px;padding:0 8px;font-size:11px;">Find email</button>
+      </td>
+    </tr>
+
+    <!-- ROW 15 — arXiv -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-arxiv">aX</span><span class="src-name">arXiv</span></span></td>
+      <td><b>Hu Jiawei</b> · <span class="text-[var(--ink-3)]">Reasoning Distillation via Process Su…</span></td>
+      <td><span class="tier tier-strong">Strong</span></td>
+      <td><span class="pill pill-sent"><span class="dot"></span>Sent</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-leo">L</span>Leo</span></td>
+      <td><span class="score-bar"><span style="width:90%"></span></span><span class="mono">0.90</span></td>
+      <td><span class="sigs"><span class="sig">cite 5.1k</span><span class="sig">opened</span></span></td>
+      <td>Tsinghua · IIIS</td>
+      <td class="mono text-[var(--ink-3)]">8h ago</td>
+      <td><span class="more">⋯</span></td>
+    </tr>
+
+    <!-- ROW 16 — GH -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-gh">gh</span><span class="src-name">GitHub</span></span></td>
+      <td><b>jiaxiang</b> · <span class="text-[var(--ink-3)]">jiaxiang/llm-router</span></td>
+      <td><span class="tier tier-normal">Normal</span></td>
+      <td><span class="pill pill-enriching"><span class="dot"></span>Enriching</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-none">?</span><span class="text-[var(--ink-3)]">queue</span></span></td>
+      <td><span class="score-bar"><span style="width:68%"></span></span><span class="mono">0.68</span></td>
+      <td><span class="sigs"><span class="sig">2.4k★</span><span class="sig cn">cn:bio</span></span></td>
+      <td>Independent · Hangzhou</td>
+      <td class="mono text-[var(--ink-3)]">9h ago</td>
+      <td><span class="more">⋯</span></td>
+    </tr>
+
+    <!-- ROW 17 — arXiv -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-arxiv">aX</span><span class="src-name">arXiv</span></span></td>
+      <td><b>Wang Tianyi</b> · <span class="text-[var(--ink-3)]">Vision-Language Pretraining on Noisy …</span></td>
+      <td><span class="tier tier-normal">Normal</span></td>
+      <td><span class="pill pill-ready"><span class="dot"></span>Ready</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-ethan">E</span>Ethan</span></td>
+      <td><span class="score-bar"><span style="width:67%"></span></span><span class="mono">0.67</span></td>
+      <td><span class="sigs"><span class="sig">overseas</span><span class="sig">cite 92</span></span></td>
+      <td>Stanford · CS</td>
+      <td class="mono text-[var(--ink-3)]">10h ago · draft</td>
+      <td>
+        <button class="btn" style="height:20px;padding:0 8px;font-size:11px;">Send</button>
+      </td>
+    </tr>
+
+    <!-- ROW 18 — HF -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-hf">hf</span><span class="src-name">Hugging Face</span></span></td>
+      <td><b>baichuan-inc</b> · <span class="text-[var(--ink-3)]">org · 18 contributors</span></td>
+      <td><span class="tier tier-strong">Strong</span></td>
+      <td><span class="pill pill-discovered"><span class="dot"></span>Discovered</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-none">?</span><span class="text-[var(--ink-3)]">unassigned</span></span></td>
+      <td><span class="score-bar"><span style="width:85%"></span></span><span class="mono">0.85</span></td>
+      <td><span class="sigs"><span class="sig cn">cn:org</span><span class="sig">14 models</span></span></td>
+      <td>Baichuan AI · Beijing</td>
+      <td class="mono text-[var(--ink-3)]">11h ago</td>
+      <td>
+        <button class="btn" style="height:20px;padding:0 8px;font-size:11px;">Find email</button>
+      </td>
+    </tr>
+
+    <!-- ROW 19 — arXiv replied -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-arxiv">aX</span><span class="src-name">arXiv</span></span></td>
+      <td><b>Xu Yifan</b> · <span class="text-[var(--ink-3)]">Audio-Visual Speech Sep. with Cross-…</span></td>
+      <td><span class="tier tier-normal">Normal</span></td>
+      <td><span class="pill pill-replied"><span class="dot"></span>Replied</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-leo">L</span>Leo</span></td>
+      <td><span class="score-bar"><span style="width:75%"></span></span><span class="mono">0.75</span></td>
+      <td><span class="sigs"><span class="sig ok">+meeting</span></span></td>
+      <td>USTC · iFLYTEK</td>
+      <td class="mono text-[var(--ink-3)]">12h ago</td>
+      <td><span class="more">⋯</span></td>
+    </tr>
+
+    <!-- ROW 20 — arXiv -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-arxiv">aX</span><span class="src-name">arXiv</span></span></td>
+      <td><b>Zhou Mingxuan</b> · <span class="text-[var(--ink-3)]">Sparse Attention via Block-Sparse Ke…</span></td>
+      <td><span class="tier tier-strong">Strong</span></td>
+      <td><span class="pill pill-ready"><span class="dot"></span>Ready</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-leo">L</span>Leo</span></td>
+      <td><span class="score-bar"><span style="width:87%"></span></span><span class="mono">0.87</span></td>
+      <td><span class="sigs"><span class="sig">cite 2.8k</span><span class="sig cn">.cn</span></span></td>
+      <td>Tsinghua · DCST</td>
+      <td class="mono text-[var(--ink-3)]">13h ago · draft</td>
+      <td>
+        <button class="btn" style="height:20px;padding:0 8px;font-size:11px;">Send</button>
+      </td>
+    </tr>
+
+    <!-- ROW 21 — PH -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-ph">ph</span><span class="src-name">Product Hunt</span></span></td>
+      <td><b>Kevin Liu</b> · <span class="text-[var(--ink-3)]">Voca · realtime voice agents</span></td>
+      <td><span class="tier tier-strong">Strong</span></td>
+      <td><span class="pill pill-discovered"><span class="dot"></span>Discovered</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-none">?</span><span class="text-[var(--ink-3)]">unassigned</span></span></td>
+      <td><span class="score-bar"><span style="width:81%"></span></span><span class="mono">0.81</span></td>
+      <td><span class="sigs"><span class="sig hot">#1 today</span><span class="sig">@kvlu</span><span class="sig cn">zh:name</span></span></td>
+      <td>voca.so · NYC</td>
+      <td class="mono text-[var(--ink-3)]">14h ago</td>
+      <td>
+        <button class="btn" style="height:20px;padding:0 8px;font-size:11px;">Find email</button>
+      </td>
+    </tr>
+
+    <!-- ROW 22 — arXiv -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-arxiv">aX</span><span class="src-name">arXiv</span></span></td>
+      <td><b>Yang Ruoxi</b> · <span class="text-[var(--ink-3)]">Differentially Private RLHF</span></td>
+      <td><span class="tier tier-normal">Normal</span></td>
+      <td><span class="pill pill-sent"><span class="dot"></span>Sent</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-ethan">E</span>Ethan</span></td>
+      <td><span class="score-bar"><span style="width:64%"></span></span><span class="mono">0.64</span></td>
+      <td><span class="sigs"><span class="sig">overseas</span></span></td>
+      <td>Berkeley · BAIR</td>
+      <td class="mono text-[var(--ink-3)]">15h ago</td>
+      <td><span class="more">⋯</span></td>
+    </tr>
+
+    <!-- ROW 23 — HF -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-hf">hf</span><span class="src-name">Hugging Face</span></span></td>
+      <td><b>01-ai</b> · <span class="text-[var(--ink-3)]">org · Yi family</span></td>
+      <td><span class="tier tier-strong">Strong</span></td>
+      <td><span class="pill pill-discovered"><span class="dot"></span>Discovered</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-none">?</span><span class="text-[var(--ink-3)]">unassigned</span></span></td>
+      <td><span class="score-bar"><span style="width:92%"></span></span><span class="mono">0.92</span></td>
+      <td><span class="sigs"><span class="sig cn">cn:org</span><span class="sig hot">88k follow</span></span></td>
+      <td>01.AI · Beijing</td>
+      <td class="mono text-[var(--ink-3)]">16h ago</td>
+      <td>
+        <button class="btn" style="height:20px;padding:0 8px;font-size:11px;">Find email</button>
+      </td>
+    </tr>
+
+    <!-- ROW 24 — arXiv -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-arxiv">aX</span><span class="src-name">arXiv</span></span></td>
+      <td><b>Li Hanqing</b> · <span class="text-[var(--ink-3)]">Continual Pretraining for Domain Adap…</span></td>
+      <td><span class="tier tier-normal">Normal</span></td>
+      <td><span class="pill pill-ready"><span class="dot"></span>Ready</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-chenyu">C</span>Chenyu</span></td>
+      <td><span class="score-bar"><span style="width:62%"></span></span><span class="mono">0.62</span></td>
+      <td><span class="sigs"><span class="sig cn">.cn</span></span></td>
+      <td>NJU · LAMDA</td>
+      <td class="mono text-[var(--ink-3)]">18h ago · draft</td>
+      <td>
+        <button class="btn" style="height:20px;padding:0 8px;font-size:11px;">Send</button>
+      </td>
+    </tr>
+
+    <!-- ROW 25 — GH -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-gh">gh</span><span class="src-name">GitHub</span></span></td>
+      <td><b>shibing624</b> · <span class="text-[var(--ink-3)]">shibing624/text2vec</span></td>
+      <td><span class="tier tier-strong">Strong</span></td>
+      <td><span class="pill pill-enriching"><span class="dot"></span>Enriching</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-none">?</span><span class="text-[var(--ink-3)]">queue</span></span></td>
+      <td><span class="score-bar"><span style="width:83%"></span></span><span class="mono">0.83</span></td>
+      <td><span class="sigs"><span class="sig hot">9.8k★</span><span class="sig cn">cn:bio</span></span></td>
+      <td>Independent · Shenzhen</td>
+      <td class="mono text-[var(--ink-3)]">19h ago</td>
+      <td><span class="more">⋯</span></td>
+    </tr>
+
+    <!-- ROW 26 — arXiv -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-arxiv">aX</span><span class="src-name">arXiv</span></span></td>
+      <td><b>Gao Shijie</b> · <span class="text-[var(--ink-3)]">Geometric Deep Learning for Protein …</span></td>
+      <td><span class="tier tier-normal">Normal</span></td>
+      <td><span class="pill pill-sent"><span class="dot"></span>Sent</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-ethan">E</span>Ethan</span></td>
+      <td><span class="score-bar"><span style="width:66%"></span></span><span class="mono">0.66</span></td>
+      <td><span class="sigs"><span class="sig">cite 312</span><span class="sig">PhD-4</span></span></td>
+      <td>EPFL · CS</td>
+      <td class="mono text-[var(--ink-3)]">20h ago</td>
+      <td><span class="more">⋯</span></td>
+    </tr>
+
+    <!-- ROW 27 — arXiv -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-arxiv">aX</span><span class="src-name">arXiv</span></span></td>
+      <td><b>Wang Lei</b> · <span class="text-[var(--ink-3)]">Interpretability of Large MoE Models</span></td>
+      <td><span class="tier tier-strong">Strong</span></td>
+      <td><span class="pill pill-ready"><span class="dot"></span>Ready</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-leo">L</span>Leo</span></td>
+      <td><span class="score-bar"><span style="width:88%"></span></span><span class="mono">0.88</span></td>
+      <td><span class="sigs"><span class="sig">cite 4.2k</span><span class="sig cn">.cn</span></span></td>
+      <td>Tsinghua · IIIS</td>
+      <td class="mono text-[var(--ink-3)]">21h ago · draft</td>
+      <td>
+        <button class="btn" style="height:20px;padding:0 8px;font-size:11px;">Send</button>
+      </td>
+    </tr>
+
+    <!-- ROW 28 — HF -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-hf">hf</span><span class="src-name">Hugging Face</span></span></td>
+      <td><b>thudm</b> · <span class="text-[var(--ink-3)]">org · ChatGLM team</span></td>
+      <td><span class="tier tier-strong">Strong</span></td>
+      <td><span class="pill pill-discovered"><span class="dot"></span>Discovered</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-none">?</span><span class="text-[var(--ink-3)]">unassigned</span></span></td>
+      <td><span class="score-bar"><span style="width:90%"></span></span><span class="mono">0.90</span></td>
+      <td><span class="sigs"><span class="sig cn">cn:org</span><span class="sig">31 models</span></span></td>
+      <td>Tsinghua · KEG</td>
+      <td class="mono text-[var(--ink-3)]">22h ago</td>
+      <td>
+        <button class="btn" style="height:20px;padding:0 8px;font-size:11px;">Find email</button>
+      </td>
+    </tr>
+
+    <!-- ROW 29 — PH -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-ph">ph</span><span class="src-name">Product Hunt</span></span></td>
+      <td><b>Tao Wei</b> · <span class="text-[var(--ink-3)]">Pencil · code-aware UI agent</span></td>
+      <td><span class="tier tier-normal">Normal</span></td>
+      <td><span class="pill pill-discovered"><span class="dot"></span>Discovered</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-none">?</span><span class="text-[var(--ink-3)]">unassigned</span></span></td>
+      <td><span class="score-bar"><span style="width:70%"></span></span><span class="mono">0.70</span></td>
+      <td><span class="sigs"><span class="sig">@taowei</span><span class="sig">#7 today</span></span></td>
+      <td>pencil.dev · Singapore</td>
+      <td class="mono text-[var(--ink-3)]">1d ago</td>
+      <td>
+        <button class="btn" style="height:20px;padding:0 8px;font-size:11px;">Find email</button>
+      </td>
+    </tr>
+
+    <!-- ROW 30 — arXiv -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-arxiv">aX</span><span class="src-name">arXiv</span></span></td>
+      <td><b>Cheng Bowen</b> · <span class="text-[var(--ink-3)]">3D Scene Generation with Latent Diffu…</span></td>
+      <td><span class="tier tier-normal">Normal</span></td>
+      <td><span class="pill pill-ready"><span class="dot"></span>Ready</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-ethan">E</span>Ethan</span></td>
+      <td><span class="score-bar"><span style="width:65%"></span></span><span class="mono">0.65</span></td>
+      <td><span class="sigs"><span class="sig">overseas</span><span class="sig">cite 78</span></span></td>
+      <td>U Michigan · CSE</td>
+      <td class="mono text-[var(--ink-3)]">1d ago · draft</td>
+      <td>
+        <button class="btn" style="height:20px;padding:0 8px;font-size:11px;">Send</button>
+      </td>
+    </tr>
+
+    <!-- ROW 31 — GH -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-gh">gh</span><span class="src-name">GitHub</span></span></td>
+      <td><b>hpcaitech</b> · <span class="text-[var(--ink-3)]">hpcaitech/ColossalAI</span></td>
+      <td><span class="tier tier-strong">Strong</span></td>
+      <td><span class="pill pill-discovered"><span class="dot"></span>Discovered</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-none">?</span><span class="text-[var(--ink-3)]">unassigned</span></span></td>
+      <td><span class="score-bar"><span style="width:93%"></span></span><span class="mono">0.93</span></td>
+      <td><span class="sigs"><span class="sig hot">38k★</span><span class="sig cn">cn:org</span></span></td>
+      <td>HPC-AI Tech · Singapore</td>
+      <td class="mono text-[var(--ink-3)]">1d ago</td>
+      <td>
+        <button class="btn" style="height:20px;padding:0 8px;font-size:11px;">Find email</button>
+      </td>
+    </tr>
+
+    <!-- ROW 32 — arXiv -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-arxiv">aX</span><span class="src-name">arXiv</span></span></td>
+      <td><b>Liu Xinyi</b> · <span class="text-[var(--ink-3)]">Step-by-Step Verification for Math Re…</span></td>
+      <td><span class="tier tier-normal">Normal</span></td>
+      <td><span class="pill pill-replied"><span class="dot"></span>Replied</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-chenyu">C</span>Chenyu</span></td>
+      <td><span class="score-bar"><span style="width:72%"></span></span><span class="mono">0.72</span></td>
+      <td><span class="sigs"><span class="sig ok">+wechat</span><span class="sig">cite 156</span></span></td>
+      <td>USTC · CS</td>
+      <td class="mono text-[var(--ink-3)]">1d ago</td>
+      <td><span class="more">⋯</span></td>
+    </tr>
+
+    <!-- ROW 33 — arXiv -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-arxiv">aX</span><span class="src-name">arXiv</span></span></td>
+      <td><b>Sun Hao</b> · <span class="text-[var(--ink-3)]">Tool-Use Distillation: Teaching Smal…</span></td>
+      <td><span class="tier tier-normal">Normal</span></td>
+      <td><span class="pill pill-ready"><span class="dot"></span>Ready</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-ethan">E</span>Ethan</span></td>
+      <td><span class="score-bar"><span style="width:60%"></span></span><span class="mono">0.60</span></td>
+      <td><span class="sigs"><span class="sig">overseas</span></span></td>
+      <td>NYU · CS</td>
+      <td class="mono text-[var(--ink-3)]">1d ago · draft</td>
+      <td>
+        <button class="btn" style="height:20px;padding:0 8px;font-size:11px;">Send</button>
+      </td>
+    </tr>
+
+    <!-- ROW 34 — HF -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-hf">hf</span><span class="src-name">Hugging Face</span></span></td>
+      <td><b>BAAI</b> · <span class="text-[var(--ink-3)]">org · BGE / Aquila</span></td>
+      <td><span class="tier tier-strong">Strong</span></td>
+      <td><span class="pill pill-discovered"><span class="dot"></span>Discovered</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-none">?</span><span class="text-[var(--ink-3)]">unassigned</span></span></td>
+      <td><span class="score-bar"><span style="width:86%"></span></span><span class="mono">0.86</span></td>
+      <td><span class="sigs"><span class="sig cn">cn:org</span><span class="sig">52 models</span></span></td>
+      <td>BAAI · Beijing</td>
+      <td class="mono text-[var(--ink-3)]">1d ago</td>
+      <td>
+        <button class="btn" style="height:20px;padding:0 8px;font-size:11px;">Find email</button>
+      </td>
+    </tr>
+
+    <!-- ROW 35 — arXiv -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-arxiv">aX</span><span class="src-name">arXiv</span></span></td>
+      <td><b>Zhang Yutong</b> · <span class="text-[var(--ink-3)]">Code Repair via Execution-Aware LLMs</span></td>
+      <td><span class="tier tier-strong">Strong</span></td>
+      <td><span class="pill pill-sent"><span class="dot"></span>Sent</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-leo">L</span>Leo</span></td>
+      <td><span class="score-bar"><span style="width:84%"></span></span><span class="mono">0.84</span></td>
+      <td><span class="sigs"><span class="sig">cite 3.0k</span><span class="sig">opened</span></span></td>
+      <td>SJTU · APEX</td>
+      <td class="mono text-[var(--ink-3)]">2d ago</td>
+      <td><span class="more">⋯</span></td>
+    </tr>
+
+    <!-- ROW 36 — arXiv -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-arxiv">aX</span><span class="src-name">arXiv</span></span></td>
+      <td><b>Wu Junhao</b> · <span class="text-[var(--ink-3)]">Multimodal Few-Shot Image Generation</span></td>
+      <td><span class="tier tier-normal">Normal</span></td>
+      <td><span class="pill pill-ready"><span class="dot"></span>Ready</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-chenyu">C</span>Chenyu</span></td>
+      <td><span class="score-bar"><span style="width:63%"></span></span><span class="mono">0.63</span></td>
+      <td><span class="sigs"><span class="sig cn">.cn</span></span></td>
+      <td>HKUST · CSE</td>
+      <td class="mono text-[var(--ink-3)]">2d ago · draft</td>
+      <td>
+        <button class="btn" style="height:20px;padding:0 8px;font-size:11px;">Send</button>
+      </td>
+    </tr>
+
+    <!-- ROW 37 — GH -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-gh">gh</span><span class="src-name">GitHub</span></span></td>
+      <td><b>chatchat-space</b> · <span class="text-[var(--ink-3)]">chatchat-space/Langchain-Chatchat</span></td>
+      <td><span class="tier tier-strong">Strong</span></td>
+      <td><span class="pill pill-discovered"><span class="dot"></span>Discovered</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-none">?</span><span class="text-[var(--ink-3)]">unassigned</span></span></td>
+      <td><span class="score-bar"><span style="width:88%"></span></span><span class="mono">0.88</span></td>
+      <td><span class="sigs"><span class="sig hot">28k★</span><span class="sig cn">cn:org</span></span></td>
+      <td>Org · Hangzhou</td>
+      <td class="mono text-[var(--ink-3)]">2d ago</td>
+      <td>
+        <button class="btn" style="height:20px;padding:0 8px;font-size:11px;">Find email</button>
+      </td>
+    </tr>
+
+    <!-- ROW 38 — arXiv -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-arxiv">aX</span><span class="src-name">arXiv</span></span></td>
+      <td><b>Pan Wenjie</b> · <span class="text-[var(--ink-3)]">Quantization-Aware Distillation for E…</span></td>
+      <td><span class="tier tier-normal">Normal</span></td>
+      <td><span class="pill pill-sent"><span class="dot"></span>Sent</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-ethan">E</span>Ethan</span></td>
+      <td><span class="score-bar"><span style="width:61%"></span></span><span class="mono">0.61</span></td>
+      <td><span class="sigs"><span class="sig">overseas</span></span></td>
+      <td>UC San Diego · CSE</td>
+      <td class="mono text-[var(--ink-3)]">2d ago</td>
+      <td><span class="more">⋯</span></td>
+    </tr>
+
+    <!-- ROW 39 — arXiv -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-arxiv">aX</span><span class="src-name">arXiv</span></span></td>
+      <td><b>Huang Ziqiao</b> · <span class="text-[var(--ink-3)]">Causal Discovery from Time-Series with…</span></td>
+      <td><span class="tier tier-strong">Strong</span></td>
+      <td><span class="pill pill-replied"><span class="dot"></span>Replied</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-leo">L</span>Leo</span></td>
+      <td><span class="score-bar"><span style="width:80%"></span></span><span class="mono">0.80</span></td>
+      <td><span class="sigs"><span class="sig ok">+meeting</span><span class="sig">cite 2.1k</span></span></td>
+      <td>PKU · CFCS</td>
+      <td class="mono text-[var(--ink-3)]">2d ago</td>
+      <td><span class="more">⋯</span></td>
+    </tr>
+
+    <!-- ROW 40 — HF -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-hf">hf</span><span class="src-name">Hugging Face</span></span></td>
+      <td><b>moonshot-ai</b> · <span class="text-[var(--ink-3)]">org · Kimi family</span></td>
+      <td><span class="tier tier-strong">Strong</span></td>
+      <td><span class="pill pill-enriching"><span class="dot"></span>Enriching</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-none">?</span><span class="text-[var(--ink-3)]">queue</span></span></td>
+      <td><span class="score-bar"><span style="width:95%"></span></span><span class="mono">0.95</span></td>
+      <td><span class="sigs"><span class="sig cn">cn:org</span><span class="sig hot">71k follow</span></span></td>
+      <td>Moonshot · Beijing</td>
+      <td class="mono text-[var(--ink-3)]">2d ago</td>
+      <td><span class="more">⋯</span></td>
+    </tr>
+
+    <!-- ROW 41 — arXiv -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-arxiv">aX</span><span class="src-name">arXiv</span></span></td>
+      <td><b>Tang Mengqi</b> · <span class="text-[var(--ink-3)]">Adversarial Robustness of Vision Tran…</span></td>
+      <td><span class="tier tier-normal">Normal</span></td>
+      <td><span class="pill pill-ready"><span class="dot"></span>Ready</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-chenyu">C</span>Chenyu</span></td>
+      <td><span class="score-bar"><span style="width:58%"></span></span><span class="mono">0.58</span></td>
+      <td><span class="sigs"><span class="sig cn">.cn</span></span></td>
+      <td>BUAA · CS</td>
+      <td class="mono text-[var(--ink-3)]">3d ago · draft</td>
+      <td>
+        <button class="btn" style="height:20px;padding:0 8px;font-size:11px;">Send</button>
+      </td>
+    </tr>
+
+    <!-- ROW 42 — arXiv -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-arxiv">aX</span><span class="src-name">arXiv</span></span></td>
+      <td><b>Xu Pingfan</b> · <span class="text-[var(--ink-3)]">Knowledge Editing in Large Language…</span></td>
+      <td><span class="tier tier-strong">Strong</span></td>
+      <td><span class="pill pill-sent"><span class="dot"></span>Sent</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-leo">L</span>Leo</span></td>
+      <td><span class="score-bar"><span style="width:89%"></span></span><span class="mono">0.89</span></td>
+      <td><span class="sigs"><span class="sig">cite 4.6k</span><span class="sig">opened 3×</span></span></td>
+      <td>ZJU · CS</td>
+      <td class="mono text-[var(--ink-3)]">3d ago</td>
+      <td><span class="more">⋯</span></td>
+    </tr>
+
+    <!-- ROW 43 — GH -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-gh">gh</span><span class="src-name">GitHub</span></span></td>
+      <td><b>xinyu1205</b> · <span class="text-[var(--ink-3)]">xinyu1205/recognize-anything</span></td>
+      <td><span class="tier tier-normal">Normal</span></td>
+      <td><span class="pill pill-discovered"><span class="dot"></span>Discovered</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-none">?</span><span class="text-[var(--ink-3)]">unassigned</span></span></td>
+      <td><span class="score-bar"><span style="width:78%"></span></span><span class="mono">0.78</span></td>
+      <td><span class="sigs"><span class="sig">2.6k★</span><span class="sig cn">cn:bio</span></span></td>
+      <td>OPPO Research · Beijing</td>
+      <td class="mono text-[var(--ink-3)]">3d ago</td>
+      <td>
+        <button class="btn" style="height:20px;padding:0 8px;font-size:11px;">Find email</button>
+      </td>
+    </tr>
+
+    <!-- ROW 44 — arXiv -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-arxiv">aX</span><span class="src-name">arXiv</span></span></td>
+      <td><b>Han Xueqi</b> · <span class="text-[var(--ink-3)]">Federated Learning under Non-IID Sett…</span></td>
+      <td><span class="tier tier-normal">Normal</span></td>
+      <td><span class="pill pill-ready"><span class="dot"></span>Ready</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-ethan">E</span>Ethan</span></td>
+      <td><span class="score-bar"><span style="width:59%"></span></span><span class="mono">0.59</span></td>
+      <td><span class="sigs"><span class="sig">overseas</span></span></td>
+      <td>U Toronto · CS</td>
+      <td class="mono text-[var(--ink-3)]">3d ago · draft</td>
+      <td>
+        <button class="btn" style="height:20px;padding:0 8px;font-size:11px;">Send</button>
+      </td>
+    </tr>
+
+    <!-- ROW 45 — PH -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-ph">ph</span><span class="src-name">Product Hunt</span></span></td>
+      <td><b>Jenny Hu</b> · <span class="text-[var(--ink-3)]">Loop · async standups for remote teams</span></td>
+      <td><span class="tier tier-normal">Normal</span></td>
+      <td><span class="pill pill-discovered"><span class="dot"></span>Discovered</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-none">?</span><span class="text-[var(--ink-3)]">unassigned</span></span></td>
+      <td><span class="score-bar"><span style="width:67%"></span></span><span class="mono">0.67</span></td>
+      <td><span class="sigs"><span class="sig">@jhu</span><span class="sig">#14 today</span></span></td>
+      <td>loop.so · LA</td>
+      <td class="mono text-[var(--ink-3)]">3d ago</td>
+      <td>
+        <button class="btn" style="height:20px;padding:0 8px;font-size:11px;">Find email</button>
+      </td>
+    </tr>
+
+    <!-- ROW 46 — arXiv -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-arxiv">aX</span><span class="src-name">arXiv</span></span></td>
+      <td><b>Li Junpeng</b> · <span class="text-[var(--ink-3)]">Self-Improving Code Agents via Testin…</span></td>
+      <td><span class="tier tier-strong">Strong</span></td>
+      <td><span class="pill pill-replied"><span class="dot"></span>Replied</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-leo">L</span>Leo</span></td>
+      <td><span class="score-bar"><span style="width:85%"></span></span><span class="mono">0.85</span></td>
+      <td><span class="sigs"><span class="sig ok">+wechat</span><span class="sig">cite 3.7k</span></span></td>
+      <td>Tsinghua · CST</td>
+      <td class="mono text-[var(--ink-3)]">4d ago</td>
+      <td><span class="more">⋯</span></td>
+    </tr>
+
+    <!-- ROW 47 — arXiv -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-arxiv">aX</span><span class="src-name">arXiv</span></span></td>
+      <td><b>Cao Yiming</b> · <span class="text-[var(--ink-3)]">Energy-Based Diffusion for Tabular Da…</span></td>
+      <td><span class="tier tier-normal">Normal</span></td>
+      <td><span class="pill pill-sent"><span class="dot"></span>Sent</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-ethan">E</span>Ethan</span></td>
+      <td><span class="score-bar"><span style="width:62%"></span></span><span class="mono">0.62</span></td>
+      <td><span class="sigs"><span class="sig">overseas</span></span></td>
+      <td>Cornell · CS</td>
+      <td class="mono text-[var(--ink-3)]">4d ago</td>
+      <td><span class="more">⋯</span></td>
+    </tr>
+
+    <!-- ROW 48 — HF -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-hf">hf</span><span class="src-name">Hugging Face</span></span></td>
+      <td><b>OpenBMB</b> · <span class="text-[var(--ink-3)]">org · MiniCPM family</span></td>
+      <td><span class="tier tier-strong">Strong</span></td>
+      <td><span class="pill pill-discovered"><span class="dot"></span>Discovered</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-none">?</span><span class="text-[var(--ink-3)]">unassigned</span></span></td>
+      <td><span class="score-bar"><span style="width:87%"></span></span><span class="mono">0.87</span></td>
+      <td><span class="sigs"><span class="sig cn">cn:org</span><span class="sig">22 models</span></span></td>
+      <td>Tsinghua · OpenBMB</td>
+      <td class="mono text-[var(--ink-3)]">4d ago</td>
+      <td>
+        <button class="btn" style="height:20px;padding:0 8px;font-size:11px;">Find email</button>
+      </td>
+    </tr>
+
+    <!-- ROW 49 — arXiv -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-arxiv">aX</span><span class="src-name">arXiv</span></span></td>
+      <td><b>Jiang Ruoyu</b> · <span class="text-[var(--ink-3)]">Memory-Augmented Transformers for L…</span></td>
+      <td><span class="tier tier-normal">Normal</span></td>
+      <td><span class="pill pill-ready"><span class="dot"></span>Ready</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-chenyu">C</span>Chenyu</span></td>
+      <td><span class="score-bar"><span style="width:64%"></span></span><span class="mono">0.64</span></td>
+      <td><span class="sigs"><span class="sig cn">.cn</span></span></td>
+      <td>Renmin University · GSAI</td>
+      <td class="mono text-[var(--ink-3)]">5d ago · draft</td>
+      <td>
+        <button class="btn" style="height:20px;padding:0 8px;font-size:11px;">Send</button>
+      </td>
+    </tr>
+
+    <!-- ROW 50 — arXiv -->
+    <tr>
+      <td><span class="checkbox"></span></td>
+      <td><span class="src"><span class="src-icon src-arxiv">aX</span><span class="src-name">arXiv</span></span></td>
+      <td><b>Feng Xinyu</b> · <span class="text-[var(--ink-3)]">Open-Vocabulary Video Object Segm…</span></td>
+      <td><span class="tier tier-normal">Normal</span></td>
+      <td><span class="pill pill-sent"><span class="dot"></span>Sent</span></td>
+      <td><span class="rep"><span class="rep-avatar rep-leo">L</span>Leo</span></td>
+      <td><span class="score-bar"><span style="width:77%"></span></span><span class="mono">0.77</span></td>
+      <td><span class="sigs"><span class="sig">cite 1.9k</span></span></td>
+      <td>SJTU · CS</td>
+      <td class="mono text-[var(--ink-3)]">5d ago</td>
+      <td><span class="more">⋯</span></td>
+    </tr>
+
+  </tbody>
+</table>
+</div>
+
+<!-- ============== BULK ACTION BAR (visible because 3 rows selected) ============== -->
+<div class="bulkbar">
+  <span class="count mono">3 selected</span>
+  <span class="text-[11px] text-white/60">across 1 page</span>
+  <span class="divider"></span>
+  <button class="btn primary">Send <span class="kbd">⇧S</span></button>
+  <button class="btn">Reassign <span class="kbd">R</span></button>
+  <button class="btn">Promote <span class="kbd">P</span></button>
+  <button class="btn">Skip <span class="kbd">⌫</span></button>
+  <span class="divider"></span>
+  <button class="btn ghost">Export CSV</button>
+  <button class="btn ghost" title="Clear selection">×</button>
+</div>
+
+<!-- ============== COMMAND PALETTE TEASER (hidden by default) — toggle .show to preview ============== -->
+<div class="palette" id="palette">
+  <input class="palette-input" placeholder="Type a command, search a lead, or jump to view…" value="reassign" />
+  <div class="palette-list">
+    <div class="palette-section">Bulk action · 3 selected</div>
+    <div class="palette-item on"><span class="ico">→</span> Reassign selection to <b style="margin-left:4px;">Leo</b><span class="hint">⌘↵</span></div>
+    <div class="palette-item"><span class="ico">→</span> Reassign selection to Ethan<span class="hint"></span></div>
+    <div class="palette-item"><span class="ico">→</span> Reassign selection to Chenyu<span class="hint"></span></div>
+    <div class="palette-section">Jump</div>
+    <div class="palette-item"><span class="ico">↗</span> View · Strong + ready<span class="hint">G then S</span></div>
+    <div class="palette-item"><span class="ico">↗</span> View · Discovery (no email)<span class="hint">G then D</span></div>
+    <div class="palette-item"><span class="ico">↗</span> Settings · Routing rules<span class="hint">G then R</span></div>
+    <div class="palette-section">Lead</div>
+    <div class="palette-item"><span class="ico">●</span> Wang Bo · Tsinghua · pl_8f2a91c4<span class="hint">↵</span></div>
+  </div>
+</div>
+
+<!-- ============== STATUS BAR ============== -->
+<div class="statusbar">
+  <span class="group"><span class="kbd">↑↓</span><span class="kbd">J</span><span class="kbd">K</span> move</span>
+  <span class="sep"></span>
+  <span class="group"><span class="kbd">↵</span> expand</span>
+  <span class="sep"></span>
+  <span class="group"><span class="kbd">X</span> select</span>
+  <span class="sep"></span>
+  <span class="group"><span class="kbd">⇧S</span> send</span>
+  <span class="sep"></span>
+  <span class="group"><span class="kbd">R</span> reassign</span>
+  <span class="sep"></span>
+  <span class="group"><span class="kbd">/</span> search</span>
+  <span class="sep"></span>
+  <span class="group"><span class="kbd">⌘K</span> command</span>
+  <span class="sep"></span>
+  <span class="group"><span class="kbd">?</span> shortcuts</span>
+  <span class="ml-auto group mono">487 rows · 3 selected · cursor #1 · view: All leads · sort: score↓, last_activity↓</span>
+</div>
+
+<script>
+  // tiny demo: toggle palette with ⌘K, focus search with /
+  document.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+      e.preventDefault();
+      document.getElementById('palette').classList.toggle('show');
+    }
+    if (e.key === 'Escape') document.getElementById('palette').classList.remove('show');
+    if (e.key === '/' && document.activeElement.tagName !== 'INPUT') {
+      e.preventDefault();
+      document.querySelector('.search').focus();
+    }
+  });
+</script>
+
+</body>
+</html>

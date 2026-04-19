@@ -45,6 +45,12 @@ export interface SourceRepAllocation {
 
 export interface SourceRow {
   source: string;
+  /**
+   * Count of raw rows in `discovery_leads` for this source. Always 0
+   * for arXiv (which writes directly into pipeline_leads). Surfaces
+   * the top-of-funnel from the Python scrapers before they're promoted.
+   */
+  discovered: number;
   total: number;
   strong: number;
   normal: number;
@@ -53,6 +59,32 @@ export interface SourceRow {
   wechat: number;
   convRate: number;
   reps: SourceRepAllocation[];
+}
+
+/**
+ * Row shape for the `discovery_leads` table (multi-source scout
+ * pipeline written by the Python scrapers).
+ *
+ * `source` is a short code: 'hf' | 'ph' | 'github'. Use
+ * SOURCE_LABELS in `@/lib/sources` to render.
+ */
+export interface DiscoveryLead {
+  id: number;
+  source: string;
+  externalId: string;
+  score: number;
+  signals: Record<string, unknown>;
+  profileUrl: string | null;
+  fullname: string | null;
+  location: string | null;
+  org: string | null;
+  bio: string | null;
+  contactHint: string | null;
+  email: string | null;
+  promotedAt: string | null;
+  firstSeen: string;
+  lastSeen: string;
+  hitCount: number;
 }
 
 export interface TierRow {

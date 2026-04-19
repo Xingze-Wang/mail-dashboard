@@ -1,5 +1,12 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
+import {
+  DISCOVERY_SOURCES,
+  KNOWN_CHANNELS,
+  labelToDiscoverySource,
+  normalizeSourceLabel,
+  type SourceCode,
+} from "@/lib/sources";
 
 export async function GET() {
   const [
@@ -7,6 +14,7 @@ export async function GET() {
     { data: reps },
     { data: wechatConversions },
     { data: dailyLeads },
+    discoveryCountsBySource,
   ] = await Promise.all([
     supabase
       .from("pipeline_leads")
@@ -20,6 +28,7 @@ export async function GET() {
       .from("pipeline_leads")
       .select("created_at, lead_tier")
       .gte("created_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()),
+    fetchDiscoveryCounts(),
   ]);
 
   const leads = allLeads ?? [];
@@ -113,7 +122,7 @@ export async function GET() {
       conversionRate,
       daily,
       hIndexDist,
-      sources: buildSourceBreakdown(leads, reps ?? [], wechat),
+      sources: buildSourceBreakdown(leads, reps ?? [], wechat, discoveryCountsBySource),
     },
     sales: { reps: repStats },
   });
@@ -139,23 +148,33 @@ interface RawWechat {
   query: string | null;
 }
 
-// Always show these channels even if no leads yet, so the UI tells
-// the user "we know this exists, scraper hasn't shipped data".
-const KNOWN_CHANNELS = ["arXiv", "GitHub", "Hugging Face"] as const;
-
-function normalizeSource(raw: string | null): string {
-  if (!raw) return "arXiv"; // legacy rows with null source default to arXiv
-  const s = raw.trim().toLowerCase();
-  if (s === "arxiv") return "arXiv";
-  if (s === "github" || s === "gh") return "GitHub";
-  if (s === "huggingface" || s === "hugging_face" || s === "hf") return "Hugging Face";
-  return raw;
+/**
+ * Per-source counts from discovery_leads, keyed by short source code.
+ * Surfaces the top-of-funnel from the Python scrapers — these rows
+ * have not yet been promoted into pipeline_leads.
+ */
+async function fetchDiscoveryCounts(): Promise<Record<SourceCode, number>> {
+  const empty: Record<SourceCode, number> = { hf: 0, ph: 0, github: 0, arxiv: 0 };
+  const entries = await Promise.all(
+    DISCOVERY_SOURCES.map(async (src) => {
+      const { count, error } = await supabase
+        .from("discovery_leads")
+        .select("id", { count: "exact", head: true })
+        .eq("source", src);
+      // Swallow errors (e.g. table not yet migrated) so analytics still loads.
+      if (error) return [src, 0] as const;
+      return [src, count ?? 0] as const;
+    }),
+  );
+  for (const [src, n] of entries) empty[src] = n;
+  return empty;
 }
 
 function buildSourceBreakdown(
   leads: RawLead[],
   reps: RawRep[],
   wechat: RawWechat[],
+  discoveryCounts: Record<SourceCode, number>,
 ) {
   const wechatEmails = new Set(
     wechat.map((w) => (w.query ?? "").toLowerCase()).filter(Boolean),
@@ -164,7 +183,7 @@ function buildSourceBreakdown(
   const grouped = new Map<string, RawLead[]>();
   for (const ch of KNOWN_CHANNELS) grouped.set(ch, []);
   for (const lead of leads) {
-    const channel = normalizeSource(lead.source);
+    const channel = normalizeSourceLabel(lead.source);
     if (!grouped.has(channel)) grouped.set(channel, []);
     grouped.get(channel)!.push(lead);
   }
@@ -182,6 +201,10 @@ function buildSourceBreakdown(
     ).length;
     const convRate = sent > 0 ? Math.round((channelWechat / sent) * 1000) / 10 : 0;
 
+    // arXiv has no discovery row — it lands directly in pipeline_leads.
+    const discoverySrc = labelToDiscoverySource(source);
+    const discovered = discoverySrc ? (discoveryCounts[discoverySrc] ?? 0) : 0;
+
     // Per-rep allocation within this channel
     const repCounts = new Map<number | null, number>();
     for (const lead of channelLeads) {
@@ -198,6 +221,7 @@ function buildSourceBreakdown(
 
     return {
       source,
+      discovered,
       total,
       strong,
       normal,
@@ -209,3 +233,4 @@ function buildSourceBreakdown(
     };
   });
 }
+
