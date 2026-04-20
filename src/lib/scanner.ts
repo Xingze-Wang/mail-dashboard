@@ -604,7 +604,12 @@ async function archivePaper(
 }
 
 /** Record that we contacted this email — writes to both email_contact_history and persons */
-export async function recordContact(email: string, paperTitle: string, subject: string): Promise<void> {
+export async function recordContact(
+  email: string,
+  paperTitle: string,
+  subject: string,
+  paperArxivId?: string | null,
+): Promise<void> {
   const now = new Date().toISOString();
   const emailLower = email.toLowerCase();
 
@@ -615,6 +620,7 @@ export async function recordContact(email: string, paperTitle: string, subject: 
     subject,
     contacted_at: now,
     source: "pipeline",
+    paper_arxiv_id: paperArxivId ?? null,
   });
 
   // Upsert into persons (source of truth)

@@ -5,6 +5,7 @@ import { recordContact } from "@/lib/scanner";
 import { getRep } from "@/lib/assignment";
 import { checkSendAllowed } from "@/lib/contact-guard";
 import { MIN_AGE_DAYS, leadAgeDays } from "@/lib/policy";
+import { canonicalizeEmail } from "@/lib/email-id";
 
 /**
  * POST /api/pipeline/batch-send
@@ -89,7 +90,7 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      const toEmail = (lead.author_email as string).trim().toLowerCase();
+      const toEmail = canonicalizeEmail(lead.author_email as string);
       // Send via Resend
       const result = await resend.emails.send({
         from: senderFrom,
@@ -126,6 +127,7 @@ export async function POST(req: NextRequest) {
         resend_id: result.data?.id || null,
         status: "sent",
         thread_id: threadId,
+        paper_arxiv_id: lead.arxiv_id ?? null,
       });
       if (emailInsertErr) {
         console.error("batch emails insert failed", { id, resendId: result.data?.id, err: emailInsertErr });
@@ -133,7 +135,7 @@ export async function POST(req: NextRequest) {
 
       // Record contact history (best-effort).
       try {
-        await recordContact(toEmail, lead.title, lead.draft_subject);
+        await recordContact(toEmail, lead.title, lead.draft_subject, lead.arxiv_id ?? null);
       } catch (e) {
         console.error("batch recordContact failed", { id, err: String(e) });
       }

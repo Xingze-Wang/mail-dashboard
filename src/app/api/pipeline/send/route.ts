@@ -5,6 +5,7 @@ import { recordContact } from "@/lib/scanner";
 import { getRep } from "@/lib/assignment";
 import { checkSendAllowed, SEND_MIN_AGE_DAYS, CONTACT_DEDUP_DAYS } from "@/lib/contact-guard";
 import { MIN_AGE_DAYS, leadAgeDays } from "@/lib/policy";
+import { canonicalizeEmail } from "@/lib/email-id";
 
 export async function POST(req: NextRequest) {
   try {
@@ -51,6 +52,7 @@ export async function POST(req: NextRequest) {
         no_draft: "Lead has no draft",
         too_new: `Paper must be at least ${SEND_MIN_AGE_DAYS} days old`,
         already_contacted: `Recipient was contacted within the last ${CONTACT_DEDUP_DAYS} days`,
+        paper_already_contacted: `A co-author of this paper was contacted within the last ${CONTACT_DEDUP_DAYS} days`,
       };
       const httpStatus = guard.code === "bad_status" || guard.code === "no_draft" ? 400 : 409;
       return NextResponse.json(
@@ -84,7 +86,9 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const toEmail = (lead.author_email as string).trim().toLowerCase();
+    // Canonicalize at send time too — older rows pre-date the import-side
+    // canonicalization, so we still catch Gmail aliases / +tags / mixed case.
+    const toEmail = canonicalizeEmail(lead.author_email as string);
     const result = await resend.emails.send({
       from: senderFrom,
       to: [toEmail],
@@ -123,6 +127,7 @@ export async function POST(req: NextRequest) {
         resend_id: result.data?.id || null,
         status: "sent",
         thread_id: threadId,
+        paper_arxiv_id: lead.arxiv_id ?? null,
       })
       .select()
       .single();
@@ -132,7 +137,7 @@ export async function POST(req: NextRequest) {
 
     // Contact history bookkeeping — fire-and-forget so the response doesn't
     // wait on the persons table upsert (which is the slow hop).
-    recordContact(toEmail, lead.title, lead.draft_subject).catch((e) => {
+    recordContact(toEmail, lead.title, lead.draft_subject, lead.arxiv_id ?? null).catch((e) => {
       console.error("recordContact failed (non-blocking)", e);
     });
 

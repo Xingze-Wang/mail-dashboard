@@ -60,6 +60,7 @@ export type SendBlock =
   | { ok: true }
   | { ok: false; code: "too_new"; availableAt: string }
   | { ok: false; code: "already_contacted"; lastContactedAt: string }
+  | { ok: false; code: "paper_already_contacted"; lastContactedAt: string }
   | { ok: false; code: "bad_status"; status: string }
   | { ok: false; code: "no_draft" };
 
@@ -69,6 +70,7 @@ interface Lead {
   draft_subject: string | null;
   draft_html: string | null;
   author_email: string;
+  arxiv_id?: string | null;
 }
 
 export async function checkSendAllowed(lead: Lead): Promise<SendBlock> {
@@ -87,14 +89,74 @@ export async function checkSendAllowed(lead: Lead): Promise<SendBlock> {
     }
   }
 
+  // Person firewall — has this exact recipient been contacted in 365 days?
   const lastAt = await lastContactedAt(lead.author_email);
   if (lastAt) {
     return { ok: false, code: "already_contacted", lastContactedAt: lastAt };
   }
+
+  // Paper firewall — has any co-author of this paper been contacted? Skips
+  // for synthesized arxiv ids (HF/PH/GH promotes don't share papers).
+  if (lead.arxiv_id && /^\d{4}\.\d{4,5}/.test(lead.arxiv_id)) {
+    const paperHit = await paperWasRecentlyContacted(lead.arxiv_id);
+    if (paperHit.contacted) {
+      return { ok: false, code: "paper_already_contacted", lastContactedAt: paperHit.lastAt! };
+    }
+  }
+
   return { ok: true };
 }
 
 export async function wasRecentlyContacted(email: string): Promise<{ contacted: boolean; lastAt: string | null }> {
   const lastAt = await lastContactedAt(email);
   return { contacted: lastAt !== null, lastAt };
+}
+
+/**
+ * Paper-level firewall — has ANY co-author of this paper been contacted in
+ * the last 365 days? Stops the "delete the lead row, then a different
+ * scraper finds another co-author" loophole.
+ *
+ * Backed by the paper_arxiv_id column on emails + email_contact_history.
+ * Falls through to a pipeline_leads check (sent/replied status) for rows
+ * that pre-date the column being filled.
+ */
+export async function paperWasRecentlyContacted(
+  arxivIdCanonical: string,
+): Promise<{ contacted: boolean; lastAt: string | null }> {
+  const id = arxivIdCanonical.trim().toLowerCase();
+  if (!id) return { contacted: false, lastAt: null };
+  const cutoff = new Date(Date.now() - CONTACT_DEDUP_MS).toISOString();
+
+  const [emailsHit, historyHit, leadHit] = await Promise.all([
+    supabase
+      .from("emails")
+      .select("created_at")
+      .eq("paper_arxiv_id", id)
+      .gte("created_at", cutoff)
+      .order("created_at", { ascending: false })
+      .limit(1),
+    supabase
+      .from("email_contact_history")
+      .select("contacted_at")
+      .eq("paper_arxiv_id", id)
+      .gte("contacted_at", cutoff)
+      .order("contacted_at", { ascending: false })
+      .limit(1),
+    supabase
+      .from("pipeline_leads")
+      .select("sent_at")
+      .eq("arxiv_id", id)
+      .in("status", ["sent", "replied", "wechat_added"])
+      .gte("sent_at", cutoff)
+      .order("sent_at", { ascending: false })
+      .limit(1),
+  ]);
+
+  const candidates: string[] = [];
+  if (emailsHit.data?.[0]) candidates.push(emailsHit.data[0].created_at as string);
+  if (historyHit.data?.[0]) candidates.push(historyHit.data[0].contacted_at as string);
+  if (leadHit.data?.[0]?.sent_at) candidates.push(leadHit.data[0].sent_at as string);
+  if (candidates.length === 0) return { contacted: false, lastAt: null };
+  return { contacted: true, lastAt: candidates.sort().reverse()[0] };
 }

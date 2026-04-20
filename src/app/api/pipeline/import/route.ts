@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
-import { wasRecentlyContacted } from "@/lib/contact-guard";
+import { wasRecentlyContacted, paperWasRecentlyContacted } from "@/lib/contact-guard";
+import { canonicalizeEmail } from "@/lib/email-id";
+import { canonicalizeArxivId } from "@/lib/arxiv-id";
 import {
   getAssignmentConfig,
   classifyLead,
@@ -78,12 +80,15 @@ export async function POST(req: NextRequest) {
         skipped++;
         continue;
       }
-      // Lowercase early so dedup and contact-guard see a canonical form.
-      const email = rawEmail.trim().toLowerCase();
+      // Aggressively canonicalize so dedup catches:
+      //   - mixed case
+      //   - "+tag" subaddresses (john+work@x.com → john@x.com)
+      //   - Gmail dots and googlemail.com aliases
+      const email = canonicalizeEmail(rawEmail);
 
-      // Backstop the Python-side dedup: refuse to import a lead for any
-      // recipient we've already emailed in the last 365 days, regardless
-      // of what Python's local JSON thinks.
+      // Person firewall — has anyone contacted THIS RECIPIENT in 365 days?
+      // Three tables (emails / email_contact_history / persons) — see
+      // src/lib/contact-guard.ts.
       const contact = await wasRecentlyContacted(email);
       if (contact.contacted) {
         blockedByGuard.push({ email, lastContactedAt: contact.lastAt! });
@@ -91,13 +96,28 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
+      // Paper firewall — has ANY co-author of this paper been contacted in
+      // 365 days? Prevents the "different author, same paper" loophole that
+      // pipeline_leads dedup misses if the row was deleted/skipped.
+      const incomingArxivIdRaw = (lead.arxivId as string) || null;
+      const arxivIdCanonical = canonicalizeArxivId(incomingArxivIdRaw);
+      if (arxivIdCanonical && arxivIdCanonical.match(/^\d{4}\.\d{4,5}/)) {
+        const paperHit = await paperWasRecentlyContacted(arxivIdCanonical);
+        if (paperHit.contacted) {
+          blockedByGuard.push({
+            email: `[paper ${arxivIdCanonical}] ${email}`,
+            lastContactedAt: paperHit.lastAt!,
+          });
+          skipped++;
+          continue;
+        }
+      }
+
       // Dedup against rows already in pipeline_leads:
       //   (a) same email — different paper but same person
       //   (b) same arxiv_id — same paper, different co-author
-      // Either case: we already have outreach in flight, don't double up.
-      const incomingArxivId = (lead.arxivId as string) || null;
-      const orFilter = incomingArxivId
-        ? `author_email.ilike.${email},arxiv_id.eq.${incomingArxivId}`
+      const orFilter = arxivIdCanonical
+        ? `author_email.ilike.${email},arxiv_id.eq.${arxivIdCanonical}`
         : `author_email.ilike.${email}`;
       const { data: existing } = await supabase
         .from("pipeline_leads")
@@ -134,8 +154,8 @@ export async function POST(req: NextRequest) {
         (lead.matchedDirections as string) ?? null,
       );
 
-      // Generate a unique ID if no arxivId provided
-      const arxivId = (lead.arxivId as string) ||
+      // Prefer the canonicalized arxiv id; synthesize a unique one otherwise.
+      const arxivId = arxivIdCanonical ||
         `${source}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 
       // Draft is generated server-side by /api/pipeline/draft-queue using the
