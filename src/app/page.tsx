@@ -64,9 +64,45 @@ const statCards = [
   { key: "wechatTotal", label: "WeChat", icon: MessageCircle, color: "var(--green)" },
 ];
 
+interface MyMetrics {
+  repId: number;
+  repName: string;
+  assigned: number;
+  ready: number;
+  sent: number;
+  replied: number;
+  wechat: number;
+  leadRate: string;
+}
+
 export default function OverviewPage() {
   const [metrics, setMetrics] = useState<Metrics | null>(null);
+  const [me, setMe] = useState<{ repId: number; repName: string; role: "admin" | "sales" } | null>(null);
+  const [myMetrics, setMyMetrics] = useState<MyMetrics | null>(null);
   const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.authenticated) {
+          setMe({ repId: d.repId, repName: d.repName, role: d.role === "admin" ? "admin" : "sales" });
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // Sales reps (excluding Leo who owns the historical global data) get a
+  // scoped per-rep view from /api/metrics/me.
+  const showPerRepOnly = me && me.role !== "admin" && me.repId !== 1;
+
+  useEffect(() => {
+    if (!showPerRepOnly) return;
+    fetch("/api/metrics/me")
+      .then((r) => r.json())
+      .then((d) => { if (!d.error) setMyMetrics(d); })
+      .catch(() => {});
+  }, [showPerRepOnly]);
 
   useEffect(() => {
     fetch("/api/metrics")
@@ -123,6 +159,52 @@ export default function OverviewPage() {
   }
 
   const o = metrics.overview;
+
+  // Sales reps (non-Leo, non-admin) get a scoped view: their own pipeline
+  // slice only, no global email funnel. Leo + admin see the full dashboard
+  // since historical email data is not rep-tagged and defaults to Leo.
+  if (showPerRepOnly) {
+    const m = myMetrics;
+    return (
+      <div>
+        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 28 }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 14 }}>
+            <h1 className="page-title">My Pipeline</h1>
+            <span className="lead-count">{me?.repName} · personal view</span>
+          </div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 24 }}>
+          {[
+            { label: "Assigned to me",  value: m?.assigned ?? 0, color: "var(--text)" },
+            { label: "Ready to send",   value: m?.ready ?? 0,    color: "var(--blue)" },
+            { label: "Sent",            value: m?.sent ?? 0,     color: "var(--green)" },
+            { label: "WeChat added",    value: m?.wechat ?? 0,   color: "var(--green)" },
+          ].map((c) => (
+            <div key={c.label} className="stat-card">
+              <div className="stat-label">{c.label}</div>
+              <div className="stat-value" style={{ color: c.color }}>{c.value}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16, marginBottom: 24 }}>
+          <div className="stat-card">
+            <div className="stat-label">Lead Rate (WeChat / Sent)</div>
+            <div className="stat-value" style={{ color: "var(--green)" }}>{m?.leadRate ?? "0.0"}%</div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-label">Replies</div>
+            <div className="stat-value">{m?.replied ?? 0}</div>
+          </div>
+        </div>
+        <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12, padding: 24, textAlign: "center" }}>
+          <p style={{ color: "var(--text-secondary)", marginBottom: 8 }}>Ready to send your next batch?</p>
+          <a href="/pipeline" className="btn btn-primary" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            Open pipeline
+          </a>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div>
