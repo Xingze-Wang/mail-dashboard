@@ -117,7 +117,7 @@ async function runScan() {
       schoolTier: lead.schoolTier,
       authorEmail: lead.authorEmail,
     });
-    const repId = assignRep(config, tier, lead.authorEmail);
+    const repId = assignRep(config, tier, lead.authorEmail, lead.matchedDirections);
 
     // 3. Get rep info for draft generation
     const rep = await getRep(repId);

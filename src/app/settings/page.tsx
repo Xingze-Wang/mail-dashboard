@@ -28,23 +28,38 @@ interface Rep {
 interface AssignmentConfig {
   strong_criteria: {
     min_citation: number;
+    min_citation_unverified: number;
     max_school_tier: number;
   };
   assignment: {
     strong: { rep_id: number };
     overseas: { rep_id: number };
     domestic: { rep_id: number };
+    by_category?: Record<string, number>;
   };
 }
 
 const DEFAULT_CONFIG: AssignmentConfig = {
-  strong_criteria: { min_citation: 2000, max_school_tier: 2 },
+  strong_criteria: { min_citation: 2000, min_citation_unverified: 5000, max_school_tier: 2 },
   assignment: {
     strong: { rep_id: 1 },
     overseas: { rep_id: 3 },
     domestic: { rep_id: 2 },
+    by_category: {},
   },
 };
+
+const CATEGORIES = [
+  "具身智能/机器人",
+  "多模态/视觉生成",
+  "Agent/自动化",
+  "推理/架构优化",
+  "AI安全",
+  "语音/音频",
+  "科学计算/生物",
+  "推理/符号",
+  "其他",
+] as const;
 
 const EMPTY_REP = { name: "", sender_email: "", sender_name: "", wechat_id: "" };
 
@@ -83,6 +98,9 @@ export default function SettingsPage() {
               min_citation:
                 configData.strong_criteria.min_citation ??
                 DEFAULT_CONFIG.strong_criteria.min_citation,
+              min_citation_unverified:
+                configData.strong_criteria.min_citation_unverified ??
+                DEFAULT_CONFIG.strong_criteria.min_citation_unverified,
               max_school_tier:
                 configData.strong_criteria.max_school_tier ??
                 DEFAULT_CONFIG.strong_criteria.max_school_tier,
@@ -91,6 +109,9 @@ export default function SettingsPage() {
               strong: { rep_id: configData.assignment.strong?.rep_id ?? DEFAULT_CONFIG.assignment.strong.rep_id },
               overseas: { rep_id: configData.assignment.overseas?.rep_id ?? DEFAULT_CONFIG.assignment.overseas.rep_id },
               domestic: { rep_id: configData.assignment.domestic?.rep_id ?? DEFAULT_CONFIG.assignment.domestic.rep_id },
+              by_category: (configData.assignment.by_category && typeof configData.assignment.by_category === "object")
+                ? configData.assignment.by_category
+                : {},
             },
           });
         }
@@ -278,16 +299,17 @@ export default function SettingsPage() {
           <h3 style={{ marginBottom: 0 }}>Assignment Rules</h3>
         </div>
         <p style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 20 }}>
-          Strong if <strong>citation_count &gt; threshold</strong> OR{" "}
-          <strong>school_tier ≤ threshold</strong>. Routing is then a flat 3-way:
-          strong → strong rep, normal+overseas → overseas rep, normal+domestic → domestic rep.
+          Strong if <strong>school_tier ≤ threshold</strong>, OR{" "}
+          <strong>citations &gt; min</strong> when school is verified, OR{" "}
+          <strong>citations &gt; high min</strong> when school is unknown. Normal-tier
+          leads then route by category if configured, otherwise by email geography.
         </p>
 
         {/* Strong criteria */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16, marginBottom: 20 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 20 }}>
           <div>
             <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em" }}>
-              Min citation_count for Strong
+              Min citations (school verified)
             </label>
             <input
               type="number"
@@ -295,10 +317,24 @@ export default function SettingsPage() {
               onChange={(e) =>
                 setConfig({
                   ...config,
-                  strong_criteria: {
-                    ...config.strong_criteria,
-                    min_citation: parseInt(e.target.value) || 0,
-                  },
+                  strong_criteria: { ...config.strong_criteria, min_citation: parseInt(e.target.value) || 0 },
+                })
+              }
+              style={inputStyle}
+            />
+          </div>
+
+          <div>
+            <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+              Min citations (school unknown)
+            </label>
+            <input
+              type="number"
+              value={config.strong_criteria.min_citation_unverified}
+              onChange={(e) =>
+                setConfig({
+                  ...config,
+                  strong_criteria: { ...config.strong_criteria, min_citation_unverified: parseInt(e.target.value) || 0 },
                 })
               }
               style={inputStyle}
@@ -315,10 +351,7 @@ export default function SettingsPage() {
               onChange={(e) =>
                 setConfig({
                   ...config,
-                  strong_criteria: {
-                    ...config.strong_criteria,
-                    max_school_tier: parseInt(e.target.value) || 0,
-                  },
+                  strong_criteria: { ...config.strong_criteria, max_school_tier: parseInt(e.target.value) || 0 },
                 })
               }
               style={inputStyle}
@@ -375,6 +408,49 @@ export default function SettingsPage() {
               </div>
             );
           })}
+        </div>
+
+        {/* Category routing (normal-tier override) */}
+        <div style={{ borderTop: "1px solid var(--border-light)", paddingTop: 16, marginBottom: 20 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+            <span style={{ fontSize: 13, fontWeight: 600 }}>Category routing</span>
+            <span className="lead-count">normal tier only</span>
+          </div>
+          <p style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 12 }}>
+            For normal-tier leads, match paper direction to category → route to that rep.
+            Leave <em>Geography fallback</em> to fall through to overseas/domestic rule.
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
+            {CATEGORIES.map((cat) => {
+              const byCat = config.assignment.by_category ?? {};
+              const selectedId = byCat[cat] ?? 0;
+              return (
+                <div key={cat} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <label style={{ fontSize: 11, color: "var(--text-secondary)", fontWeight: 500 }}>{cat}</label>
+                  <select
+                    className="filter-select"
+                    value={selectedId}
+                    onChange={(e) => {
+                      const next = { ...(config.assignment.by_category ?? {}) };
+                      const id = parseInt(e.target.value);
+                      if (id > 0) next[cat] = id;
+                      else delete next[cat];
+                      setConfig({
+                        ...config,
+                        assignment: { ...config.assignment, by_category: next },
+                      });
+                    }}
+                    style={{ padding: "6px 24px 6px 10px", fontSize: 12 }}
+                  >
+                    <option value={0}>Geography fallback</option>
+                    {activeReps.map((r) => (
+                      <option key={r.id} value={r.id}>{r.name}</option>
+                    ))}
+                  </select>
+                </div>
+              );
+            })}
+          </div>
         </div>
 
         {/* Footer */}

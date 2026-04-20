@@ -94,16 +94,21 @@ export async function POST(req: NextRequest) {
       const authorName = (lead.authorName as string) || null;
       const schoolTier = (lead.schoolTier as number) || null;
 
-      // Semantic Scholar enrichment (best-effort) — mirrors scan/route.ts.
-      // Needed here so Python-imported leads get citation_count and therefore
-      // classify correctly; without it, high-citation authors missing a
-      // school_tier match would silently fall through to 'normal'.
+      // Semantic Scholar enrichment (best-effort). Falls back to email local-part
+      // (e.g. "first.last@univ.edu") when authorName is missing — this catches
+      // the common case where Python imports only have an email address.
+      let lookupName = authorName;
+      if (!lookupName && email.includes("@")) {
+        const local = email.split("@")[0];
+        const guessed = local.replace(/[._\-]+/g, " ").trim();
+        if (guessed.length >= 3 && /^[a-zA-Z ]+$/.test(guessed)) lookupName = guessed;
+      }
       let s2: Awaited<ReturnType<typeof lookupAuthor>> = null;
-      if (authorName) {
+      if (lookupName) {
         try {
-          s2 = await lookupAuthor(title, authorName);
-        } catch {
-          // S2 failure is non-blocking — classify will just see citation=null
+          s2 = await lookupAuthor(title, lookupName);
+        } catch (err) {
+          console.error("S2 lookup failed", { email, lookupName, err: String(err) });
         }
       }
 
@@ -116,7 +121,12 @@ export async function POST(req: NextRequest) {
         schoolTier,
         authorEmail: email,
       });
-      const assignedRepId = assignRep(config, leadTier, email);
+      const assignedRepId = assignRep(
+        config,
+        leadTier,
+        email,
+        (lead.matchedDirections as string) ?? null,
+      );
 
       // Generate a unique ID if no arxivId provided
       const arxivId = (lead.arxivId as string) ||

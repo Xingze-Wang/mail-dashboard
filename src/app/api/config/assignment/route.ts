@@ -50,7 +50,7 @@ export async function POST() {
   const { data: leads, error: fetchError } = await supabase
     .from("pipeline_leads")
     .select(
-      "id, citation_count, h_index, school_tier, author_email, lead_tier, assigned_rep_id",
+      "id, citation_count, h_index, school_tier, author_email, matched_directions, lead_tier, assigned_rep_id",
     );
 
   if (fetchError) {
@@ -71,7 +71,7 @@ export async function POST() {
       schoolTier: l.school_tier ?? null,
       authorEmail: l.author_email ?? "",
     });
-    const newRepId = assignRep(config, newTier, l.author_email ?? "");
+    const newRepId = assignRep(config, newTier, l.author_email ?? "", l.matched_directions ?? null);
 
     const tierChanged = (l.lead_tier ?? "normal") !== newTier;
     const repChanged = (l.assigned_rep_id ?? null) !== newRepId;
