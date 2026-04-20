@@ -35,7 +35,7 @@ interface AssignmentConfig {
     strong: { rep_id: number };
     overseas: { rep_id: number };
     domestic: { rep_id: number };
-    by_category?: Record<string, number>;
+    by_direction?: Record<string, number>;
   };
 }
 
@@ -45,21 +45,48 @@ const DEFAULT_CONFIG: AssignmentConfig = {
     strong: { rep_id: 1 },
     overseas: { rep_id: 3 },
     domestic: { rep_id: 2 },
-    by_category: {},
+    by_direction: {},
   },
 };
 
-const CATEGORIES = [
-  "具身智能/机器人",
-  "多模态/视觉生成",
-  "Agent/自动化",
-  "推理/架构优化",
-  "AI安全",
-  "语音/音频",
-  "科学计算/生物",
-  "推理/符号",
-  "其他",
-] as const;
+const CATEGORIZED_DIRECTIONS: Record<string, string[]> = {
+  "具身智能/机器人": [
+    "具身导航感知", "多模态具身大模型", "模块化力控关节", "场景孪生仿真",
+    "工业具身模仿学习", "自动驾驶", "世界模型+VLA", "连续体机械臂",
+    "端侧机器人推理", "视频策略表征", "1 bit 量化VLA模型", "长程灵巧操作",
+    "具身3D空间理解", "化工精密操作机器人", "实验室语音交互机器人",
+    "多模态无人机交互", "农业场景具身模型", "记忆驱动世界模型",
+  ],
+  "多模态/视觉生成": [
+    "笔触引导生成", "动漫视频生成", "4D重建生成", "3D资产生成",
+    "3D视频生成", "视觉自回归模型", "端到端像素生成", "多阶段视频生成",
+    "多模态世界模型", "长上下文多模态模型", "能量模型图像生成", "低显存实时3D重建",
+    "通用世界模拟模型", "沉浸式场景生成模型", "潜空间图像编码",
+  ],
+  "Agent/自动化": [
+    "长程推理引擎", "Agent操作系统", "Agentic Browser", "Coding Agent",
+    "端云协同Agent", "GUI Agent RL", "AI4S Agent", "AI原生操作系统",
+    "AI SaaS全栈开发", "多模态情绪模型",
+  ],
+  "推理/架构优化": [
+    "分布式推理架构", "稀疏注意力", "推理框架（MoonCake等）", "跨模态推理架构",
+    "隐空间推理", "推理加速框架", "硬件感知优化", "量子启发压缩",
+    "增强模型泛化能力的SFT相关研究", "语言模型", "高效训练推理框架（Mooncake等）",
+    "LLM生成-评测对齐", "类脑AI端侧处理",
+  ],
+  "AI安全": ["多模态内容解析", "AI Hacker"],
+  "语音/音频": ["实时AI变声", "AI Native视频压缩算法"],
+  "科学计算/生物": [
+    "细胞分析算法", "蛋白功能大模型", "原子级材料模型", "物理偏置分子建模",
+    "高频波函数求解", "基于机器学习的物理仿真", "化学材料大模型", "电镜数据分析模型",
+    "多肽药物发现", "几何深度学习", "RNA药物智能设计", "AI免疫编程",
+    "量子纠错混合训练", "量子硬件神经网络纠错",
+  ],
+  "推理/符号": [
+    "神经符号大模型", "数学推理模型", "金融大模型", "非欧空间表征模型", "表格结构化基础模型",
+  ],
+  "其他": ["工业设计Agent", "段级强化学习", "RL动态重排序"],
+};
 
 const EMPTY_REP = { name: "", sender_email: "", sender_name: "", wechat_id: "" };
 
@@ -109,8 +136,8 @@ export default function SettingsPage() {
               strong: { rep_id: configData.assignment.strong?.rep_id ?? DEFAULT_CONFIG.assignment.strong.rep_id },
               overseas: { rep_id: configData.assignment.overseas?.rep_id ?? DEFAULT_CONFIG.assignment.overseas.rep_id },
               domestic: { rep_id: configData.assignment.domestic?.rep_id ?? DEFAULT_CONFIG.assignment.domestic.rep_id },
-              by_category: (configData.assignment.by_category && typeof configData.assignment.by_category === "object")
-                ? configData.assignment.by_category
+              by_direction: (configData.assignment.by_direction && typeof configData.assignment.by_direction === "object")
+                ? configData.assignment.by_direction
                 : {},
             },
           });
@@ -410,47 +437,68 @@ export default function SettingsPage() {
           })}
         </div>
 
-        {/* Category routing (normal-tier override) */}
+        {/* Per-sub-direction routing (normal-tier override) */}
         <div style={{ borderTop: "1px solid var(--border-light)", paddingTop: 16, marginBottom: 20 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-            <span style={{ fontSize: 13, fontWeight: 600 }}>Category routing</span>
-            <span className="lead-count">normal tier only</span>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 13, fontWeight: 600 }}>Direction routing</span>
+              <span className="lead-count">normal tier only · {Object.keys(config.assignment.by_direction ?? {}).length} mapped</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setConfig({ ...config, assignment: { ...config.assignment, by_direction: {} } })}
+              className="btn"
+              style={{ fontSize: 11 }}
+            >
+              Clear all
+            </button>
           </div>
           <p style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 12 }}>
-            For normal-tier leads, match paper direction to category → route to that rep.
-            Leave <em>Geography fallback</em> to fall through to overseas/domestic rule.
+            For normal-tier leads, match paper sub-direction to a rep. First matched
+            direction wins. Leave <em>Geography fallback</em> to fall through to
+            overseas/domestic rule.
           </p>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
-            {CATEGORIES.map((cat) => {
-              const byCat = config.assignment.by_category ?? {};
-              const selectedId = byCat[cat] ?? 0;
-              return (
-                <div key={cat} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  <label style={{ fontSize: 11, color: "var(--text-secondary)", fontWeight: 500 }}>{cat}</label>
-                  <select
-                    className="filter-select"
-                    value={selectedId}
-                    onChange={(e) => {
-                      const next = { ...(config.assignment.by_category ?? {}) };
-                      const id = parseInt(e.target.value);
-                      if (id > 0) next[cat] = id;
-                      else delete next[cat];
-                      setConfig({
-                        ...config,
-                        assignment: { ...config.assignment, by_category: next },
-                      });
-                    }}
-                    style={{ padding: "6px 24px 6px 10px", fontSize: 12 }}
-                  >
-                    <option value={0}>Geography fallback</option>
-                    {activeReps.map((r) => (
-                      <option key={r.id} value={r.id}>{r.name}</option>
-                    ))}
-                  </select>
-                </div>
-              );
-            })}
-          </div>
+
+          {Object.entries(CATEGORIZED_DIRECTIONS).map(([cat, subs]) => (
+            <div key={cat} style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 11, color: "var(--text-tertiary)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>
+                {cat}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 6 }}>
+                {subs.map((sub) => {
+                  const byDir = config.assignment.by_direction ?? {};
+                  const selectedId = byDir[sub] ?? 0;
+                  return (
+                    <div key={sub} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+                      <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text)" }}>
+                        {sub}
+                      </span>
+                      <select
+                        className="filter-select"
+                        value={selectedId}
+                        onChange={(e) => {
+                          const next = { ...(config.assignment.by_direction ?? {}) };
+                          const id = parseInt(e.target.value);
+                          if (id > 0) next[sub] = id;
+                          else delete next[sub];
+                          setConfig({
+                            ...config,
+                            assignment: { ...config.assignment, by_direction: next },
+                          });
+                        }}
+                        style={{ padding: "3px 22px 3px 8px", fontSize: 11, minWidth: 100 }}
+                      >
+                        <option value={0}>—</option>
+                        {activeReps.map((r) => (
+                          <option key={r.id} value={r.id}>{r.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
         </div>
 
         {/* Footer */}

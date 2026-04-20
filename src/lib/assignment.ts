@@ -26,8 +26,9 @@ export interface AssignmentConfig {
     strong: { rep_id: number };
     overseas: { rep_id: number };
     domestic: { rep_id: number };
-    /** Optional per-category override for normal-tier leads. */
-    by_category?: Record<string, number>;
+    /** Optional per-sub-direction override for normal-tier leads. Keys are
+     *  values from SUPPORTED_DIRECTIONS (e.g. "4D重建生成"). */
+    by_direction?: Record<string, number>;
   };
 }
 
@@ -60,6 +61,30 @@ export async function getAssignmentConfig(): Promise<AssignmentConfig> {
   return defaultConfig();
 }
 
+/** Sub-directions that always route to Leo when normal-tier (4D Gaussian /
+ *  embodied / world-model / memory family). Keep in sync with the values
+ *  in SUPPORTED_DIRECTIONS. */
+const LEO_DEFAULT_DIRECTIONS = [
+  // 具身智能/机器人 — entire category
+  "具身导航感知", "多模态具身大模型", "模块化力控关节",
+  "场景孪生仿真", "工业具身模仿学习", "自动驾驶",
+  "世界模型+VLA", "连续体机械臂", "端侧机器人推理",
+  "视频策略表征", "1 bit 量化VLA模型",
+  "长程灵巧操作", "具身3D空间理解",
+  "化工精密操作机器人", "实验室语音交互机器人",
+  "多模态无人机交互", "农业场景具身模型",
+  "记忆驱动世界模型",
+  // 多模态/视觉生成 — 4D / 3D / world-model subset
+  "4D重建生成", "3D资产生成", "3D视频生成",
+  "多模态世界模型", "通用世界模拟模型", "低显存实时3D重建",
+];
+
+function defaultLeoDirections(): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const d of LEO_DEFAULT_DIRECTIONS) out[d] = DEFAULT_REP_IDS.leo;
+  return out;
+}
+
 export function defaultConfig(): AssignmentConfig {
   return {
     strong_criteria: {
@@ -71,7 +96,7 @@ export function defaultConfig(): AssignmentConfig {
       strong: { rep_id: DEFAULT_REP_IDS.leo },
       overseas: { rep_id: DEFAULT_REP_IDS.ethan },
       domestic: { rep_id: DEFAULT_REP_IDS.chenyu },
-      by_category: {},
+      by_direction: defaultLeoDirections(),
     },
   };
 }
@@ -111,12 +136,24 @@ function normalizeConfig(raw: unknown): AssignmentConfig {
     }
   }
 
-  // Category routing — { "具身智能/机器人": 2, ... }
-  const byCatRaw = a.by_category as Record<string, unknown> | undefined;
-  const by_category: Record<string, number> = {};
-  if (byCatRaw && typeof byCatRaw === "object") {
-    for (const [cat, repId] of Object.entries(byCatRaw)) {
-      if (typeof repId === "number") by_category[cat] = repId;
+  // Per-direction routing — { "4D重建生成": 1, "具身导航感知": 1, ... }
+  const byDirRaw = a.by_direction as Record<string, unknown> | undefined;
+  const by_direction: Record<string, number> = {};
+  if (byDirRaw && typeof byDirRaw === "object") {
+    for (const [dir, repId] of Object.entries(byDirRaw)) {
+      if (typeof repId === "number") by_direction[dir] = repId;
+    }
+  }
+
+  // Legacy by_category → migrate by exploding to all sub-directions
+  if (Object.keys(by_direction).length === 0) {
+    const byCatRaw = a.by_category as Record<string, unknown> | undefined;
+    if (byCatRaw && typeof byCatRaw === "object") {
+      for (const [cat, repId] of Object.entries(byCatRaw)) {
+        if (typeof repId !== "number") continue;
+        const subs = SUPPORTED_DIRECTIONS[cat] ?? [];
+        for (const sub of subs) by_direction[sub] = repId;
+      }
     }
   }
 
@@ -126,7 +163,7 @@ function normalizeConfig(raw: unknown): AssignmentConfig {
       strong: { rep_id: strongRep },
       overseas: { rep_id: overseasRep ?? def.assignment.overseas.rep_id },
       domestic: { rep_id: domesticRep ?? def.assignment.domestic.rep_id },
-      by_category,
+      by_direction,
     },
   };
 }
@@ -219,10 +256,17 @@ export function classifyLead(
   return "normal";
 }
 
+function normalizeDirections(input: string[] | string | null | undefined): string[] {
+  if (typeof input === "string") return input.split(",").map((s) => s.trim()).filter(Boolean);
+  if (Array.isArray(input)) return input.filter((s): s is string => typeof s === "string" && s.length > 0);
+  return [];
+}
+
 /**
  * Pick the rep:
  *   strong → strong rep
- *   normal → category map (if matched) → overseas/domestic by email
+ *   normal → first matched_direction with an explicit owner → that rep
+ *          → otherwise overseas/domestic by email geography
  */
 export function assignRep(
   config: AssignmentConfig,
@@ -232,10 +276,12 @@ export function assignRep(
 ): number {
   if (tier === "strong") return config.assignment.strong.rep_id;
 
-  const category = resolveCategory(matchedDirections ?? null);
-  const byCat = config.assignment.by_category;
-  if (category && byCat && typeof byCat[category] === "number") {
-    return byCat[category];
+  const dirs = normalizeDirections(matchedDirections);
+  const byDir = config.assignment.by_direction;
+  if (byDir) {
+    for (const d of dirs) {
+      if (typeof byDir[d] === "number") return byDir[d];
+    }
   }
 
   return isOverseas(authorEmail)

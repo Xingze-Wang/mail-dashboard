@@ -9,6 +9,7 @@ import {
   assignRep,
   getRep,
 } from "@/lib/assignment";
+import { lookupCitationsViaTavily } from "@/lib/tavily";
 
 async function insertLead(
   lead: ScannedLead,
@@ -110,7 +111,16 @@ async function runScan() {
 
     // 2. Classify and assign
     const hIndex = s2?.hIndex ?? null;
-    const citationCount = s2?.citationCount ?? null;
+    let citationCount = s2?.citationCount ?? null;
+
+    if (citationCount === null && lead.authorName) {
+      try {
+        const tav = await lookupCitationsViaTavily(lead.authorName, lead.authorEmail);
+        if (tav?.citationCount) citationCount = tav.citationCount;
+      } catch {
+        // non-blocking
+      }
+    }
     const tier = classifyLead(config, {
       citationCount,
       hIndex,

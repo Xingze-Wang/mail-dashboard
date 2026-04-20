@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { wasRecentlyContacted } from "@/lib/contact-guard";
 import { lookupAuthor } from "@/lib/semantic-scholar";
+import { lookupCitationsViaTavily } from "@/lib/tavily";
 import {
   getAssignmentConfig,
   classifyLead,
@@ -112,8 +113,23 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      const citationCount = s2?.citationCount ?? null;
+      let citationCount = s2?.citationCount ?? null;
       const hIndex = s2?.hIndex ?? null;
+
+      // Tavily fallback — hits Google Scholar via web search when S2 has no
+      // profile for this author (common for fresh PhDs / industry names /
+      // highly-collided Chinese names). Best-effort; logs failures.
+      if (citationCount === null && lookupName) {
+        try {
+          const tav = await lookupCitationsViaTavily(lookupName, email);
+          if (tav?.citationCount) {
+            citationCount = tav.citationCount;
+            console.log("Tavily citation hit", { email, name: lookupName, count: tav.citationCount });
+          }
+        } catch (err) {
+          console.error("Tavily lookup threw", { email, err: String(err) });
+        }
+      }
 
       const leadTier = classifyLead(config, {
         citationCount,
