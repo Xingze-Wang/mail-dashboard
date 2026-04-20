@@ -267,7 +267,7 @@ export async function generateDraft(lead: {
 <body style="font-family: sans-serif; font-size: 14px; line-height: 1.8; color: #333;">
 ${greeting}<br><br>
 ${personalizedIntroHtml}<br><br>
-我是奇绩创坛的Leo。针对具备高潜力的前沿科研项目，奇绩算力计划目前正开放新一轮的申请，希望能通过免费算力，将科研的固定成本转变为边际成本，助力前沿想法的快速验证。<br><br>
+我是奇绩创坛的${escapeHtml(repName)}。针对具备高潜力的前沿科研项目，奇绩算力计划目前正开放新一轮的申请，希望能通过免费算力，将科研的固定成本转变为边际成本，助力前沿想法的快速验证。<br><br>
 ${thirdParagraph}<br><br>
 如果${closingName}对算力支持感兴趣，欢迎<a href="${APPLY_URL_CTA}">申请</a>或加我微信交流（${escapeHtml(repWechat)}）。<br><br>
 <span style="font-size: 14px; color: #333; line-height: 1.6;">${escapeHtml(repName)}<br>奇绩创坛</span>

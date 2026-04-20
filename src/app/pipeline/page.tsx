@@ -796,18 +796,16 @@ export default function PipelinePage() {
 
       {/* ── Page tabs (Leads / Channels / Sales) ── */}
       <div className="dx-page-tabs">
-        {(["leads", "channels", "sales"] as const)
-          .filter((tab) => tab !== "sales" || isAdmin)
-          .map((tab) => (
-            <button
-              key={tab}
-              type="button"
-              onClick={() => setActiveTab(tab)}
-              className={`dx-page-tab ${activeTab === tab ? "active" : ""}`}
-            >
-              {tab.charAt(0).toUpperCase() + tab.slice(1)}
-            </button>
-          ))}
+        {(["leads", "channels", "sales"] as const).map((tab) => (
+          <button
+            key={tab}
+            type="button"
+            onClick={() => setActiveTab(tab)}
+            className={`dx-page-tab ${activeTab === tab ? "active" : ""}`}
+          >
+            {tab.charAt(0).toUpperCase() + tab.slice(1)}
+          </button>
+        ))}
       </div>
 
       {/* ════ LEADS ════ */}
@@ -1052,7 +1050,7 @@ export default function PipelinePage() {
       )}
 
       {activeTab === "channels" && (analytics ? <ChannelsTab analytics={analytics} /> : <TabLoader />)}
-      {activeTab === "sales" && isAdmin && (analytics ? <SalesTab analytics={analytics} /> : <TabLoader />)}
+      {activeTab === "sales" && (analytics ? <SalesTab analytics={analytics} /> : <TabLoader />)}
 
       <AddLeadModal
         open={addLeadOpen}
