@@ -10,10 +10,13 @@ function getKey(): Uint8Array {
   return new TextEncoder().encode(secret);
 }
 
+export type Role = "admin" | "sales";
+
 export interface SessionPayload {
   repId: number;
   repName: string;
   email: string;
+  role: Role;
 }
 
 export async function signSession(payload: SessionPayload): Promise<string> {
@@ -33,7 +36,13 @@ export async function verifySession(token: string | undefined): Promise<SessionP
       typeof payload.repName === "string" &&
       typeof payload.email === "string"
     ) {
-      return { repId: payload.repId, repName: payload.repName, email: payload.email };
+      const role: Role = payload.role === "admin" ? "admin" : "sales";
+      return {
+        repId: payload.repId,
+        repName: payload.repName,
+        email: payload.email,
+        role,
+      };
     }
     return null;
   } catch {

@@ -27,6 +27,7 @@ export async function middleware(req: NextRequest) {
     reqHeaders.set("x-rep-id", String(session.repId));
     reqHeaders.set("x-rep-name", session.repName);
     reqHeaders.set("x-rep-email", session.email);
+    reqHeaders.set("x-rep-role", session.role);
     return NextResponse.next({ request: { headers: reqHeaders } });
   }
 

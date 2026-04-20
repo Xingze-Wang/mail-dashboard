@@ -14,7 +14,7 @@ export async function POST(req: NextRequest) {
 
   const { data: rep } = await supabase
     .from("sales_reps")
-    .select("id,name,login_email,password_hash,active")
+    .select("id,name,login_email,password_hash,active,role")
     .ilike("login_email", normalized)
     .single();
 
@@ -28,13 +28,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid email or password" }, { status: 401 });
   }
 
+  const role = rep.role === "admin" ? "admin" : "sales";
   const token = await signSession({
     repId: rep.id,
     repName: rep.name,
     email: rep.login_email,
+    role,
   });
 
-  const res = NextResponse.json({ success: true, repId: rep.id, repName: rep.name });
+  const res = NextResponse.json({ success: true, repId: rep.id, repName: rep.name, role });
   res.cookies.set(AUTH_COOKIE, token, {
     httpOnly: true,
     secure: true,

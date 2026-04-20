@@ -9,5 +9,6 @@ export async function GET(req: NextRequest) {
     repId: session.repId,
     repName: session.repName,
     email: session.email,
+    role: session.role,
   });
 }

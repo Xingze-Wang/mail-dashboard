@@ -131,12 +131,16 @@ export function Sidebar() {
   const router = useRouter();
   const [unread, setUnread] = useState(0);
   const [ready, setReady]   = useState(0);
-  const [me, setMe] = useState<{ repId: number; repName: string } | null>(null);
+  const [me, setMe] = useState<{ repId: number; repName: string; role: "admin" | "sales" } | null>(null);
 
   useEffect(() => {
     fetch("/api/auth/me")
       .then((r) => r.json())
-      .then((d) => { if (d.authenticated) setMe({ repId: d.repId, repName: d.repName }); })
+      .then((d) => {
+        if (d.authenticated) {
+          setMe({ repId: d.repId, repName: d.repName, role: d.role === "admin" ? "admin" : "sales" });
+        }
+      })
       .catch(() => { /* not signed in */ });
   }, []);
 
@@ -237,7 +241,9 @@ export function Sidebar() {
               <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {me?.repName ?? "Signed out"}
               </span>
-              <span style={{ fontSize: 11.5, color: "var(--text-tertiary)" }}>Sales</span>
+              <span style={{ fontSize: 11.5, color: me?.role === "admin" ? "#B45309" : "var(--text-tertiary)", fontWeight: me?.role === "admin" ? 600 : 400 }}>
+                {me?.role === "admin" ? "Admin" : "Sales"}
+              </span>
             </div>
           </Link>
           {me && (
