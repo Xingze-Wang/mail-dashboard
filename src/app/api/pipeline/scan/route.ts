@@ -11,6 +11,9 @@ import {
 } from "@/lib/assignment";
 import { lookupCitationsViaTavily } from "@/lib/tavily";
 
+// Manual scan also does S2 + Tavily + Gemini per lead — pin to 300s.
+export const maxDuration = 300;
+
 async function insertLead(
   lead: ScannedLead,
   draft: { subject: string; html: string } | null,

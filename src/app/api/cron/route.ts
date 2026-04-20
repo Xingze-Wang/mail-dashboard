@@ -11,6 +11,10 @@ import {
   getRep,
 } from "@/lib/assignment";
 
+// Vercel Pro caps function execution at 300s; Hobby caps at 60s. Cron does
+// sync + scan + draft in one pass and historically takes 3-5 min.
+export const maxDuration = 300;
+
 /**
  * Unified weekday cron endpoint.
  * Runs every weekday at 6 AM UTC:

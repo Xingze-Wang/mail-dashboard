@@ -19,9 +19,11 @@ import { scoreWithGemini } from "@/lib/gemini-scorer";
  *
  * Stays well under Vercel's 60s function limit: 5 leads * ~5s Gemini = 25s.
  */
-// 3 leads × (S2 ~2s + Tavily ~3s + Gemini ~5s + DB ~0.5s) ≈ 30s, below Vercel's
-// 60s function limit with headroom for slow S2/Tavily responses.
+// 3 leads × (S2 ~2s + Tavily ~3s + Gemini ~5s + DB ~0.5s) ≈ 30s comfortably,
+// but Tavily/S2 occasionally spike to 10s+. Pin maxDuration so a slow batch
+// doesn't get killed at Hobby's 60s default.
 const BATCH = 3;
+export const maxDuration = 90;
 
 async function checkAuth(req: NextRequest): Promise<boolean> {
   const secret = process.env.CRON_SECRET;
