@@ -199,61 +199,6 @@ export default function OverviewPage() {
         </div>
       )}
 
-      {/* ── WeChat Conversions ── */}
-      {metrics.wechat && metrics.wechat.total > 0 && (
-        <div
-          className="section-card"
-          style={{
-            marginBottom: 24,
-            background: "var(--green-bg)",
-            borderColor: "#BBF7D0",
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <MessageCircle style={{ width: 16, height: 16, color: "var(--green)" }} />
-              <h3 style={{ marginBottom: 0 }}>WeChat Conversions</h3>
-            </div>
-            <span style={{ fontFamily: "var(--font-heading)", fontSize: 26, fontWeight: 600, color: "var(--green)", letterSpacing: "-0.01em" }}>
-              {metrics.wechat.total}
-            </span>
-          </div>
-          {metrics.wechat.recent.length > 0 && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {metrics.wechat.recent.slice(0, 5).map((r, i) => (
-                <div
-                  key={i}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    fontSize: 12.5,
-                  }}
-                >
-                  <span style={{ color: "var(--text)" }}>{r.query}</span>
-                  <span style={{ color: "var(--text-tertiary)" }}>
-                    {new Date(r.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-          {metrics.pipeline && metrics.pipeline.sent > 0 && (
-            <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid #BBF7D0" }}>
-              <p style={{ fontSize: 12, color: "var(--text-secondary)" }}>
-                Conversion rate:{" "}
-                <span style={{ color: "var(--green)", fontWeight: 600 }}>
-                  {((metrics.wechat.total / metrics.pipeline.sent) * 100).toFixed(1)}%
-                </span>
-                <span style={{ color: "var(--text-tertiary)" }}>
-                  {" "}({metrics.wechat.total} / {metrics.pipeline.sent} sent)
-                </span>
-              </p>
-            </div>
-          )}
-        </div>
-      )}
-
       {/* ── Chart ── */}
       <div className="section-card" style={{ marginBottom: 24 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>

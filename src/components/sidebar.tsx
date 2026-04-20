@@ -94,6 +94,14 @@ const LogoIcon = () => (
   </svg>
 );
 
+function initialsOf(name: string | null | undefined): string {
+  if (!name) return "?";
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
 const mainNav = [
   { href: "/",         label: "Overview", Icon: OverviewIcon },
   { href: "/emails",   label: "Emails",   Icon: EmailsIcon, badgeKey: "ready"  as const },
@@ -220,8 +228,6 @@ export function Sidebar() {
           />
         ))}
 
-        <div style={{ height: 12 }} />
-
         {toolsNav.map((item) => (
           <NavItem
             key={item.href}
@@ -236,7 +242,7 @@ export function Sidebar() {
       <div className="sidebar-footer">
         <div className="user" style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <Link href="/settings" style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none", flex: 1, minWidth: 0 }}>
-            <div className="avatar">{(me?.repName ?? "?").slice(0, 2).toUpperCase()}</div>
+            <div className="avatar">{initialsOf(me?.repName)}</div>
             <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
               <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {me?.repName ?? "Signed out"}
