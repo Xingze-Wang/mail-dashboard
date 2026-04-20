@@ -110,10 +110,10 @@ const mainNav = [
 ];
 
 const toolsNav = [
-  { href: "/brief",     label: "Brief",     Icon: BriefIcon },
-  { href: "/scorer",    label: "Scorer",    Icon: ScorerIcon },
-  { href: "/templates", label: "Templates", Icon: TemplatesIcon },
-  { href: "/logs",      label: "Logs",      Icon: LogsIcon },
+  { href: "/brief",     label: "Brief",     Icon: BriefIcon,     adminOnly: false },
+  { href: "/templates", label: "Templates", Icon: TemplatesIcon, adminOnly: false },
+  { href: "/scorer",    label: "Scorer",    Icon: ScorerIcon,    adminOnly: true  },
+  { href: "/logs",      label: "Logs",      Icon: LogsIcon,      adminOnly: true  },
 ];
 
 interface NavItemProps {
@@ -228,30 +228,42 @@ export function Sidebar() {
           />
         ))}
 
-        {toolsNav.map((item) => (
-          <NavItem
-            key={item.href}
-            href={item.href}
-            label={item.label}
-            Icon={item.Icon}
-            active={isActive(item.href)}
-          />
-        ))}
+        {toolsNav
+          .filter((item) => !item.adminOnly || me?.role === "admin")
+          .map((item) => (
+            <NavItem
+              key={item.href}
+              href={item.href}
+              label={item.label}
+              Icon={item.Icon}
+              active={isActive(item.href)}
+            />
+          ))}
       </nav>
 
       <div className="sidebar-footer">
         <div className="user" style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <Link href="/settings" style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none", flex: 1, minWidth: 0 }}>
-            <div className="avatar">{initialsOf(me?.repName)}</div>
-            <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {me?.repName ?? "Signed out"}
-              </span>
-              <span style={{ fontSize: 11.5, color: me?.role === "admin" ? "#B45309" : "var(--text-tertiary)", fontWeight: me?.role === "admin" ? 600 : 400 }}>
-                {me?.role === "admin" ? "Admin" : "Sales"}
-              </span>
+          {me?.role === "admin" ? (
+            <Link href="/settings" style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none", flex: 1, minWidth: 0 }}>
+              <div className="avatar">{initialsOf(me?.repName)}</div>
+              <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {me?.repName ?? "Signed out"}
+                </span>
+                <span style={{ fontSize: 11.5, color: "#B45309", fontWeight: 600 }}>Admin</span>
+              </div>
+            </Link>
+          ) : (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0 }}>
+              <div className="avatar">{initialsOf(me?.repName)}</div>
+              <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {me?.repName ?? "Signed out"}
+                </span>
+                <span style={{ fontSize: 11.5, color: "var(--text-tertiary)" }}>Sales</span>
+              </div>
             </div>
-          </Link>
+          )}
           {me && (
             <button
               onClick={logout}

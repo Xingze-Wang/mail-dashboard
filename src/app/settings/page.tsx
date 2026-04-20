@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Loader2,
   Plus,
@@ -93,6 +94,19 @@ const EMPTY_REP = { name: "", sender_email: "", sender_name: "", wechat_id: "" }
 // ─── Page ───────────────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
+  const router = useRouter();
+  const [gated, setGated] = useState<"checking" | "allowed" | "forbidden">("checking");
+
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.authenticated && d.role === "admin") setGated("allowed");
+        else { setGated("forbidden"); router.replace("/"); }
+      })
+      .catch(() => { setGated("forbidden"); router.replace("/"); });
+  }, [router]);
+
   const [reps, setReps] = useState<Rep[]>([]);
   const [config, setConfig] = useState<AssignmentConfig>(DEFAULT_CONFIG);
   const [loading, setLoading] = useState(true);
@@ -269,7 +283,7 @@ export default function SettingsPage() {
 
   // ── Render ──
 
-  if (loading) {
+  if (gated !== "allowed" || loading) {
     return (
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "96px 0" }}>
         <Loader2 className="h-6 w-6 animate-spin" style={{ color: "var(--text-tertiary)" }} />

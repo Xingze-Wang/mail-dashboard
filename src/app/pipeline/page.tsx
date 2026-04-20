@@ -287,6 +287,10 @@ export default function PipelinePage() {
   const router = useRouter();
 
   const [addLeadOpen, setAddLeadOpen] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [myRepId, setMyRepId] = useState<number | null>(null);
+  const [meLoaded, setMeLoaded] = useState(false);
+
   const [leads, setLeads] = useState<Lead[]>([]);
   const [discoveryLeads, setDiscoveryLeads] = useState<DiscoveryLead[]>([]);
   const [discoveryBySource, setDiscoveryBySource] = useState<{ hf: number; ph: number; github: number }>({ hf: 0, ph: 0, github: 0 });
@@ -308,6 +312,24 @@ export default function PipelinePage() {
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
 
   const hasInitialised = useRef(false);
+
+  // Load who-am-I once; sales default to seeing only their own leads.
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.authenticated) {
+          const admin = d.role === "admin";
+          setIsAdmin(admin);
+          setMyRepId(typeof d.repId === "number" ? d.repId : null);
+          if (!admin && typeof d.repId === "number") {
+            setRepFilter(d.repId);
+          }
+        }
+        setMeLoaded(true);
+      })
+      .catch(() => setMeLoaded(true));
+  }, []);
 
   // Hydrate mode from URL hash on mount, then persist on every change.
   useEffect(() => {
@@ -739,9 +761,11 @@ export default function PipelinePage() {
           </div>
         </div>
         <div className="dx-topbar-actions">
-          <button onClick={handleReassignAll} className="dx-secondary">
-            Re-assign
-          </button>
+          {isAdmin && (
+            <button onClick={handleReassignAll} className="dx-secondary">
+              Re-assign
+            </button>
+          )}
           <button onClick={handleScan} disabled={scanning} className="dx-secondary">
             {scanning ? <Loader2 style={{ width: 13, height: 13 }} className="animate-spin" /> : <Zap />}
             {scanning ? "Scanning…" : "Scan arXiv"}
@@ -750,10 +774,12 @@ export default function PipelinePage() {
             <Download />
             Export
           </button>
-          <button className="dx-secondary" type="button" onClick={handleOpenSettings}>
-            <SettingsIcon />
-            Settings
-          </button>
+          {isAdmin && (
+            <button className="dx-secondary" type="button" onClick={handleOpenSettings}>
+              <SettingsIcon />
+              Settings
+            </button>
+          )}
           <button className="dx-primary" type="button" onClick={() => setAddLeadOpen(true)}>
             <Plus />
             Add lead
@@ -770,16 +796,18 @@ export default function PipelinePage() {
 
       {/* ── Page tabs (Leads / Channels / Sales) ── */}
       <div className="dx-page-tabs">
-        {(["leads", "channels", "sales"] as const).map((tab) => (
-          <button
-            key={tab}
-            type="button"
-            onClick={() => setActiveTab(tab)}
-            className={`dx-page-tab ${activeTab === tab ? "active" : ""}`}
-          >
-            {tab.charAt(0).toUpperCase() + tab.slice(1)}
-          </button>
-        ))}
+        {(["leads", "channels", "sales"] as const)
+          .filter((tab) => tab !== "sales" || isAdmin)
+          .map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              onClick={() => setActiveTab(tab)}
+              className={`dx-page-tab ${activeTab === tab ? "active" : ""}`}
+            >
+              {tab.charAt(0).toUpperCase() + tab.slice(1)}
+            </button>
+          ))}
       </div>
 
       {/* ════ LEADS ════ */}
@@ -842,7 +870,7 @@ export default function PipelinePage() {
               ))}
             </div>
 
-            {reps.length > 0 && (
+            {reps.length > 0 && isAdmin && (
               <div className="dx-rep-pills">
                 {reps.map((r) => {
                   const palette = paletteFor(r.name);
@@ -1024,7 +1052,7 @@ export default function PipelinePage() {
       )}
 
       {activeTab === "channels" && (analytics ? <ChannelsTab analytics={analytics} /> : <TabLoader />)}
-      {activeTab === "sales" && (analytics ? <SalesTab analytics={analytics} /> : <TabLoader />)}
+      {activeTab === "sales" && isAdmin && (analytics ? <SalesTab analytics={analytics} /> : <TabLoader />)}
 
       <AddLeadModal
         open={addLeadOpen}
