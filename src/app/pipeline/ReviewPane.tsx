@@ -30,6 +30,45 @@ import { sanitizeHtml } from "@/lib/sanitize";
 import { Lead } from "./types";
 import { isAgeGated, leadAgeDays, MIN_AGE_DAYS } from "@/lib/policy";
 
+/** Extracts a stable arxiv id from any of arxiv.org/abs/..., /pdf/..., with
+ *  optional version suffix and .pdf extension. Returns null for non-arxiv URLs. */
+function arxivIdFromUrl(url: string | null): string | null {
+  if (!url) return null;
+  const m = /arxiv\.org\/(?:abs|pdf)\/([^/?#]+?)(?:v\d+)?(?:\.pdf)?$/i.exec(url);
+  return m ? m[1] : null;
+}
+
+function PaperEmbed({ pdfUrl }: { pdfUrl: string | null }) {
+  if (!pdfUrl) return null;
+  // ar5iv mirrors arxiv papers as HTML — renders in iframes where PDFs don't.
+  const arxivId = arxivIdFromUrl(pdfUrl);
+  const ar5ivUrl = arxivId ? `https://ar5iv.labs.arxiv.org/html/${arxivId}` : null;
+  return (
+    <div style={{ marginTop: 14, borderTop: "1px solid var(--dx-border-soft)", paddingTop: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+        <span style={{ fontSize: 11, fontWeight: 600, color: "var(--dx-text-3)", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+          Full paper
+        </span>
+        <a href={pdfUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: "var(--dx-blue)" }}>
+          Open PDF ↗
+        </a>
+      </div>
+      {ar5ivUrl ? (
+        <iframe
+          src={ar5ivUrl}
+          title="Paper"
+          style={{ width: "100%", height: 500, border: "1px solid var(--dx-border-soft)", borderRadius: 6, background: "#fff" }}
+          sandbox="allow-scripts allow-same-origin"
+        />
+      ) : (
+        <a href={pdfUrl} target="_blank" rel="noopener noreferrer" className="dx-secondary">
+          Open paper in new tab
+        </a>
+      )}
+    </div>
+  );
+}
+
 interface Props {
   leads: Lead[]; // filtered + sorted slice from the page
   onExit: () => void; // back to Browse
@@ -335,6 +374,8 @@ export function ReviewPane({ leads, onExit, onSent, onSkipped }: Props) {
               (No abstract on file.)
             </div>
           )}
+
+          <PaperEmbed pdfUrl={lead.pdfUrl} />
         </div>
 
         {/* RIGHT — editable draft */}
