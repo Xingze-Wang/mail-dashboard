@@ -395,24 +395,29 @@ export default function PipelinePage() {
     return () => ctrl.abort();
   }, [fetchLeads, fetchDiscovery]);
 
-  // If anything is queued/drafting, kick the worker + refetch every 15s until
-  // it drains. The worker is idempotent and only processes 5 at a time.
-  const pending = useMemo(
+  // Keep `hasPending` in a ref so a steady stream of counts doesn't thrash
+  // the effect — we only want the interval to start when pending goes 0→N
+  // and stop when it goes N→0.
+  const pendingRef = useRef(0);
+  pendingRef.current = useMemo(
     () => leads.filter((l) => l.status === "queued" || l.status === "drafting").length,
     [leads],
   );
+  const anyPending = pendingRef.current > 0;
   useEffect(() => {
-    if (pending === 0) return;
+    if (!anyPending) return;
+    let cancelled = false;
     const tick = async () => {
       try {
         await fetch("/api/pipeline/draft-queue", { method: "POST" });
       } catch { /* ignore */ }
+      if (cancelled) return;
       fetchLeads();
     };
     tick();
     const iv = setInterval(tick, 15000);
-    return () => clearInterval(iv);
-  }, [pending, fetchLeads]);
+    return () => { cancelled = true; clearInterval(iv); };
+  }, [anyPending, fetchLeads]);
 
   useEffect(() => {
     const ctrl = new AbortController();

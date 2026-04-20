@@ -6,6 +6,56 @@ const CONTACT_DEDUP_MS = 365 * 24 * 60 * 60 * 1000;
 export const SEND_MIN_AGE_DAYS = 7;
 export const CONTACT_DEDUP_DAYS = 365;
 
+/**
+ * The "firewall" that prevents re-contacting anyone within 365 days.
+ * Queries THREE sources in parallel and treats any hit as a block:
+ *   1. emails.to              — the authoritative sent log
+ *   2. email_contact_history  — legacy dedup table (pre-pipeline_leads)
+ *   3. persons.emails[]       — richer contact graph with last_outreach_at
+ *
+ * All three must be case-normalized because older rows may be mixed-case.
+ */
+export async function lastContactedAt(emailRaw: string): Promise<string | null> {
+  const email = emailRaw.trim().toLowerCase();
+  if (!email) return null;
+  const cutoff = new Date(Date.now() - CONTACT_DEDUP_MS).toISOString();
+
+  const [emailsHit, historyHit, personsHit] = await Promise.all([
+    supabase
+      .from("emails")
+      .select("created_at, to")
+      .ilike("to", email)
+      .gte("created_at", cutoff)
+      .order("created_at", { ascending: false })
+      .limit(1),
+    supabase
+      .from("email_contact_history")
+      .select("contacted_at")
+      .ilike("email", email)
+      .gte("contacted_at", cutoff)
+      .order("contacted_at", { ascending: false })
+      .limit(1),
+    supabase
+      .from("persons")
+      .select("last_outreach_at, emails")
+      .contains("emails", [email])
+      .gte("last_outreach_at", cutoff)
+      .order("last_outreach_at", { ascending: false })
+      .limit(1),
+  ]);
+
+  const candidates: string[] = [];
+  if (emailsHit.data && emailsHit.data.length > 0) candidates.push(emailsHit.data[0].created_at as string);
+  if (historyHit.data && historyHit.data.length > 0) candidates.push(historyHit.data[0].contacted_at as string);
+  if (personsHit.data && personsHit.data.length > 0) {
+    const t = (personsHit.data[0] as { last_outreach_at: string | null }).last_outreach_at;
+    if (t) candidates.push(t);
+  }
+  if (candidates.length === 0) return null;
+  // Return the most recent contact across all three.
+  return candidates.sort().reverse()[0];
+}
+
 export type SendBlock =
   | { ok: true }
   | { ok: false; code: "too_new"; availableAt: string }
@@ -37,31 +87,14 @@ export async function checkSendAllowed(lead: Lead): Promise<SendBlock> {
     }
   }
 
-  const cutoff = new Date(Date.now() - CONTACT_DEDUP_MS).toISOString();
-  const { data } = await supabase
-    .from("emails")
-    .select("created_at")
-    .eq("to", lead.author_email.toLowerCase())
-    .gte("created_at", cutoff)
-    .order("created_at", { ascending: false })
-    .limit(1);
-
-  if (data && data.length > 0) {
-    return { ok: false, code: "already_contacted", lastContactedAt: data[0].created_at };
+  const lastAt = await lastContactedAt(lead.author_email);
+  if (lastAt) {
+    return { ok: false, code: "already_contacted", lastContactedAt: lastAt };
   }
-
   return { ok: true };
 }
 
 export async function wasRecentlyContacted(email: string): Promise<{ contacted: boolean; lastAt: string | null }> {
-  const cutoff = new Date(Date.now() - CONTACT_DEDUP_MS).toISOString();
-  const { data } = await supabase
-    .from("emails")
-    .select("created_at")
-    .eq("to", email.toLowerCase())
-    .gte("created_at", cutoff)
-    .order("created_at", { ascending: false })
-    .limit(1);
-  if (data && data.length > 0) return { contacted: true, lastAt: data[0].created_at };
-  return { contacted: false, lastAt: null };
+  const lastAt = await lastContactedAt(email);
+  return { contacted: lastAt !== null, lastAt };
 }

@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { generateDraft } from "@/lib/email-generator";
-import { getRep } from "@/lib/assignment";
+import { getRep, classifyLead, assignRep, getAssignmentConfig } from "@/lib/assignment";
 import { verifySession, AUTH_COOKIE } from "@/lib/auth";
+import { lookupAuthor } from "@/lib/semantic-scholar";
+import { lookupCitationsViaTavily } from "@/lib/tavily";
 
 /**
  * GET /api/pipeline/draft-queue
@@ -16,7 +18,9 @@ import { verifySession, AUTH_COOKIE } from "@/lib/auth";
  *
  * Stays well under Vercel's 60s function limit: 5 leads * ~5s Gemini = 25s.
  */
-const BATCH = 5;
+// 3 leads × (S2 ~2s + Tavily ~3s + Gemini ~5s + DB ~0.5s) ≈ 30s, below Vercel's
+// 60s function limit with headroom for slow S2/Tavily responses.
+const BATCH = 3;
 
 async function checkAuth(req: NextRequest): Promise<boolean> {
   const secret = process.env.CRON_SECRET;
@@ -29,7 +33,8 @@ async function checkAuth(req: NextRequest): Promise<boolean> {
 
 async function processOne(row: Record<string, unknown>): Promise<boolean> {
   const id = row.id as string;
-  const assignedRepId = row.assigned_rep_id as number | null;
+  const email = (row.author_email as string) || "";
+  const title = (row.title as string) || "";
 
   // Optimistic claim queued → drafting. If rowcount 0, another worker got it.
   const { data: claimed } = await supabase
@@ -42,19 +47,60 @@ async function processOne(row: Record<string, unknown>): Promise<boolean> {
   if (!claimed) return false;
 
   try {
-    const rep = assignedRepId ? await getRep(assignedRepId) : null;
+    // 1. Enrichment (S2 → Tavily) — only if we don't already have a value.
+    let citationCount = (row.citation_count as number | null) ?? null;
+    let hIndex = (row.h_index as number | null) ?? null;
+    let s2AuthorId = (row.s2_author_id as string | null) ?? null;
+    let paperCount = (row.paper_count as number | null) ?? null;
+
+    let lookupName = (row.author_name as string | null) ?? null;
+    if (!lookupName && email.includes("@")) {
+      const local = email.split("@")[0];
+      const guessed = local.replace(/[._\-]+/g, " ").trim();
+      if (guessed.length >= 3 && /^[a-zA-Z ]+$/.test(guessed)) lookupName = guessed;
+    }
+
+    if (citationCount === null && lookupName) {
+      try {
+        const s2 = await lookupAuthor(title, lookupName);
+        if (s2) {
+          citationCount = s2.citationCount;
+          hIndex = s2.hIndex;
+          s2AuthorId = s2.authorId;
+          paperCount = s2.paperCount;
+        }
+      } catch (err) {
+        console.error("draft-queue S2 lookup failed", { email, err: String(err) });
+      }
+      if (citationCount === null) {
+        try {
+          const tav = await lookupCitationsViaTavily(lookupName, email);
+          if (tav?.citationCount) citationCount = tav.citationCount;
+        } catch { /* best-effort */ }
+      }
+    }
+
+    // 2. Re-classify + re-assign if enrichment changed the picture (e.g. a
+    //    high-citation author unlocked "strong" tier → routed to Leo).
+    const schoolTier = (row.school_tier as number | null) ?? null;
     const mdRaw = row.matched_directions;
     const matchedDirs = typeof mdRaw === "string"
       ? mdRaw.split(",").map((s) => s.trim()).filter(Boolean)
       : Array.isArray(mdRaw) ? (mdRaw as string[]) : [];
 
+    const config = await getAssignmentConfig();
+    const newTier = classifyLead(config, { citationCount, hIndex, schoolTier, authorEmail: email });
+    const newRepId = assignRep(config, newTier, email, matchedDirs);
+
+    // 3. Look up the (possibly re-assigned) rep and generate the draft.
+    const rep = await getRep(newRepId);
     const draft = await generateDraft({
-      title: (row.title as string) || "",
+      title,
       abstract: (row.abstract as string) || "",
-      authorEmail: (row.author_email as string) || "",
+      authorEmail: email,
       firstName: (row.first_name as string) || null,
       schoolName: (row.school_name as string) || null,
-      schoolTier: (row.school_tier as number | null) ?? null,
+      schoolTier,
       matchedDirections: matchedDirs,
       repName: rep?.sender_name,
       repWechatId: rep?.wechat_id,
@@ -63,6 +109,12 @@ async function processOne(row: Record<string, unknown>): Promise<boolean> {
     await supabase
       .from("pipeline_leads")
       .update({
+        citation_count: citationCount,
+        h_index: hIndex,
+        s2_author_id: s2AuthorId,
+        paper_count: paperCount,
+        lead_tier: newTier,
+        assigned_rep_id: newRepId,
         draft_subject: draft.subject,
         draft_html: draft.html,
         status: "ready",
@@ -83,7 +135,9 @@ async function processOne(row: Record<string, unknown>): Promise<boolean> {
 async function run() {
   const { data: queued } = await supabase
     .from("pipeline_leads")
-    .select("id, title, abstract, author_email, first_name, school_name, school_tier, matched_directions, assigned_rep_id")
+    .select(
+      "id, title, abstract, author_email, author_name, first_name, school_name, school_tier, matched_directions, assigned_rep_id, citation_count, h_index, s2_author_id, paper_count"
+    )
     .eq("status", "queued")
     .order("created_at", { ascending: true })
     .limit(BATCH);

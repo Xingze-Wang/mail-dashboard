@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { wasRecentlyContacted } from "@/lib/contact-guard";
-import { lookupAuthor } from "@/lib/semantic-scholar";
-import { lookupCitationsViaTavily } from "@/lib/tavily";
 import {
   getAssignmentConfig,
   classifyLead,
@@ -97,45 +95,14 @@ export async function POST(req: NextRequest) {
       const authorName = (lead.authorName as string) || null;
       const schoolTier = (lead.schoolTier as number) || null;
 
-      // Semantic Scholar enrichment (best-effort). Falls back to email local-part
-      // (e.g. "first.last@univ.edu") when authorName is missing — this catches
-      // the common case where Python imports only have an email address.
-      let lookupName = authorName;
-      if (!lookupName && email.includes("@")) {
-        const local = email.split("@")[0];
-        const guessed = local.replace(/[._\-]+/g, " ").trim();
-        if (guessed.length >= 3 && /^[a-zA-Z ]+$/.test(guessed)) lookupName = guessed;
-      }
-      let s2: Awaited<ReturnType<typeof lookupAuthor>> = null;
-      if (lookupName) {
-        try {
-          s2 = await lookupAuthor(title, lookupName);
-        } catch (err) {
-          console.error("S2 lookup failed", { email, lookupName, err: String(err) });
-        }
-      }
-
-      let citationCount = s2?.citationCount ?? null;
-      const hIndex = s2?.hIndex ?? null;
-
-      // Tavily fallback — hits Google Scholar via web search when S2 has no
-      // profile for this author (common for fresh PhDs / industry names /
-      // highly-collided Chinese names). Best-effort; logs failures.
-      if (citationCount === null && lookupName) {
-        try {
-          const tav = await lookupCitationsViaTavily(lookupName, email);
-          if (tav?.citationCount) {
-            citationCount = tav.citationCount;
-            console.log("Tavily citation hit", { email, name: lookupName, count: tav.citationCount });
-          }
-        } catch (err) {
-          console.error("Tavily lookup threw", { email, err: String(err) });
-        }
-      }
-
+      // Enrichment (S2 + Tavily) is deferred to the draft-queue worker so the
+      // import request stays < 2s even for 50-lead batches. Classification
+      // runs here with what the caller gave us — typically school_tier. Leads
+      // that should be "strong" solely on citation will be reclassified when
+      // the worker runs, because it updates lead_tier after enrichment.
       const leadTier = classifyLead(config, {
-        citationCount,
-        hIndex,
+        citationCount: null,
+        hIndex: null,
         schoolTier,
         authorEmail: email,
       });
@@ -178,10 +145,10 @@ export async function POST(req: NextRequest) {
         draft_html: (lead.draftHtml as string) || null,
         status: hasDraft ? "ready" : "queued",
         source,
-        s2_author_id: s2?.authorId ?? null,
-        h_index: hIndex,
-        citation_count: citationCount,
-        paper_count: s2?.paperCount ?? null,
+        s2_author_id: null,
+        h_index: null,
+        citation_count: null,
+        paper_count: null,
         lead_tier: leadTier,
         assigned_rep_id: assignedRepId,
       });

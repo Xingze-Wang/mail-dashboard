@@ -106,9 +106,19 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
-      // Save to emails table
+      // Resend accepted — mark the lead sent FIRST so a downstream failure
+      // in the emails insert doesn't strand it at status='sending'.
+      const { error: leadUpdateErr } = await supabase
+        .from("pipeline_leads")
+        .update({ status: "sent", sent_at: new Date().toISOString() })
+        .eq("id", id);
+      if (leadUpdateErr) {
+        console.error("batch pipeline_leads update failed", { id, err: leadUpdateErr });
+      }
+
+      // Audit log (best-effort).
       const threadId = `thread_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-      await supabase.from("emails").insert({
+      const { error: emailInsertErr } = await supabase.from("emails").insert({
         from: senderFrom,
         to: toEmail,
         subject: lead.draft_subject,
@@ -117,15 +127,16 @@ export async function POST(req: NextRequest) {
         status: "sent",
         thread_id: threadId,
       });
+      if (emailInsertErr) {
+        console.error("batch emails insert failed", { id, resendId: result.data?.id, err: emailInsertErr });
+      }
 
-      // Update lead status
-      await supabase
-        .from("pipeline_leads")
-        .update({ status: "sent", sent_at: new Date().toISOString() })
-        .eq("id", id);
-
-      // Record contact history
-      await recordContact(toEmail, lead.title, lead.draft_subject);
+      // Record contact history (best-effort).
+      try {
+        await recordContact(toEmail, lead.title, lead.draft_subject);
+      } catch (e) {
+        console.error("batch recordContact failed", { id, err: String(e) });
+      }
 
       sent++;
 
