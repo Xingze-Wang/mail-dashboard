@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 /* ── Inline SVG icons (matching mockup-v2-light.html) ───────────────── */
@@ -128,8 +128,22 @@ function NavItem({ href, label, Icon, active, badge }: NavItemProps) {
 
 export function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
   const [unread, setUnread] = useState(0);
   const [ready, setReady]   = useState(0);
+  const [me, setMe] = useState<{ repId: number; repName: string } | null>(null);
+
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((r) => r.json())
+      .then((d) => { if (d.authenticated) setMe({ repId: d.repId, repName: d.repName }); })
+      .catch(() => { /* not signed in */ });
+  }, []);
+
+  const logout = async () => {
+    await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
+    router.replace("/login");
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -216,16 +230,30 @@ export function Sidebar() {
       </nav>
 
       <div className="sidebar-footer">
-        <Link href="/settings" className="user" style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none" }}>
-          <div className="avatar">XW</div>
-          <div style={{ display: "flex", flexDirection: "column" }}>
-            <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>Xingze Wang</span>
-            <span style={{ fontSize: 11.5, color: "var(--text-tertiary)" }}>Admin</span>
-          </div>
-          <div style={{ marginLeft: "auto", color: "var(--text-tertiary)" }}>
-            <SettingsIcon />
-          </div>
-        </Link>
+        <div className="user" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <Link href="/settings" style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none", flex: 1, minWidth: 0 }}>
+            <div className="avatar">{(me?.repName ?? "?").slice(0, 2).toUpperCase()}</div>
+            <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {me?.repName ?? "Signed out"}
+              </span>
+              <span style={{ fontSize: 11.5, color: "var(--text-tertiary)" }}>Sales</span>
+            </div>
+          </Link>
+          {me && (
+            <button
+              onClick={logout}
+              title="Sign out"
+              style={{ background: "transparent", border: 0, color: "var(--text-tertiary)", cursor: "pointer", padding: 4, borderRadius: 4 }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4" />
+                <polyline points="16 17 21 12 16 7" />
+                <line x1="21" y1="12" x2="9" y2="12" />
+              </svg>
+            </button>
+          )}
+        </div>
       </div>
     </aside>
   );
