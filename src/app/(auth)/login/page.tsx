@@ -2,14 +2,14 @@
 
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Lock, Loader2, Mail } from "lucide-react";
+import { Lock, Loader2, User } from "lucide-react";
 
 function LoginInner() {
   const router = useRouter();
   const params = useSearchParams();
   const next = params.get("next") || "/";
 
-  const [email, setEmail] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -22,7 +22,7 @@ function LoginInner() {
       const r = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ identifier, password }),
       });
       if (!r.ok) {
         const d = await r.json().catch(() => ({}));
@@ -60,19 +60,19 @@ function LoginInner() {
         </p>
 
         <label style={{ display: "block", fontSize: 12, color: "var(--text-secondary)", marginBottom: 6 }}>
-          Email
+          Username or email
         </label>
         <div style={{ position: "relative", marginBottom: 14 }}>
-          <Mail className="h-4 w-4" style={{ position: "absolute", left: 12, top: 13, color: "var(--text-tertiary)" }} />
+          <User className="h-4 w-4" style={{ position: "absolute", left: 12, top: 13, color: "var(--text-tertiary)" }} />
           <input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            type="text"
+            value={identifier}
+            onChange={(e) => setIdentifier(e.target.value)}
             autoFocus
             autoComplete="username"
             required
             style={inputStyle}
-            placeholder="you@compute.miracleplus.com"
+            placeholder="xingze"
           />
         </div>
 
@@ -97,7 +97,7 @@ function LoginInner() {
 
         <button
           type="submit"
-          disabled={submitting || !email || !password}
+          disabled={submitting || !identifier || !password}
           style={{
             width: "100%",
             padding: "10px 12px",
@@ -108,7 +108,7 @@ function LoginInner() {
             fontSize: 14,
             fontWeight: 500,
             cursor: submitting ? "default" : "pointer",
-            opacity: submitting || !email || !password ? 0.6 : 1,
+            opacity: submitting || !identifier || !password ? 0.6 : 1,
             display: "inline-flex",
             alignItems: "center",
             justifyContent: "center",
