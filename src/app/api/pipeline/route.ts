@@ -58,6 +58,7 @@ function mapLead(l: Record<string, unknown>) {
     citationCount: l.citation_count,
     paperCount: l.paper_count,
     leadTier: l.lead_tier,
+    localScore: l.local_score ?? null,
     assignedRepId: l.assigned_rep_id,
   };
 }

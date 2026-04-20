@@ -117,13 +117,10 @@ export async function POST(req: NextRequest) {
       const arxivId = (lead.arxivId as string) ||
         `${source}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 
-      // Draft is generated asynchronously by /api/pipeline/draft-queue (cron)
-      // to keep import requests under 10s even for 50-lead batches. Rows are
-      // inserted with status='queued' (no draft), and the queue worker flips
-      // them to 'ready' after generating the draft with the correct rep.
-      // Python scrapers may still send a pre-made draft — if they do, we
-      // trust it and mark ready immediately (back-compat path).
-      const hasDraft = !!(lead.draftSubject && lead.draftHtml);
+      // Draft is generated server-side by /api/pipeline/draft-queue using the
+      // assigned rep's identity — we do NOT trust incoming drafts from the
+      // Python scraper (which signs everything as Leo). Any draft supplied
+      // is discarded in favor of the queue-generated one.
 
       const { error } = await supabase.from("pipeline_leads").insert({
         arxiv_id: arxivId,
@@ -141,9 +138,10 @@ export async function POST(req: NextRequest) {
         compute_confidence: (lead.computeConfidence as number) || null,
         compute_reason: (lead.computeReason as string) || null,
         matched_directions: (lead.matchedDirections as string) || null,
-        draft_subject: (lead.draftSubject as string) || null,
-        draft_html: (lead.draftHtml as string) || null,
-        status: hasDraft ? "ready" : "queued",
+        draft_subject: null,
+        draft_html: null,
+        status: "queued",
+        local_score: typeof lead.localScore === "number" ? lead.localScore : null,
         source,
         s2_author_id: null,
         h_index: null,

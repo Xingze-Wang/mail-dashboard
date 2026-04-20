@@ -501,8 +501,12 @@ export default function PipelinePage() {
     const arr = [...filteredArxivLeads];
     arr.sort((a, b) => {
       switch (sort) {
-        case "score":
-          return (b.citationCount ?? 0) - (a.citationCount ?? 0);
+        case "score": {
+          // Prefer the trained local scorer; fall back to citation count.
+          const sa = a.localScore ?? (a.citationCount ?? 0) / 10000;
+          const sb = b.localScore ?? (b.citationCount ?? 0) / 10000;
+          return sb - sa;
+        }
         case "tier":
           if ((a.leadTier === "strong") === (b.leadTier === "strong")) return 0;
           return a.leadTier === "strong" ? -1 : 1;

@@ -24,6 +24,7 @@ export interface Lead {
   citationCount: number | null;
   paperCount: number | null;
   leadTier: string | null;
+  localScore: number | null;
   assignedRepId: number | null;
   s2AuthorId: string | null;
 }
