@@ -66,6 +66,20 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
+      // Optimistic claim: ready → sending. Skip if someone else already took it.
+      const { data: claimed } = await supabase
+        .from("pipeline_leads")
+        .update({ status: "sending" })
+        .eq("id", id)
+        .eq("status", "ready")
+        .select("id")
+        .maybeSingle();
+      if (!claimed) {
+        skipped++;
+        blocks["race"] = (blocks["race"] || 0) + 1;
+        continue;
+      }
+
       // Look up assigned rep for this lead
       let senderFrom = `${process.env.SENDER_NAME} <${process.env.SENDER_EMAIL}>`;
       if (lead.assigned_rep_id) {
@@ -85,6 +99,7 @@ export async function POST(req: NextRequest) {
       });
 
       if (result.error) {
+        await supabase.from("pipeline_leads").update({ status: "ready" }).eq("id", id);
         errors.push(`${lead.author_email}: ${result.error.message}`);
         skipped++;
         continue;

@@ -20,12 +20,16 @@ import {
  * Future: add GitHub startup finder, Jike founder radar, etc.
  */
 export async function GET(req: NextRequest) {
-  const isVercelCron = req.headers.get("authorization") === `Bearer ${process.env.CRON_SECRET}`;
+  const secret = process.env.CRON_SECRET;
+  if (!secret) {
+    return NextResponse.json({ error: "CRON_SECRET not configured" }, { status: 503 });
+  }
+  const isVercelCron = req.headers.get("authorization") === `Bearer ${secret}`;
   const referer = req.headers.get("referer") || "";
   const host = req.headers.get("host") || "__none__";
   const isInternal = referer.includes(host);
 
-  if (process.env.CRON_SECRET && !isVercelCron && !isInternal) {
+  if (!isVercelCron && !isInternal) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

@@ -59,6 +59,22 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Optimistic claim: flip ready → sending atomically. If rowcount is 0,
+    // another request already claimed this lead — bail before hitting Resend.
+    const { data: claimed, error: claimErr } = await supabase
+      .from("pipeline_leads")
+      .update({ status: "sending" })
+      .eq("id", id)
+      .eq("status", "ready")
+      .select("id")
+      .maybeSingle();
+    if (claimErr || !claimed) {
+      return NextResponse.json(
+        { error: "Lead already being sent or not in 'ready' state", code: "race" },
+        { status: 409 },
+      );
+    }
+
     // Look up assigned rep (fall back to env vars)
     let senderFrom = `${process.env.SENDER_NAME} <${process.env.SENDER_EMAIL}>`;
     if (lead.assigned_rep_id) {
@@ -77,6 +93,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (result.error) {
+      await supabase.from("pipeline_leads").update({ status: "ready" }).eq("id", id);
       return NextResponse.json({ error: result.error.message }, { status: 500 });
     }
 

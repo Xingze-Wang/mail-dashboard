@@ -18,6 +18,14 @@ function cleanToField(to: string | null): string {
 
 export async function POST(req: NextRequest) {
   try {
+    const secret = process.env.INBOUND_SECRET;
+    if (secret) {
+      const auth = req.headers.get("authorization") || "";
+      const header = req.headers.get("x-inbound-secret") || "";
+      if (auth !== `Bearer ${secret}` && header !== secret) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      }
+    }
     const body = await req.json();
     const { from, to, subject, html, text, message_id, in_reply_to, references, headers } = body;
 

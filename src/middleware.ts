@@ -31,6 +31,16 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next({ request: { headers: reqHeaders } });
   }
 
+  // Machine-to-machine routes: Python scraper hits /api/pipeline/import and
+  // /api/pipeline/record with `Authorization: Bearer $PIPELINE_IMPORT_KEY`.
+  if (
+    (pathname === "/api/pipeline/import" || pathname === "/api/pipeline/record") &&
+    process.env.PIPELINE_IMPORT_KEY &&
+    req.headers.get("authorization") === `Bearer ${process.env.PIPELINE_IMPORT_KEY}`
+  ) {
+    return NextResponse.next({ request: { headers: reqHeaders } });
+  }
+
   if (pathname.startsWith("/api/")) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

@@ -5,6 +5,7 @@ import {
   classifyLead,
   assignRep,
 } from "@/lib/assignment";
+import { requireAdmin } from "@/lib/auth-helpers";
 
 export async function GET() {
   const config = await getAssignmentConfig();
@@ -12,6 +13,8 @@ export async function GET() {
 }
 
 export async function PUT(req: NextRequest) {
+  const gate = await requireAdmin(req);
+  if ("response" in gate) return gate.response;
   const body = await req.json();
 
   if (!body.strong_criteria || !body.assignment) {
@@ -44,7 +47,9 @@ export async function PUT(req: NextRequest) {
  * Re-classify and re-assign EVERY existing lead with the current rules.
  * No body required. Returns counts of what changed.
  */
-export async function POST() {
+export async function POST(req: NextRequest) {
+  const gate = await requireAdmin(req);
+  if ("response" in gate) return gate.response;
   const config = await getAssignmentConfig();
 
   const { data: leads, error: fetchError } = await supabase

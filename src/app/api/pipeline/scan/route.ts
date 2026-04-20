@@ -52,15 +52,13 @@ async function insertLead(
 }
 
 function checkAuth(req: NextRequest): boolean {
-  const isVercelCron = req.headers.get("authorization") === `Bearer ${process.env.CRON_SECRET}`;
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return false;
+  const isVercelCron = req.headers.get("authorization") === `Bearer ${secret}`;
   const referer = req.headers.get("referer") || "";
   const host = req.headers.get("host") || "__none__";
   const isInternal = referer.includes(host);
-
-  if (process.env.CRON_SECRET && !isVercelCron && !isInternal) {
-    return false;
-  }
-  return true;
+  return isVercelCron || isInternal;
 }
 
 async function ensureTable() {

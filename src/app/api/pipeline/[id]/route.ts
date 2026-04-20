@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
+import { requireAdmin } from "@/lib/auth-helpers";
 
 function mapLead(l: Record<string, unknown>) {
   return {
@@ -99,6 +100,8 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const gate = await requireAdmin(req);
+  if ("response" in gate) return gate.response;
   const { id } = await params;
 
   const { error } = await supabase
