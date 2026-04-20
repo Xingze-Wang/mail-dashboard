@@ -3,10 +3,12 @@ import { supabase } from "@/lib/db";
 import { wasRecentlyContacted, paperWasRecentlyContacted } from "@/lib/contact-guard";
 import { canonicalizeEmail } from "@/lib/email-id";
 import { canonicalizeArxivId } from "@/lib/arxiv-id";
+import { fillRepPlaceholders } from "@/lib/rep-template";
 import {
   getAssignmentConfig,
   classifyLead,
   assignRep,
+  getRep,
 } from "@/lib/assignment";
 
 /**
@@ -161,6 +163,26 @@ export async function POST(req: NextRequest) {
       const arxivId = arxivIdCanonical ||
         `${source}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 
+      // If Python supplied a draft (body + subject, typically with
+      // {{REP_NAME}} / {{REP_WECHAT}} placeholders), fill those with the
+      // assigned rep's identity and mark the lead 'ready' immediately.
+      // Otherwise the draft-queue worker will generate from scratch later.
+      const incomingSubject = (lead.draftSubject as string) || null;
+      const incomingHtml = (lead.draftHtml as string) || null;
+      let finalSubject: string | null = null;
+      let finalHtml: string | null = null;
+      let finalStatus: "ready" | "queued" = "queued";
+      if (incomingSubject && incomingHtml) {
+        const rep = await getRep(assignedRepId);
+        const filled = fillRepPlaceholders(
+          { subject: incomingSubject, html: incomingHtml },
+          rep ? { sender_name: rep.sender_name, wechat_id: rep.wechat_id } : null,
+        );
+        finalSubject = filled.subject;
+        finalHtml = filled.html;
+        finalStatus = "ready";
+      }
+
       // Draft is generated server-side by /api/pipeline/draft-queue using the
       // assigned rep's identity — we do NOT trust incoming drafts from the
       // Python scraper (which signs everything as Leo). Any draft supplied
@@ -182,9 +204,9 @@ export async function POST(req: NextRequest) {
         compute_confidence: (lead.computeConfidence as number) || null,
         compute_reason: (lead.computeReason as string) || null,
         matched_directions: (lead.matchedDirections as string) || null,
-        draft_subject: null,
-        draft_html: null,
-        status: "queued",
+        draft_subject: finalSubject,
+        draft_html: finalHtml,
+        status: finalStatus,
         local_score: typeof lead.localScore === "number" ? lead.localScore : null,
         source,
         s2_author_id: null,
