@@ -5,6 +5,7 @@ import { getRep, classifyLead, assignRep, getAssignmentConfig } from "@/lib/assi
 import { verifySession, AUTH_COOKIE } from "@/lib/auth";
 import { lookupAuthor } from "@/lib/semantic-scholar";
 import { lookupCitationsViaTavily } from "@/lib/tavily";
+import { scoreWithGemini } from "@/lib/gemini-scorer";
 
 /**
  * GET /api/pipeline/draft-queue
@@ -80,6 +81,20 @@ async function processOne(row: Record<string, unknown>): Promise<boolean> {
       }
     }
 
+    // 1b. Score with Gemini when Python didn't supply a local_score.
+    // Python's trained classifier (sentence-transformer, F1=0.88) is the
+    // canonical signal; this is a stopgap for leads inserted via scan /
+    // manual add / discovery-promote, which don't run through resend0412.py.
+    let localScore: number | null = (row.local_score as number | null) ?? null;
+    if (localScore === null && title) {
+      try {
+        const g = await scoreWithGemini(title, (row.abstract as string) || "");
+        if (g !== null) localScore = g;
+      } catch {
+        // non-blocking
+      }
+    }
+
     // 2. Re-classify + re-assign if enrichment changed the picture (e.g. a
     //    high-citation author unlocked "strong" tier → routed to Leo).
     const schoolTier = (row.school_tier as number | null) ?? null;
@@ -113,6 +128,7 @@ async function processOne(row: Record<string, unknown>): Promise<boolean> {
         h_index: hIndex,
         s2_author_id: s2AuthorId,
         paper_count: paperCount,
+        local_score: localScore,
         lead_tier: newTier,
         assigned_rep_id: newRepId,
         draft_subject: draft.subject,
@@ -136,7 +152,7 @@ async function run() {
   const { data: queued } = await supabase
     .from("pipeline_leads")
     .select(
-      "id, title, abstract, author_email, author_name, first_name, school_name, school_tier, matched_directions, assigned_rep_id, citation_count, h_index, s2_author_id, paper_count"
+      "id, title, abstract, author_email, author_name, first_name, school_name, school_tier, matched_directions, assigned_rep_id, citation_count, h_index, s2_author_id, paper_count, local_score"
     )
     .eq("status", "queued")
     .order("created_at", { ascending: true })

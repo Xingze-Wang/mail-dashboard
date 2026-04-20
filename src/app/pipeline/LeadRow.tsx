@@ -170,6 +170,7 @@ function LeadRowInner({
   const repColor = colorForRep(repName);
 
   const hasMeta =
+    lead.localScore !== null ||
     lead.citationCount !== null ||
     lead.hIndex !== null ||
     lead.publishedAt ||
@@ -198,6 +199,20 @@ function LeadRowInner({
         </span>
         {hasMeta && (
           <span className="dx-head-meta">
+            {lead.localScore !== null && lead.localScore !== undefined && (
+              <>
+                <span
+                  title="Lead quality score (0-1). Python classifier when available, Gemini fallback otherwise."
+                  style={{
+                    color: lead.localScore > 0.7 ? "var(--dx-green)" : lead.localScore > 0.4 ? "var(--dx-amber)" : "var(--dx-text-3)",
+                    fontWeight: 600,
+                  }}
+                >
+                  ★ {(lead.localScore * 100).toFixed(0)}
+                </span>
+                <span className="dx-meta-dot" />
+              </>
+            )}
             {lead.citationCount !== null && lead.citationCount > 0 && (
               <>
                 <span>{lead.citationCount.toLocaleString()} cites</span>
