@@ -99,6 +99,23 @@ async function runScan() {
   let leadsCreated = 0;
 
   for (const lead of leads) {
+    // 0. One-author-per-paper rule: if any pipeline_leads row already
+    //    exists for this arxiv_id (or this email), skip.
+    const emailLower = (lead.authorEmail || "").trim().toLowerCase();
+    if (emailLower) {
+      const orFilter = `arxiv_id.eq.${lead.arxivId},author_email.ilike.${emailLower}`;
+      const { data: existing } = await supabase
+        .from("pipeline_leads")
+        .select("id")
+        .or(orFilter)
+        .not("status", "in", "(skipped,bounced)")
+        .limit(1);
+      if (existing && existing.length > 0) {
+        stats.errors.push(`dedup ${lead.arxivId}: already in pipeline`);
+        continue;
+      }
+    }
+
     // 1. Semantic Scholar enrichment (best-effort)
     let s2: Awaited<ReturnType<typeof lookupAuthor>> = null;
     try {

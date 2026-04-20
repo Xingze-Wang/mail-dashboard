@@ -64,6 +64,7 @@ export async function POST(req: NextRequest) {
 
     let imported = 0;
     let skipped = 0;
+    let duplicateInPipeline = 0;
     const errors: string[] = [];
     const blockedByGuard: { email: string; lastContactedAt: string }[] = [];
 
@@ -86,6 +87,26 @@ export async function POST(req: NextRequest) {
       const contact = await wasRecentlyContacted(email);
       if (contact.contacted) {
         blockedByGuard.push({ email, lastContactedAt: contact.lastAt! });
+        skipped++;
+        continue;
+      }
+
+      // Dedup against rows already in pipeline_leads:
+      //   (a) same email — different paper but same person
+      //   (b) same arxiv_id — same paper, different co-author
+      // Either case: we already have outreach in flight, don't double up.
+      const incomingArxivId = (lead.arxivId as string) || null;
+      const orFilter = incomingArxivId
+        ? `author_email.ilike.${email},arxiv_id.eq.${incomingArxivId}`
+        : `author_email.ilike.${email}`;
+      const { data: existing } = await supabase
+        .from("pipeline_leads")
+        .select("id, status, author_email, arxiv_id")
+        .or(orFilter)
+        .not("status", "in", "(skipped,bounced)")
+        .limit(1);
+      if (existing && existing.length > 0) {
+        duplicateInPipeline++;
         skipped++;
         continue;
       }
@@ -163,7 +184,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    return NextResponse.json({ imported, skipped, errors, blockedByGuard });
+    return NextResponse.json({ imported, skipped, duplicateInPipeline, errors, blockedByGuard });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Import failed";
     return NextResponse.json({ error: message }, { status: 500 });
