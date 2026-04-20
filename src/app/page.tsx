@@ -158,7 +158,14 @@ export default function OverviewPage() {
         {[
           { label: "Delivery Rate", value: o.deliveryRate, suffix: "%", color: "var(--green)" },
           { label: "Click Rate", value: o.clickRate, suffix: "%", color: "var(--blue)" },
-          { label: "Bounce Rate", value: o.bounceRate, suffix: "%", color: "var(--coral)" },
+          {
+            label: "Lead Rate (WeChat)",
+            value: metrics.pipeline && metrics.pipeline.sent > 0
+              ? ((metrics.wechat?.total ?? 0) / metrics.pipeline.sent * 100).toFixed(1)
+              : "0.0",
+            suffix: "%",
+            color: "var(--green)",
+          },
         ].map((rate) => (
           <div key={rate.label} className="stat-card">
             <div className="stat-label">{rate.label}</div>
