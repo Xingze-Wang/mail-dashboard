@@ -128,23 +128,51 @@ export function BulkPane({ leads, onDone, onError }: Props) {
     );
   }
 
+  const gatedCount = ready.filter((l) => isAgeGated(l.createdAt)).length;
+  const allSelected = ids.length === ready.length && ready.length > 0;
+  const noneSelected = ids.length === 0;
+
+  // "Select all" toggles between three states:
+  //   none   → select all NON-gated
+  //   some   → select all (override the gated ones too)
+  //   all    → clear
+  const handleSelectAll = () => {
+    if (allSelected) {
+      setSelected(new Set());
+      setOverrides(new Set());
+      return;
+    }
+    if (noneSelected) {
+      const nonGated = ready.filter((l) => !isAgeGated(l.createdAt)).map((l) => l.id);
+      if (nonGated.length > 0) {
+        setSelected(new Set(nonGated));
+        return;
+      }
+    }
+    // Mixed or every row is gated → select everything and auto-override
+    setSelected(new Set(ready.map((l) => l.id)));
+    setOverrides(new Set(ready.filter((l) => isAgeGated(l.createdAt)).map((l) => l.id)));
+  };
+
   return (
     <div>
       <div className="dx-review-bar">
-        <span className="dx-review-pos">{ids.length} selected</span>
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--dx-text-2)" }}>
+          <input
+            type="checkbox"
+            checked={allSelected}
+            ref={(el) => { if (el) el.indeterminate = !allSelected && !noneSelected; }}
+            onChange={handleSelectAll}
+            disabled={sending || ready.length === 0}
+            aria-label="Select all"
+          />
+          Select all
+        </label>
+        <span className="dx-review-pos" style={{ marginLeft: 8 }}>{ids.length} selected</span>
         <span className="dx-review-sub">
-          of {ready.length} ready · {ready.filter((l) => isAgeGated(l.createdAt)).length} need
-          override
+          of {ready.length} ready{gatedCount > 0 ? ` · ${gatedCount} need override` : ""}
         </span>
         <div className="dx-review-spacer" />
-        <button
-          type="button"
-          className="dx-secondary"
-          onClick={() => setSelected(new Set(ready.filter((l) => !isAgeGated(l.createdAt)).map((l) => l.id)))}
-          disabled={sending}
-        >
-          Reset selection
-        </button>
         <button
           type="button"
           className="dx-primary"
@@ -152,7 +180,8 @@ export function BulkPane({ leads, onDone, onError }: Props) {
           disabled={sending || ids.length === 0}
         >
           {sending ? <Loader2 className="animate-spin" /> : <Send />}
-          Send all selected ({ids.length})
+          Send {ids.length > 0 ? `${ids.length} ` : ""}
+          {ids.length === 1 ? "email" : "emails"}
         </button>
       </div>
 
