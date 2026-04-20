@@ -1,31 +1,39 @@
 import { NextRequest, NextResponse } from "next/server";
+import bcrypt from "bcryptjs";
 import { supabase } from "@/lib/db";
-import { signSession, checkPassword, AUTH_COOKIE, AUTH_COOKIE_MAX_AGE } from "@/lib/auth";
+import { signSession, AUTH_COOKIE, AUTH_COOKIE_MAX_AGE } from "@/lib/auth";
 
 export async function POST(req: NextRequest) {
-  const { password, repId } = (await req.json()) as { password?: string; repId?: number };
+  const { email, password } = (await req.json()) as { email?: string; password?: string };
 
-  if (!password || typeof password !== "string") {
-    return NextResponse.json({ error: "Missing password" }, { status: 400 });
+  if (typeof email !== "string" || typeof password !== "string" || !email || !password) {
+    return NextResponse.json({ error: "Email and password required" }, { status: 400 });
   }
-  if (typeof repId !== "number") {
-    return NextResponse.json({ error: "Pick who you are" }, { status: 400 });
-  }
-  if (!checkPassword(password)) {
-    return NextResponse.json({ error: "Wrong password" }, { status: 401 });
-  }
+
+  const normalized = email.trim().toLowerCase();
 
   const { data: rep } = await supabase
     .from("sales_reps")
-    .select("id,name,active")
-    .eq("id", repId)
+    .select("id,name,login_email,password_hash,active")
+    .ilike("login_email", normalized)
     .single();
 
-  if (!rep || !rep.active) {
-    return NextResponse.json({ error: "Unknown rep" }, { status: 404 });
+  // Always compare against a valid hash to keep timing constant — defends
+  // against email-enumeration. The dummy hash is bcrypt(""), 10 rounds.
+  const dummy = "$2b$10$abcdefghijklmnopqrstuO0a4DV5kCmwk2OW.aBp99oeVXfApEZAi";
+  const hashToCompare = rep?.password_hash || dummy;
+  const ok = await bcrypt.compare(password, hashToCompare);
+
+  if (!rep || !rep.active || !rep.password_hash || !ok) {
+    return NextResponse.json({ error: "Invalid email or password" }, { status: 401 });
   }
 
-  const token = signSession({ repId: rep.id, repName: rep.name });
+  const token = await signSession({
+    repId: rep.id,
+    repName: rep.name,
+    email: rep.login_email,
+  });
+
   const res = NextResponse.json({ success: true, repId: rep.id, repName: rep.name });
   res.cookies.set(AUTH_COOKIE, token, {
     httpOnly: true,

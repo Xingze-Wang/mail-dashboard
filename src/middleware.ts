@@ -11,23 +11,22 @@ const PUBLIC_PREFIXES = [
   "/favicon",
 ];
 
-export function middleware(req: NextRequest) {
+export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
   const reqHeaders = new Headers(req.headers);
   reqHeaders.set("x-pathname", pathname);
 
-  if (PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))) {
-    return NextResponse.next({ request: { headers: reqHeaders } });
-  }
-  if (pathname.includes(".")) {
+  const isPublic = PUBLIC_PREFIXES.some((p) => pathname.startsWith(p)) || pathname.includes(".");
+  if (isPublic) {
     return NextResponse.next({ request: { headers: reqHeaders } });
   }
 
   const token = req.cookies.get(AUTH_COOKIE)?.value;
-  const session = verifySession(token);
+  const session = await verifySession(token);
   if (session) {
     reqHeaders.set("x-rep-id", String(session.repId));
     reqHeaders.set("x-rep-name", session.repName);
+    reqHeaders.set("x-rep-email", session.email);
     return NextResponse.next({ request: { headers: reqHeaders } });
   }
 

@@ -1,68 +1,44 @@
-import { createHmac, timingSafeEqual } from "crypto";
+import { SignJWT, jwtVerify } from "jose";
 
 const COOKIE_NAME = "qiji_session";
 const SESSION_DAYS = 30;
-const SESSION_MS = SESSION_DAYS * 86_400_000;
+const ALG = "HS256";
 
-function secret(): string {
-  return process.env.AUTH_SECRET || process.env.AUTH_PASSWORD || "qiji-dev-secret-change-me";
-}
-
-function b64url(buf: Buffer | string): string {
-  return (typeof buf === "string" ? Buffer.from(buf) : buf)
-    .toString("base64")
-    .replace(/=+$/, "")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_");
-}
-
-function b64urlDecode(s: string): Buffer {
-  const pad = s.length % 4 === 0 ? "" : "=".repeat(4 - (s.length % 4));
-  return Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/") + pad, "base64");
+function getKey(): Uint8Array {
+  const secret = process.env.AUTH_SECRET;
+  if (!secret) throw new Error("AUTH_SECRET env var is required");
+  return new TextEncoder().encode(secret);
 }
 
 export interface SessionPayload {
   repId: number;
   repName: string;
-  exp: number;
+  email: string;
 }
 
-export function signSession(payload: Omit<SessionPayload, "exp">): string {
-  const full: SessionPayload = { ...payload, exp: Date.now() + SESSION_MS };
-  const body = b64url(JSON.stringify(full));
-  const sig = b64url(createHmac("sha256", secret()).update(body).digest());
-  return `${body}.${sig}`;
+export async function signSession(payload: SessionPayload): Promise<string> {
+  return await new SignJWT({ ...payload })
+    .setProtectedHeader({ alg: ALG })
+    .setIssuedAt()
+    .setExpirationTime(`${SESSION_DAYS}d`)
+    .sign(getKey());
 }
 
-export function verifySession(token: string | undefined): SessionPayload | null {
+export async function verifySession(token: string | undefined): Promise<SessionPayload | null> {
   if (!token) return null;
-  const [body, sig] = token.split(".");
-  if (!body || !sig) return null;
-  const expected = createHmac("sha256", secret()).update(body).digest();
-  let actual: Buffer;
   try {
-    actual = b64urlDecode(sig);
+    const { payload } = await jwtVerify(token, getKey(), { algorithms: [ALG] });
+    if (
+      typeof payload.repId === "number" &&
+      typeof payload.repName === "string" &&
+      typeof payload.email === "string"
+    ) {
+      return { repId: payload.repId, repName: payload.repName, email: payload.email };
+    }
+    return null;
   } catch {
     return null;
   }
-  if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) return null;
-  try {
-    const payload = JSON.parse(b64urlDecode(body).toString()) as SessionPayload;
-    if (typeof payload.exp !== "number" || payload.exp < Date.now()) return null;
-    if (typeof payload.repId !== "number" || typeof payload.repName !== "string") return null;
-    return payload;
-  } catch {
-    return null;
-  }
-}
-
-export function checkPassword(input: string): boolean {
-  const expected = process.env.AUTH_PASSWORD;
-  if (!expected) return false;
-  const a = Buffer.from(input);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length) return false;
-  return timingSafeEqual(a, b);
 }
 
 export const AUTH_COOKIE = COOKIE_NAME;
