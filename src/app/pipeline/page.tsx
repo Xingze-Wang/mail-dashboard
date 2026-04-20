@@ -53,6 +53,7 @@ import { LeadRow } from "./LeadRow";
 import { DiscoveryCard } from "./DiscoveryCard";
 import { AddLeadModal } from "./AddLeadModal";
 import { paletteFor, initialsFor } from "./repColors";
+import { isAgeGated } from "@/lib/policy";
 
 const ChannelsTab = dynamic(() => import("./ChannelsTab").then((m) => m.ChannelsTab), {
   loading: () => <TabLoader />,
@@ -60,6 +61,33 @@ const ChannelsTab = dynamic(() => import("./ChannelsTab").then((m) => m.Channels
 const SalesTab = dynamic(() => import("./SalesTab").then((m) => m.SalesTab), {
   loading: () => <TabLoader />,
 });
+const ReviewPane = dynamic(() => import("./ReviewPane").then((m) => m.ReviewPane), {
+  loading: () => <TabLoader />,
+});
+const BulkPane = dynamic(() => import("./BulkPane").then((m) => m.BulkPane), {
+  loading: () => <TabLoader />,
+});
+
+/* Send-mode toggle (Browse / Review / Bulk). Mode lives in the URL hash so
+   the user's choice survives reloads. */
+const SEND_MODES = [
+  { key: "browse", label: "Browse" },
+  { key: "review", label: "Review" },
+  { key: "bulk", label: "Bulk" },
+] as const;
+type SendMode = (typeof SEND_MODES)[number]["key"];
+
+function readModeFromHash(): SendMode {
+  if (typeof window === "undefined") return "browse";
+  const m = /(?:^|&)mode=(browse|review|bulk)/.exec(window.location.hash.slice(1));
+  return (m?.[1] as SendMode) || "browse";
+}
+function writeModeToHash(mode: SendMode) {
+  if (typeof window === "undefined") return;
+  const frag = mode === "browse" ? "" : `mode=${mode}`;
+  const url = `${window.location.pathname}${window.location.search}${frag ? `#${frag}` : ""}`;
+  window.history.replaceState(null, "", url);
+}
 
 /* ── CSV export helpers (preserved) ──────────────────────────────────── */
 
@@ -274,11 +302,20 @@ export default function PipelinePage() {
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
   const [batchSending, setBatchSending] = useState(false);
   const [activeTab, setActiveTab] = useState<"leads" | "channels" | "sales">("leads");
+  const [sendMode, setSendMode] = useState<SendMode>("browse");
   const [reps, setReps] = useState<Rep[]>([]);
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
 
   const hasInitialised = useRef(false);
+
+  // Hydrate mode from URL hash on mount, then persist on every change.
+  useEffect(() => {
+    setSendMode(readModeFromHash());
+  }, []);
+  useEffect(() => {
+    writeModeToHash(sendMode);
+  }, [sendMode]);
 
   /* ── Fetchers ────────────────────────────────────────────────────── */
 
@@ -428,8 +465,14 @@ export default function PipelinePage() {
 
   /* ── Batch actions ───────────────────────────────────────────────── */
 
+  // Browse-mode batch banner: excludes age-gated leads. Operators who want
+  // to send under-7d leads should use Bulk mode (per-lead override) or the
+  // per-row override button on the card itself.
   const batchLeads = useMemo(
-    () => sortedArxiv.filter((l) => canSend(l).ok && !excluded.has(l.id)),
+    () =>
+      sortedArxiv.filter(
+        (l) => canSend(l).ok && !excluded.has(l.id) && !isAgeGated(l.createdAt),
+      ),
     [sortedArxiv, excluded],
   );
   const batchStrong = batchLeads.filter((l) => l.leadTier === "strong").length;
@@ -480,13 +523,13 @@ export default function PipelinePage() {
     }
   };
 
-  const handleSend = useCallback(async (lead: Lead) => {
+  const handleSend = useCallback(async (lead: Lead, override?: boolean) => {
     setSending(lead.id);
     try {
       const res = await fetch("/api/pipeline/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: lead.id }),
+        body: JSON.stringify({ id: lead.id, override: override === true }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -589,10 +632,9 @@ export default function PipelinePage() {
   }, [fetchLeads, refreshAnalytics, toast]);
 
   const handleDiscoveryAction = useCallback(
-    (action: "find" | "promote" | "mute" | "view", lead: DiscoveryLead) => {
+    (action: "find" | "mute" | "view", lead: DiscoveryLead) => {
       const labels: Record<typeof action, string> = {
         find: "Find email",
-        promote: "Promote to lead",
         mute: "Mute",
         view: "View profile",
       };
@@ -604,6 +646,26 @@ export default function PipelinePage() {
     },
     [toast],
   );
+
+  const handleDiscoveryPromoted = useCallback(() => {
+    // Discovery row got stamped promoted_at + a new pipeline_leads row was
+    // created. Refresh both streams so the card disappears from the
+    // discovery side and shows up under arXiv-shaped leads.
+    fetchDiscovery();
+    fetchLeads();
+    refreshAnalytics();
+  }, [fetchDiscovery, fetchLeads, refreshAnalytics]);
+
+  // Listen for window-wide refresh requests (DiscoveryCard dispatches this
+  // after a successful promote so any other mounted view can react too).
+  useEffect(() => {
+    const handler = () => {
+      fetchDiscovery();
+      fetchLeads();
+    };
+    window.addEventListener("pipeline:refresh", handler);
+    return () => window.removeEventListener("pipeline:refresh", handler);
+  }, [fetchDiscovery, fetchLeads]);
 
   /* ── Stat strip data ────────────────────────────────────────────── */
 
@@ -723,6 +785,32 @@ export default function PipelinePage() {
       {/* ════ LEADS ════ */}
       {activeTab === "leads" && (
         <>
+          {/* Send-mode toggle (Browse / Review / Bulk) */}
+          <div className="dx-mode-row">
+            <span className="dx-mode-label">Mode</span>
+            <div className="dx-chip-group" role="tablist" aria-label="Send mode">
+              {SEND_MODES.map((m) => (
+                <button
+                  key={m.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={sendMode === m.key}
+                  onClick={() => setSendMode(m.key)}
+                  className={`dx-chip ${sendMode === m.key ? "active" : ""}`}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+            {sendMode !== "browse" && (
+              <span className="dx-mode-hint">
+                {sendMode === "review"
+                  ? "Focused review · J/K to navigate · Cmd+Enter to send"
+                  : "Bulk send · select rows then confirm"}
+              </span>
+            )}
+          </div>
+
           {/* Channel filter bar */}
           <div className="dx-channel-bar">
             {CHANNELS.map((c) => (
@@ -791,7 +879,7 @@ export default function PipelinePage() {
           </div>
 
           {/* Batch send banner — only meaningful when arXiv-ready slice is visible */}
-          {showArxiv && batchLeads.length > 0 && (statusFilter === "all" || statusFilter === "ready") && (
+          {sendMode === "browse" && showArxiv && batchLeads.length > 0 && (statusFilter === "all" || statusFilter === "ready") && (
             <div className="action-banner" style={{ marginBottom: 16, marginTop: 4 }}>
               <div className="action-banner-icon">
                 <Send style={{ width: 18, height: 18 }} />
@@ -818,7 +906,35 @@ export default function PipelinePage() {
             </div>
           )}
 
-          {/* Stream */}
+          {/* Review / Bulk modes replace the Browse stream entirely. */}
+          {sendMode === "review" && !loading && (
+            <ReviewPane
+              leads={sortedArxiv}
+              onExit={() => setSendMode("browse")}
+              onSent={(lead) => {
+                toast({ variant: "success", title: "Email sent", description: lead.authorEmail });
+                fetchLeads();
+              }}
+              onSkipped={() => fetchLeads()}
+            />
+          )}
+          {sendMode === "bulk" && !loading && (
+            <BulkPane
+              leads={sortedArxiv}
+              onDone={(sent, skipped) => {
+                toast({
+                  variant: "success",
+                  title: `Sent ${sent}`,
+                  description: skipped ? `${skipped} skipped` : undefined,
+                });
+                fetchLeads();
+              }}
+              onError={(msg) => toast({ variant: "error", title: "Batch send failed", description: msg })}
+            />
+          )}
+
+          {/* Browse-mode stream */}
+          {sendMode === "browse" && (
           <div className="dx-stream">
             {loading ? (
               <>
@@ -893,11 +1009,17 @@ export default function PipelinePage() {
                   />
                 ))}
                 {sortedDiscovery.map((d) => (
-                  <DiscoveryCard key={`${d.source}:${d.id}`} lead={d} onAction={handleDiscoveryAction} />
+                  <DiscoveryCard
+                    key={`${d.source}:${d.id}`}
+                    lead={d}
+                    onAction={handleDiscoveryAction}
+                    onPromoted={handleDiscoveryPromoted}
+                  />
                 ))}
               </>
             )}
           </div>
+          )}
         </>
       )}
 

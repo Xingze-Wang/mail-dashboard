@@ -4,11 +4,12 @@ import { resend } from "@/lib/resend";
 import { recordContact } from "@/lib/scanner";
 import { getRep } from "@/lib/assignment";
 import { checkSendAllowed, SEND_MIN_AGE_DAYS, CONTACT_DEDUP_DAYS } from "@/lib/contact-guard";
+import { MIN_AGE_DAYS, leadAgeDays } from "@/lib/policy";
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { id } = body;
+    const { id, override } = body as { id?: string; override?: boolean };
 
     if (!id) {
       return NextResponse.json({ error: "Missing required field: id" }, { status: 400 });
@@ -22,6 +23,25 @@ export async function POST(req: NextRequest) {
 
     if (!lead) {
       return NextResponse.json({ error: "Lead not found" }, { status: 404 });
+    }
+
+    // 7-day age gate (hard enforcement). Anchored on lead.created_at so
+    // newly-imported leads cool off in the queue before going out, even if
+    // the underlying paper is older. Operators can pass {override: true}
+    // per-lead from the UI to bypass.
+    if (!override) {
+      const ageDays = leadAgeDays(lead.created_at);
+      if (ageDays < MIN_AGE_DAYS) {
+        return NextResponse.json(
+          {
+            error: `Lead is ${ageDays.toFixed(1)} days old, minimum is ${MIN_AGE_DAYS}. Pass {override: true} per lead to send anyway.`,
+            code: "age_gate",
+            leadId: id,
+            ageDays,
+          },
+          { status: 422 },
+        );
+      }
     }
 
     const guard = await checkSendAllowed(lead);

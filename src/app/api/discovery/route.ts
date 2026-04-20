@@ -10,11 +10,15 @@ import { DISCOVERY_SOURCES, type SourceCode } from "@/lib/sources";
  * write to `discovery_leads`; this surfaces those rows for the dashboard.
  *
  * Query params:
- *   source    optional, comma-separated list (e.g. "hf,ph")
- *   minScore  optional, default 0
- *   hasEmail  optional, "yes" | "no" (unset = no filter)
- *   limit     default 100, max 500
- *   offset    default 0
+ *   source           optional, comma-separated list (e.g. "hf,ph")
+ *   minScore         optional, default 0
+ *   hasEmail         optional, "yes" | "no" (unset = no filter)
+ *   includePromoted  optional, "true" to include rows with promoted_at != null
+ *                    (default: hide them — once promoted they live in
+ *                    pipeline_leads and showing them in both lists would be
+ *                    confusing)
+ *   limit            default 100, max 500
+ *   offset           default 0
  *
  * Response:
  *   {
@@ -40,6 +44,7 @@ export async function GET(req: NextRequest) {
   const minScoreRaw = sp.get("minScore");
   const minScore = minScoreRaw !== null ? Number(minScoreRaw) : 0;
   const hasEmail = sp.get("hasEmail"); // "yes" | "no" | null
+  const includePromoted = sp.get("includePromoted") === "true";
 
   const limitRaw = sp.get("limit");
   const limit = Math.min(
@@ -65,6 +70,10 @@ export async function GET(req: NextRequest) {
   }
   if (hasEmail === "yes") q = q.not("email", "is", null);
   if (hasEmail === "no") q = q.is("email", null);
+  // Promoted rows already live in pipeline_leads — exclude by default so
+  // the discovery stream doesn't double-show them. Pass ?includePromoted=true
+  // to inspect history.
+  if (!includePromoted) q = q.is("promoted_at", null);
 
   const { data: rows, count, error } = await q;
 

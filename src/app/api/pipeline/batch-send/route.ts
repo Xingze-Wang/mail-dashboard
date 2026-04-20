@@ -4,15 +4,22 @@ import { resend } from "@/lib/resend";
 import { recordContact } from "@/lib/scanner";
 import { getRep } from "@/lib/assignment";
 import { checkSendAllowed } from "@/lib/contact-guard";
+import { MIN_AGE_DAYS, leadAgeDays } from "@/lib/policy";
 
 /**
  * POST /api/pipeline/batch-send
  * Send multiple leads at once.
- * Body: { ids: string[] }
+ * Body: { ids: string[], overrides?: string[] }
+ *   - `overrides` is an opt-in list of lead ids permitted to bypass the
+ *     7-day age gate. Any id not present in overrides is rejected if it
+ *     is younger than MIN_AGE_DAYS.
  */
 export async function POST(req: NextRequest) {
   try {
-    const { ids } = await req.json();
+    const { ids, overrides } = (await req.json()) as {
+      ids?: string[];
+      overrides?: string[];
+    };
 
     if (!ids || !Array.isArray(ids) || ids.length === 0) {
       return NextResponse.json({ error: "Missing ids array" }, { status: 400 });
@@ -21,6 +28,8 @@ export async function POST(req: NextRequest) {
     if (ids.length > 50) {
       return NextResponse.json({ error: "Max 50 at a time" }, { status: 400 });
     }
+
+    const overrideSet = new Set(Array.isArray(overrides) ? overrides : []);
 
     let sent = 0;
     let skipped = 0;
@@ -38,6 +47,16 @@ export async function POST(req: NextRequest) {
         errors.push(`${id}: not found`);
         skipped++;
         continue;
+      }
+
+      // 7-day age gate (per-lead override allowed). Anchored on created_at.
+      if (!overrideSet.has(id)) {
+        const ageDays = leadAgeDays(lead.created_at);
+        if (ageDays < MIN_AGE_DAYS) {
+          skipped++;
+          blocks["age_gate"] = (blocks["age_gate"] || 0) + 1;
+          continue;
+        }
       }
 
       const guard = await checkSendAllowed(lead);

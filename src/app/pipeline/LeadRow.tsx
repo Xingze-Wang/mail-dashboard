@@ -20,6 +20,7 @@ import {
 import { sanitizeHtml } from "@/lib/sanitize";
 import { Lead, Rep, canSend } from "./types";
 import { colorForRep, initialsFor } from "./repColors";
+import { isAgeGated, leadAgeDays, MIN_AGE_DAYS } from "@/lib/policy";
 
 interface Props {
   lead: Lead;
@@ -30,7 +31,7 @@ interface Props {
   showStatusBadge: boolean;
   onToggleExpand: (id: string) => void;
   onToggleExclude: (id: string) => void;
-  onSend: (lead: Lead) => void;
+  onSend: (lead: Lead, override?: boolean) => void;
   onSkip: (id: string) => void;
   onRepChange: (leadId: string, repId: number) => void;
   onSaveEdit: (id: string, subject: string, html: string) => Promise<void>;
@@ -115,6 +116,12 @@ function LeadRowInner({
   const [editSubject, setEditSubject] = useState(lead.draftSubject || "");
   const [editHtml, setEditHtml] = useState(lead.draftHtml || "");
   const [saving, setSaving] = useState(false);
+  const [overrideArmed, setOverrideArmed] = useState(false);
+
+  // 7-day age-gate (UX hint — server is the final word). Anchored on
+  // created_at, distinct from canSend()'s published_at check.
+  const ageGated = isAgeGated(lead.createdAt);
+  const ageDaysFloor = Math.floor(leadAgeDays(lead.createdAt));
 
   const startEdit = () => {
     setEditSubject(lead.draftSubject || "");
@@ -352,15 +359,51 @@ function LeadRowInner({
               >
                 <X style={{ width: 13, height: 13 }} />
               </button>
-              <button
-                type="button"
-                className="dx-primary"
-                disabled={!sendCheck.ok || isSending}
-                onClick={() => onSend(lead)}
-              >
-                {isSending ? <Loader2 className="animate-spin" /> : <Send />}
-                Send
-              </button>
+              {ageGated ? (
+                overrideArmed ? (
+                  <>
+                    <button
+                      type="button"
+                      className="dx-ghost"
+                      onClick={() => setOverrideArmed(false)}
+                      disabled={isSending}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className="dx-primary"
+                      disabled={isSending}
+                      onClick={() => onSend(lead, true)}
+                      title={`Override the ${MIN_AGE_DAYS}-day rule`}
+                    >
+                      {isSending ? <Loader2 className="animate-spin" /> : <Send />}
+                      Override and send
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    className="dx-secondary"
+                    disabled={isSending}
+                    onClick={() => setOverrideArmed(true)}
+                    title={`${ageDaysFloor}d old — needs override`}
+                  >
+                    <Send />
+                    {ageDaysFloor}d old · override
+                  </button>
+                )
+              ) : (
+                <button
+                  type="button"
+                  className="dx-primary"
+                  disabled={!sendCheck.ok || isSending}
+                  onClick={() => onSend(lead)}
+                >
+                  {isSending ? <Loader2 className="animate-spin" /> : <Send />}
+                  Send
+                </button>
+              )}
             </>
           )}
 

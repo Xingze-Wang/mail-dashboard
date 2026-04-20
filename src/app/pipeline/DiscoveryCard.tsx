@@ -7,19 +7,23 @@
  * the same dx-card geometry as the paper-shaped LeadRow, but with handle
  * + signal chips + bio + contact hints instead of paper title + draft.
  *
- * Action handlers are mostly stubs — the discovery → pipeline_leads
- * promotion path lives in the Python scrapers + a dedicated POST endpoint
- * that doesn't exist yet. We surface the buttons so the layout matches
- * the mockup; clicks toast "Coming soon". `View profile` opens the row's
- * profileUrl in a new tab.
+ * Promote: clicking "Promote to lead" opens an inline modal that asks for
+ * the rep's discovered email, then POSTs to /api/discovery/[id]/promote.
+ * On success the card asks the parent to refresh (so the discovery row
+ * disappears and the freshly created pipeline_leads row shows up) and
+ * dispatches a window `pipeline:refresh` event so other listeners can
+ * follow along. `View profile` opens `profileUrl` in a new tab; the
+ * remaining actions (find email, mute) still toast "Coming soon" via the
+ * parent.
  */
 
-import { memo, useMemo } from "react";
+import { memo, useCallback, useMemo, useState } from "react";
 import {
-  Globe, CheckCircle2, MapPin, ExternalLink, Search,
+  Globe, CheckCircle2, MapPin, ExternalLink, Search, Loader2, X,
 } from "lucide-react";
 import { DiscoveryLead } from "./types";
 import { SOURCE_LABELS, type SourceCode } from "@/lib/sources";
+import { useToast } from "@/components/ui/toaster";
 
 /* Inline brand-icon SVGs — lucide-react in this project doesn't ship the
    Twitter / X mark, so we inline the same path used in redesign-D.html. */
@@ -29,9 +33,19 @@ const TwitterIcon = () => (
   </svg>
 );
 
+export interface PromoteResult {
+  pipelineLeadId: string | null;
+  repId: number | null;
+  repName: string | null;
+  leadTier: "strong" | "normal";
+}
+
 interface Props {
   lead: DiscoveryLead;
-  onAction: (action: "find" | "promote" | "mute" | "view", lead: DiscoveryLead) => void;
+  /** Stub actions still routed to the parent (find email / mute). */
+  onAction: (action: "find" | "mute" | "view", lead: DiscoveryLead) => void;
+  /** Called after a successful promote. Parent should re-fetch lists. */
+  onPromoted?: (lead: DiscoveryLead, result: PromoteResult) => void;
 }
 
 function relativeTime(iso: string | null): string {
@@ -186,12 +200,18 @@ function pickContactHints(lead: DiscoveryLead): Array<{ icon: "twitter" | "globe
   return hints;
 }
 
-function DiscoveryCardInner({ lead, onAction }: Props) {
+function DiscoveryCardInner({ lead, onAction, onPromoted }: Props) {
   const variant = srcBadgeClass(lead.source);
   const label = sourceLabel(lead.source);
   const chips = useMemo(() => buildSignalChips(lead), [lead]);
   const headMeta = useMemo(() => buildHeadMeta(lead), [lead]);
   const hints = useMemo(() => pickContactHints(lead), [lead]);
+  const { toast } = useToast();
+
+  const [promoteOpen, setPromoteOpen] = useState(false);
+  const [promoteEmail, setPromoteEmail] = useState(lead.email ?? "");
+  const [promoting, setPromoting] = useState(false);
+  const [promoteError, setPromoteError] = useState<string | null>(null);
 
   const handle = useMemo(() => {
     const ext = lead.externalId;
@@ -199,6 +219,86 @@ function DiscoveryCardInner({ lead, onAction }: Props) {
     if (variant === "gh" && ext.includes("/")) return ext;
     return ext.startsWith("@") ? ext : `@${ext}`;
   }, [variant, lead.externalId]);
+
+  const openPromote = useCallback(() => {
+    setPromoteEmail(lead.email ?? "");
+    setPromoteError(null);
+    setPromoteOpen(true);
+  }, [lead.email]);
+
+  const closePromote = useCallback(() => {
+    if (promoting) return;
+    setPromoteOpen(false);
+    setPromoteError(null);
+  }, [promoting]);
+
+  const submitPromote = useCallback(async () => {
+    const email = promoteEmail.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setPromoteError("Enter a valid email address");
+      return;
+    }
+
+    setPromoting(true);
+    setPromoteError(null);
+
+    try {
+      const res = await fetch(`/api/discovery/${lead.id}/promote`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const data = await res.json().catch(() => ({} as Record<string, unknown>));
+
+      if (res.status === 409) {
+        toast({ variant: "info", title: "Already in pipeline" });
+        setPromoteOpen(false);
+        // Still trigger a refresh so the discovery row disappears if the
+        // server already stamped promoted_at.
+        onPromoted?.(lead, {
+          pipelineLeadId: (data as { existingPipelineLeadId?: string }).existingPipelineLeadId ?? null,
+          repId: null,
+          repName: null,
+          leadTier: "normal",
+        });
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new CustomEvent("pipeline:refresh"));
+        }
+        return;
+      }
+
+      if (!res.ok || !(data as { success?: boolean }).success) {
+        const msg = (data as { error?: string }).error || `Promote failed (${res.status})`;
+        setPromoteError(msg);
+        toast({ variant: "error", title: "Promote failed", description: msg });
+        return;
+      }
+
+      const result = data as PromoteResult & { repName: string | null; success: true };
+      toast({
+        variant: "success",
+        title: result.repName
+          ? `Promoted to ${result.repName} (${result.leadTier})`
+          : `Promoted (${result.leadTier})`,
+      });
+      setPromoteOpen(false);
+      onPromoted?.(lead, {
+        pipelineLeadId: result.pipelineLeadId,
+        repId: result.repId,
+        repName: result.repName,
+        leadTier: result.leadTier,
+      });
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("pipeline:refresh"));
+      }
+    } catch {
+      const msg = "Network error";
+      setPromoteError(msg);
+      toast({ variant: "error", title: "Promote failed", description: msg });
+    } finally {
+      setPromoting(false);
+    }
+  }, [promoteEmail, lead, onPromoted, toast]);
 
   return (
     <div className="dx-card discovered">
@@ -297,17 +397,106 @@ function DiscoveryCardInner({ lead, onAction }: Props) {
             </a>
           )}
           {lead.email ? (
-            <button type="button" className="dx-primary" onClick={() => onAction("promote", lead)}>
+            <button type="button" className="dx-primary" onClick={openPromote}>
               Promote to lead
             </button>
           ) : (
-            <button type="button" className="dx-primary find" onClick={() => onAction("find", lead)}>
-              <Search />
-              Find email
-            </button>
+            <>
+              <button type="button" className="dx-primary find" onClick={() => onAction("find", lead)}>
+                <Search />
+                Find email
+              </button>
+              <button type="button" className="dx-secondary" onClick={openPromote}>
+                Promote…
+              </button>
+            </>
           )}
         </div>
       </div>
+
+      {promoteOpen && (
+        <div
+          className="dx-promote-popover"
+          style={{
+            marginTop: 12,
+            padding: 12,
+            border: "1px solid var(--dx-border)",
+            borderRadius: 8,
+            background: "var(--dx-card-bg, #FFFFFF)",
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: "var(--dx-text-1, #1A1A1A)" }}>
+              Email address for {lead.fullname || lead.externalId}:
+            </span>
+            <button
+              type="button"
+              onClick={closePromote}
+              aria-label="Close"
+              style={{
+                background: "transparent",
+                border: "none",
+                cursor: promoting ? "not-allowed" : "pointer",
+                color: "var(--dx-text-3, #6B7280)",
+                padding: 2,
+                lineHeight: 0,
+              }}
+              disabled={promoting}
+            >
+              <X width={12} height={12} />
+            </button>
+          </div>
+          <input
+            type="email"
+            value={promoteEmail}
+            onChange={(e) => setPromoteEmail(e.target.value)}
+            placeholder="founder@startup.com"
+            autoFocus
+            disabled={promoting}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") submitPromote();
+              if (e.key === "Escape") closePromote();
+            }}
+            style={{
+              fontSize: 13,
+              padding: "6px 8px",
+              border: "1px solid var(--dx-border)",
+              borderRadius: 6,
+              background: "var(--dx-bg, #F8F8F4)",
+              color: "var(--dx-text-1, #1A1A1A)",
+              width: "100%",
+              outline: "none",
+            }}
+          />
+          {promoteError && (
+            <span style={{ fontSize: 11, color: "var(--coral, #DC2626)" }}>
+              {promoteError}
+            </span>
+          )}
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <button
+              type="button"
+              className="dx-ghost"
+              onClick={closePromote}
+              disabled={promoting}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="dx-primary"
+              onClick={submitPromote}
+              disabled={promoting || promoteEmail.trim().length === 0}
+            >
+              {promoting ? <Loader2 className="animate-spin" width={12} height={12} /> : null}
+              {promoting ? "Promoting…" : "Promote"}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

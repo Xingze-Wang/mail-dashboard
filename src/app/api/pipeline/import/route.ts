@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { wasRecentlyContacted } from "@/lib/contact-guard";
+import { lookupAuthor } from "@/lib/semantic-scholar";
+import {
+  getAssignmentConfig,
+  classifyLead,
+  assignRep,
+} from "@/lib/assignment";
 
 /**
  * POST /api/pipeline/import
@@ -62,6 +68,9 @@ export async function POST(req: NextRequest) {
     const errors: string[] = [];
     const blockedByGuard: { email: string; lastContactedAt: string }[] = [];
 
+    // Load assignment config once for the whole batch
+    const config = await getAssignmentConfig();
+
     for (const lead of leads) {
       const email = lead.authorEmail as string;
       if (!email) {
@@ -82,6 +91,32 @@ export async function POST(req: NextRequest) {
 
       const title = (lead.title as string) || "(untitled)";
       const source = (lead.source as string) || "external";
+      const authorName = (lead.authorName as string) || null;
+      const schoolTier = (lead.schoolTier as number) || null;
+
+      // Semantic Scholar enrichment (best-effort) — mirrors scan/route.ts.
+      // Needed here so Python-imported leads get citation_count and therefore
+      // classify correctly; without it, high-citation authors missing a
+      // school_tier match would silently fall through to 'normal'.
+      let s2: Awaited<ReturnType<typeof lookupAuthor>> = null;
+      if (authorName) {
+        try {
+          s2 = await lookupAuthor(title, authorName);
+        } catch {
+          // S2 failure is non-blocking — classify will just see citation=null
+        }
+      }
+
+      const citationCount = s2?.citationCount ?? null;
+      const hIndex = s2?.hIndex ?? null;
+
+      const leadTier = classifyLead(config, {
+        citationCount,
+        hIndex,
+        schoolTier,
+        authorEmail: email,
+      });
+      const assignedRepId = assignRep(config, leadTier, email);
 
       // Generate a unique ID if no arxivId provided
       const arxivId = (lead.arxivId as string) ||
@@ -93,14 +128,14 @@ export async function POST(req: NextRequest) {
         arxiv_id: arxivId,
         title,
         abstract: (lead.abstract as string) || null,
-        authors: (lead.authorName as string) || null,
+        authors: authorName,
         pdf_url: (lead.pdfUrl as string) || null,
         published_at: (lead.publishedAt as string) || null,
-        author_name: (lead.authorName as string) || null,
+        author_name: authorName,
         author_email: email,
         first_name: (lead.firstName as string) || null,
         school_name: (lead.schoolName as string) || null,
-        school_tier: (lead.schoolTier as number) || null,
+        school_tier: schoolTier,
         compute_level: (lead.computeLevel as string) || null,
         compute_confidence: (lead.computeConfidence as number) || null,
         compute_reason: (lead.computeReason as string) || null,
@@ -109,6 +144,12 @@ export async function POST(req: NextRequest) {
         draft_html: (lead.draftHtml as string) || null,
         status: hasDraft ? "ready" : "new",
         source,
+        s2_author_id: s2?.authorId ?? null,
+        h_index: hIndex,
+        citation_count: citationCount,
+        paper_count: s2?.paperCount ?? null,
+        lead_tier: leadTier,
+        assigned_rep_id: assignedRepId,
       });
 
       if (error) {
