@@ -99,7 +99,10 @@ export async function POST(req: NextRequest) {
       // Paper firewall — has ANY co-author of this paper been contacted in
       // 365 days? Prevents the "different author, same paper" loophole that
       // pipeline_leads dedup misses if the row was deleted/skipped.
-      const incomingArxivIdRaw = (lead.arxivId as string) || null;
+      // Try arxivId first; if absent, derive from pdfUrl. Both go through
+      // canonicalize so format variants collapse to the same string.
+      const incomingArxivIdRaw =
+        (lead.arxivId as string) || (lead.pdfUrl as string) || null;
       const arxivIdCanonical = canonicalizeArxivId(incomingArxivIdRaw);
       if (arxivIdCanonical && arxivIdCanonical.match(/^\d{4}\.\d{4,5}/)) {
         const paperHit = await paperWasRecentlyContacted(arxivIdCanonical);
