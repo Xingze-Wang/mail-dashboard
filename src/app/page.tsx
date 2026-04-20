@@ -7,7 +7,6 @@ import {
   MousePointerClick,
   AlertTriangle,
   Inbox,
-  Zap,
   TrendingUp,
   MessageCircle,
 } from "lucide-react";
@@ -175,36 +174,6 @@ export default function OverviewPage() {
           </div>
         ))}
       </div>
-
-      {/* ── Pipeline Stats ── */}
-      {metrics.pipeline && metrics.pipeline.total > 0 && (
-        <div className="section-card" style={{ marginBottom: 24 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
-            <Zap style={{ width: 16, height: 16, color: "var(--gold)" }} />
-            <h3 style={{ marginBottom: 0 }}>Pipeline</h3>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 24 }}>
-            <div>
-              <div className="stat-label" style={{ marginBottom: 6 }}>Ready to Send</div>
-              <div style={{ fontFamily: "var(--font-heading)", fontSize: 22, fontWeight: 600, color: "var(--blue)", letterSpacing: "-0.01em" }}>
-                {metrics.pipeline.ready}
-              </div>
-            </div>
-            <div>
-              <div className="stat-label" style={{ marginBottom: 6 }}>Sent</div>
-              <div style={{ fontFamily: "var(--font-heading)", fontSize: 22, fontWeight: 600, color: "var(--green)", letterSpacing: "-0.01em" }}>
-                {metrics.pipeline.sent}
-              </div>
-            </div>
-            <div>
-              <div className="stat-label" style={{ marginBottom: 6 }}>Total Leads</div>
-              <div style={{ fontFamily: "var(--font-heading)", fontSize: 22, fontWeight: 600, color: "var(--text)", letterSpacing: "-0.01em" }}>
-                {metrics.pipeline.total}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ── Chart ── */}
       <div className="section-card" style={{ marginBottom: 24 }}>
