@@ -377,6 +377,25 @@ export default function PipelinePage() {
     return () => ctrl.abort();
   }, [fetchLeads, fetchDiscovery]);
 
+  // If anything is queued/drafting, kick the worker + refetch every 15s until
+  // it drains. The worker is idempotent and only processes 5 at a time.
+  const pending = useMemo(
+    () => leads.filter((l) => l.status === "queued" || l.status === "drafting").length,
+    [leads],
+  );
+  useEffect(() => {
+    if (pending === 0) return;
+    const tick = async () => {
+      try {
+        await fetch("/api/pipeline/draft-queue", { method: "POST" });
+      } catch { /* ignore */ }
+      fetchLeads();
+    };
+    tick();
+    const iv = setInterval(tick, 15000);
+    return () => clearInterval(iv);
+  }, [pending, fetchLeads]);
+
   useEffect(() => {
     const ctrl = new AbortController();
     fetch("/api/sales-reps", { signal: ctrl.signal })

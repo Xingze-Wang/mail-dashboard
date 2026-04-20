@@ -3,8 +3,6 @@ import { supabase } from "@/lib/db";
 import { wasRecentlyContacted } from "@/lib/contact-guard";
 import { lookupAuthor } from "@/lib/semantic-scholar";
 import { lookupCitationsViaTavily } from "@/lib/tavily";
-import { generateDraft } from "@/lib/email-generator";
-import { getRep } from "@/lib/assignment";
 import {
   getAssignmentConfig,
   classifyLead,
@@ -150,31 +148,13 @@ export async function POST(req: NextRequest) {
       const arxivId = (lead.arxivId as string) ||
         `${source}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 
-      // Draft is generated server-side with the assigned rep's identity.
-      // Python scrapers no longer send draft_subject/draft_html — if they do,
-      // we still regenerate to guarantee the signature matches the assignee.
-      const rep = await getRep(assignedRepId);
-      const matchedDirsArr = typeof lead.matchedDirections === "string"
-        ? (lead.matchedDirections as string).split(",").map((s) => s.trim()).filter(Boolean)
-        : Array.isArray(lead.matchedDirections) ? (lead.matchedDirections as string[]) : [];
-      let draft: { subject: string; html: string } | null = null;
-      try {
-        draft = await generateDraft({
-          title,
-          abstract: (lead.abstract as string) || "",
-          authorEmail: email,
-          firstName: (lead.firstName as string) || null,
-          schoolName: (lead.schoolName as string) || null,
-          schoolTier,
-          matchedDirections: matchedDirsArr,
-          repName: rep?.sender_name,
-          repWechatId: rep?.wechat_id,
-        });
-      } catch (err) {
-        console.error("generateDraft failed", { email, err: String(err) });
-      }
-
-      const hasDraft = !!draft || !!(lead.draftSubject && lead.draftHtml);
+      // Draft is generated asynchronously by /api/pipeline/draft-queue (cron)
+      // to keep import requests under 10s even for 50-lead batches. Rows are
+      // inserted with status='queued' (no draft), and the queue worker flips
+      // them to 'ready' after generating the draft with the correct rep.
+      // Python scrapers may still send a pre-made draft — if they do, we
+      // trust it and mark ready immediately (back-compat path).
+      const hasDraft = !!(lead.draftSubject && lead.draftHtml);
 
       const { error } = await supabase.from("pipeline_leads").insert({
         arxiv_id: arxivId,
@@ -192,9 +172,9 @@ export async function POST(req: NextRequest) {
         compute_confidence: (lead.computeConfidence as number) || null,
         compute_reason: (lead.computeReason as string) || null,
         matched_directions: (lead.matchedDirections as string) || null,
-        draft_subject: draft?.subject ?? (lead.draftSubject as string) ?? null,
-        draft_html: draft?.html ?? (lead.draftHtml as string) ?? null,
-        status: hasDraft ? "ready" : "new",
+        draft_subject: (lead.draftSubject as string) || null,
+        draft_html: (lead.draftHtml as string) || null,
+        status: hasDraft ? "ready" : "queued",
         source,
         s2_author_id: s2?.authorId ?? null,
         h_index: hIndex,
