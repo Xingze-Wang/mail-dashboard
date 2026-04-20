@@ -96,6 +96,14 @@ export interface TierRow {
   convRate: number;
 }
 
+export interface CategoryRow {
+  name: string;
+  assigned: number;
+  sent: number;
+  wechat: number;
+  convRate: number;
+}
+
 export interface RepStats {
   rep: {
     id: number;
@@ -110,6 +118,7 @@ export interface RepStats {
   wechat: number;
   convRate: number;
   tiers: TierRow[];
+  categories: CategoryRow[];
 }
 
 export interface HIndexBucket {

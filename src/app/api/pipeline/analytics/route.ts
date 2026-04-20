@@ -7,6 +7,16 @@ import {
   normalizeSourceLabel,
   type SourceCode,
 } from "@/lib/sources";
+import { resolveCategory } from "@/lib/assignment";
+
+/** Best-effort: a row's matched_directions is sometimes a comma-joined string,
+ *  sometimes an array, sometimes null. resolveCategory handles all three. */
+function resolveCategoryFromLead(md: unknown): string | null {
+  if (md == null) return null;
+  if (Array.isArray(md)) return resolveCategory(md as string[]);
+  if (typeof md === "string") return resolveCategory(md);
+  return null;
+}
 
 export async function GET() {
   const [
@@ -18,7 +28,7 @@ export async function GET() {
   ] = await Promise.all([
     supabase
       .from("pipeline_leads")
-      .select("id, status, lead_tier, assigned_rep_id, h_index, source, created_at, sent_at, author_email"),
+      .select("id, status, lead_tier, assigned_rep_id, h_index, source, created_at, sent_at, author_email, matched_directions"),
     supabase.from("sales_reps").select("*").order("id"),
     supabase
       .from("brief_lookups")
@@ -100,6 +110,29 @@ export async function GET() {
       };
     });
 
+    // Rep × category breakdown — groups matched_directions up to the parent
+    // category so admin can see "Leo wins at 具身 but does poorly on Agent".
+    const byCat = new Map<string, { assigned: number; sent: number; wechat: number }>();
+    for (const lead of repLeads) {
+      const category = resolveCategoryFromLead(lead.matched_directions);
+      const key = category ?? "(unmatched)";
+      const entry = byCat.get(key) ?? { assigned: 0, sent: 0, wechat: 0 };
+      entry.assigned++;
+      if (lead.status === "sent" || lead.status === "replied") entry.sent++;
+      const em = (lead.author_email as string | null)?.toLowerCase() ?? "";
+      if (em && wechat.some((w) => (w.query as string | null)?.toLowerCase() === em)) entry.wechat++;
+      byCat.set(key, entry);
+    }
+    const categories = Array.from(byCat.entries())
+      .map(([name, s]) => ({
+        name,
+        assigned: s.assigned,
+        sent: s.sent,
+        wechat: s.wechat,
+        convRate: s.sent > 0 ? Math.round((s.wechat / s.sent) * 1000) / 10 : 0,
+      }))
+      .sort((a, b) => b.assigned - a.assigned);
+
     return {
       rep: { id: rep.id, name: rep.name, sender_email: rep.sender_email, wechat_id: rep.wechat_id, active: rep.active },
       assigned,
@@ -108,6 +141,7 @@ export async function GET() {
       wechat: repWechat,
       convRate: repConvRate,
       tiers,
+      categories,
     };
   });
 
@@ -137,6 +171,7 @@ interface RawLead {
   assigned_rep_id: number | null;
   source: string | null;
   author_email: string | null;
+  matched_directions?: string | string[] | null;
 }
 
 interface RawRep {

@@ -203,6 +203,61 @@ export function SalesTab({ analytics }: { analytics: Analytics }) {
           </tbody>
         </table>
       </div>
+
+      {/* ── Rep × Category performance ── */}
+      <div className="section-card" style={{ padding: 0 }}>
+        <h3 style={{ padding: "20px 24px", marginBottom: 0, borderBottom: "1px solid var(--border)" }}>
+          Rep × Category Performance
+          <span className="lead-count" style={{ marginLeft: 8 }}>
+            where is each rep strongest?
+          </span>
+        </h3>
+        <table className="data-table">
+          <thead>
+            <tr>
+              {["Rep", "Category", "Assigned", "Sent", "WeChat", "Conv %"].map((h) => (
+                <th key={h}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {reps
+              .flatMap((r) =>
+                (r.categories ?? [])
+                  .filter((c) => c.assigned > 0)
+                  .map((c) => ({ r, c })),
+              )
+              .sort((a, b) => {
+                if (a.r.rep.id !== b.r.rep.id) return a.r.rep.id - b.r.rep.id;
+                return b.c.assigned - a.c.assigned;
+              })
+              .map(({ r, c }) => {
+                const palette = paletteFor(r.rep.name);
+                const top = (r.categories ?? []).reduce((best, x) => (x.convRate > best ? x.convRate : best), 0);
+                const highlight = c.convRate > 0 && c.convRate === top;
+                return (
+                  <tr key={`${r.rep.id}-${c.name}`}>
+                    <td style={{ fontWeight: 600, color: palette.color }}>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                        <span style={{ width: 8, height: 8, borderRadius: 4, background: palette.solid }} />
+                        {r.rep.name}
+                      </span>
+                    </td>
+                    <td style={{ fontSize: 12.5, color: c.name === "(unmatched)" ? "var(--text-tertiary)" : "var(--text)" }}>
+                      {c.name}
+                    </td>
+                    <td>{c.assigned}</td>
+                    <td>{c.sent}</td>
+                    <td>{c.wechat}</td>
+                    <td style={{ color: highlight ? "var(--green)" : "var(--text-secondary)", fontWeight: highlight ? 700 : 500 }}>
+                      {c.convRate}%{highlight ? " ★" : ""}
+                    </td>
+                  </tr>
+                );
+              })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
