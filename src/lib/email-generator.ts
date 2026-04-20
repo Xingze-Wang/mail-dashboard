@@ -250,8 +250,18 @@ export async function generateDraft(lead: {
     lead.matchedDirections,
   );
 
-  const repName = lead.repName ?? "Leo";
-  const repWechat = lead.repWechatId ?? "Lorenserus1";
+  // Default to Leo only when the caller genuinely has no rep (should be rare —
+  // every pipeline_leads row is assigned at insert time). Log when we fall back
+  // so a silent Leo-default doesn't sneak past us.
+  if (!lead.repName || !lead.repWechatId) {
+    console.warn("generateDraft: missing rep identity, falling back to Leo", {
+      authorEmail: lead.authorEmail,
+      hasName: !!lead.repName,
+      hasWechat: !!lead.repWechatId,
+    });
+  }
+  const repName = lead.repName || "Leo";
+  const repWechat = lead.repWechatId || "Lorenserus1";
 
   const fullTitle = lead.title.replace(/\n/g, " ").trim();
   const closingName = lead.firstName

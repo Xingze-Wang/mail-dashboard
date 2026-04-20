@@ -1197,6 +1197,10 @@ button { font-family: inherit; }
 .dx-status-badge.replied { background: var(--dx-violet-soft); color: var(--dx-violet); }
 .dx-status-badge.skipped { background: var(--dx-bg-soft); color: var(--dx-text-3); }
 .dx-status-badge.new { background: var(--dx-blue-soft); color: var(--dx-blue); }
+.dx-status-badge.drafting { background: var(--dx-slate-soft); color: var(--dx-slate); }
+.dx-status-badge.ripening { background: var(--dx-amber-soft); color: var(--dx-amber); }
+.dx-card.ripening::before { background: var(--dx-amber); }
+.dx-card.drafting::before { background: var(--dx-slate); }
 
 .dx-tier-badge {
   display: inline-flex;

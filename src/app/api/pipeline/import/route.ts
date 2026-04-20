@@ -73,12 +73,14 @@ export async function POST(req: NextRequest) {
     const config = await getAssignmentConfig();
 
     for (const lead of leads) {
-      const email = lead.authorEmail as string;
-      if (!email) {
+      const rawEmail = lead.authorEmail as string;
+      if (!rawEmail) {
         errors.push("Missing authorEmail");
         skipped++;
         continue;
       }
+      // Lowercase early so dedup and contact-guard see a canonical form.
+      const email = rawEmail.trim().toLowerCase();
 
       // Backstop the Python-side dedup: refuse to import a lead for any
       // recipient we've already emailed in the last 365 days, regardless

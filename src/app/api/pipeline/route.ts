@@ -222,11 +222,11 @@ export async function POST(req: NextRequest) {
           schoolName: lead.schoolName,
           schoolTier: lead.schoolTier,
           matchedDirections: lead.matchedDirections,
-          repName: rep?.name,
+          repName: rep?.sender_name,
           repWechatId: rep?.wechat_id,
         });
-      } catch {
-        // Draft generation failed — insert with status 'new'
+      } catch (err) {
+        console.error("manual-scan draft failed", { arxivId: lead.arxivId, err: String(err) });
       }
 
       // 5. Insert with enrichment data

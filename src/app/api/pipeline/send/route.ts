@@ -84,9 +84,10 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    const toEmail = (lead.author_email as string).trim().toLowerCase();
     const result = await resend.emails.send({
       from: senderFrom,
-      to: [lead.author_email],
+      to: [toEmail],
       bcc: ["williamxwang03@gmail.com"],
       subject: lead.draft_subject,
       html: lead.draft_html,
@@ -104,7 +105,7 @@ export async function POST(req: NextRequest) {
       .from("emails")
       .insert({
         from: senderFrom,
-        to: lead.author_email,
+        to: toEmail,
         subject: lead.draft_subject,
         html: lead.draft_html,
         resend_id: result.data?.id || null,

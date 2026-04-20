@@ -141,11 +141,11 @@ async function runScan() {
         schoolName: lead.schoolName,
         schoolTier: lead.schoolTier,
         matchedDirections: lead.matchedDirections,
-        repName: rep?.name,
+        repName: rep?.sender_name,
         repWechatId: rep?.wechat_id,
       });
-    } catch {
-      // Draft generation failed — insert with status 'new'
+    } catch (err) {
+      stats.errors.push(`draft ${lead.arxivId}: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     // 5. Insert with enrichment data

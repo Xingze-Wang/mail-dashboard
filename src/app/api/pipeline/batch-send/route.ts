@@ -89,10 +89,11 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      const toEmail = (lead.author_email as string).trim().toLowerCase();
       // Send via Resend
       const result = await resend.emails.send({
         from: senderFrom,
-        to: [lead.author_email],
+        to: [toEmail],
         bcc: ["williamxwang03@gmail.com"],
         subject: lead.draft_subject,
         html: lead.draft_html,
@@ -100,7 +101,7 @@ export async function POST(req: NextRequest) {
 
       if (result.error) {
         await supabase.from("pipeline_leads").update({ status: "ready" }).eq("id", id);
-        errors.push(`${lead.author_email}: ${result.error.message}`);
+        errors.push(`${toEmail}: ${result.error.message}`);
         skipped++;
         continue;
       }
@@ -109,7 +110,7 @@ export async function POST(req: NextRequest) {
       const threadId = `thread_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
       await supabase.from("emails").insert({
         from: senderFrom,
-        to: lead.author_email,
+        to: toEmail,
         subject: lead.draft_subject,
         html: lead.draft_html,
         resend_id: result.data?.id || null,
@@ -124,7 +125,7 @@ export async function POST(req: NextRequest) {
         .eq("id", id);
 
       // Record contact history
-      await recordContact(lead.author_email, lead.title, lead.draft_subject);
+      await recordContact(toEmail, lead.title, lead.draft_subject);
 
       sent++;
 

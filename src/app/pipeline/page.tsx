@@ -227,14 +227,32 @@ const CHANNELS = [
 type ChannelKey = (typeof CHANNELS)[number]["key"];
 
 const STATUS_CHIPS = [
-  { key: "all",     label: "All status" },
-  { key: "ready",   label: "Ready" },
-  { key: "new",     label: "New" },
-  { key: "sent",    label: "Sent" },
-  { key: "replied", label: "Replied" },
-  { key: "skipped", label: "Skipped" },
+  { key: "all",       label: "All status" },
+  { key: "drafting",  label: "Drafting" },
+  { key: "ripening",  label: "Ripening" },
+  { key: "ready",     label: "Ready" },
+  { key: "sent",      label: "Sent" },
+  { key: "replied",   label: "Replied" },
+  { key: "skipped",   label: "Skipped" },
 ] as const;
 type StatusKey = (typeof STATUS_CHIPS)[number]["key"];
+
+// Paper-age gate — mirrors SEND_MIN_AGE_DAYS in src/lib/contact-guard.ts.
+// A lead is "ripening" if the underlying paper was published less than 7
+// days ago; server-side contact-guard will block a send unless the caller
+// explicitly overrides.
+const MIN_PAPER_AGE_DAYS = 7;
+function paperAgeDays(publishedAt: string | null | undefined): number | null {
+  if (!publishedAt) return null;
+  const t = Date.parse(publishedAt);
+  if (isNaN(t)) return null;
+  return (Date.now() - t) / 86_400_000;
+}
+function isRipening(lead: { status: string; publishedAt: string | null }): boolean {
+  if (lead.status !== "ready") return false;
+  const age = paperAgeDays(lead.publishedAt);
+  return age !== null && age < MIN_PAPER_AGE_DAYS;
+}
 
 const SORT_OPTIONS = [
   { key: "newest",   label: "Sort: Newest" },
@@ -441,11 +459,18 @@ export default function PipelinePage() {
     let result = leads;
     if (statusFilter !== "all") {
       result = result.filter((l) => {
-        if (statusFilter === "ready" && l.status !== "ready") return false;
-        if (statusFilter === "new" && l.status !== "new") return false;
-        if (statusFilter === "sent" && l.status !== "sent") return false;
-        if (statusFilter === "replied" && l.status !== "replied") return false;
-        if (statusFilter === "skipped" && l.status !== "skipped") return false;
+        // "Drafting" covers queued (still waiting) + drafting (in flight) +
+        // legacy "new" (pre-queue flow, same user intent).
+        if (statusFilter === "drafting")
+          return l.status === "queued" || l.status === "drafting" || l.status === "new";
+        // "Ripening" is status=ready BUT paper is < 7 days old — server-side
+        // contact-guard will still block send unless override.
+        if (statusFilter === "ripening") return isRipening(l);
+        // "Ready" excludes ripening so the label matches the send behavior.
+        if (statusFilter === "ready") return l.status === "ready" && !isRipening(l);
+        if (statusFilter === "sent") return l.status === "sent";
+        if (statusFilter === "replied") return l.status === "replied";
+        if (statusFilter === "skipped") return l.status === "skipped";
         return true;
       });
     }
@@ -875,16 +900,26 @@ export default function PipelinePage() {
           {/* Stream toolbar */}
           <div className="dx-stream-toolbar">
             <div className="dx-chip-group">
-              {STATUS_CHIPS.map((s) => (
-                <button
-                  key={s.key}
-                  type="button"
-                  onClick={() => setStatusFilter(s.key)}
-                  className={`dx-chip ${statusFilter === s.key ? "active" : ""}`}
-                >
-                  {s.label}
-                </button>
-              ))}
+              {STATUS_CHIPS.map((s) => {
+                const count = (() => {
+                  if (s.key === "all") return leads.length;
+                  if (s.key === "drafting") return leads.filter((l) => l.status === "queued" || l.status === "drafting" || l.status === "new").length;
+                  if (s.key === "ripening") return leads.filter((l) => isRipening(l)).length;
+                  if (s.key === "ready") return leads.filter((l) => l.status === "ready" && !isRipening(l)).length;
+                  return leads.filter((l) => l.status === s.key).length;
+                })();
+                return (
+                  <button
+                    key={s.key}
+                    type="button"
+                    onClick={() => setStatusFilter(s.key)}
+                    className={`dx-chip ${statusFilter === s.key ? "active" : ""}`}
+                  >
+                    {s.label}
+                    {count > 0 && <span className="dx-ch-count" style={{ marginLeft: 6 }}>{count}</span>}
+                  </button>
+                );
+              })}
             </div>
 
             {reps.length > 0 && isAdmin && (

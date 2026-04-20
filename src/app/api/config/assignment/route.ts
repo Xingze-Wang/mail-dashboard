@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
   const { data: leads, error: fetchError } = await supabase
     .from("pipeline_leads")
     .select(
-      "id, citation_count, h_index, school_tier, author_email, matched_directions, lead_tier, assigned_rep_id",
+      "id, citation_count, h_index, school_tier, author_email, matched_directions, lead_tier, assigned_rep_id, status",
     );
 
   if (fetchError) {
@@ -82,9 +82,25 @@ export async function POST(req: NextRequest) {
     const repChanged = (l.assigned_rep_id ?? null) !== newRepId;
     if (!tierChanged && !repChanged) continue;
 
+    // When the rep changes, the old draft body/signature belongs to the
+    // wrong rep. Clear it and flip back to 'queued' so the draft-queue
+    // worker regenerates with the new rep's identity. Only re-queue leads
+    // that have not been sent yet — sent rows keep their historical draft.
+    const updatePayload: Record<string, unknown> = {
+      lead_tier: newTier,
+      assigned_rep_id: newRepId,
+    };
+    const currentStatus = (l as Record<string, unknown>).status as string | undefined;
+    const regenerable = repChanged && currentStatus !== "sent" && currentStatus !== "replied";
+    if (regenerable) {
+      updatePayload.status = "queued";
+      updatePayload.draft_subject = null;
+      updatePayload.draft_html = null;
+    }
+
     const { error: updateError } = await supabase
       .from("pipeline_leads")
-      .update({ lead_tier: newTier, assigned_rep_id: newRepId })
+      .update(updatePayload)
       .eq("id", l.id);
 
     if (updateError) {

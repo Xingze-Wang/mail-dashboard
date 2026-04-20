@@ -66,11 +66,35 @@ function relativeTime(iso: string | null): string {
   return `${mo}mo ago`;
 }
 
-function statusFor(lead: Lead): "ready" | "sent" | "replied" | "enriching" | "discovered" | "skipped" | "new" {
+const MIN_PAPER_AGE_MS = 7 * 86_400_000;
+
+function isPaperRipening(publishedAt: string | null): boolean {
+  if (!publishedAt) return false;
+  const t = Date.parse(publishedAt);
+  if (isNaN(t)) return false;
+  return Date.now() - t < MIN_PAPER_AGE_MS;
+}
+
+function statusFor(
+  lead: Lead,
+):
+  | "ready"
+  | "ripening"
+  | "drafting"
+  | "sent"
+  | "replied"
+  | "enriching"
+  | "discovered"
+  | "skipped"
+  | "new" {
   if (lead.status === "replied") return "replied";
   if (lead.status === "sent") return "sent";
-  if (lead.status === "ready") return "ready";
   if (lead.status === "skipped") return "skipped";
+  if (lead.status === "queued" || lead.status === "drafting") return "drafting";
+  if (lead.status === "ready") {
+    if (isPaperRipening(lead.publishedAt)) return "ripening";
+    return "ready";
+  }
   if (lead.status === "new" && (!lead.draftHtml || !lead.authorEmail)) return "enriching";
   return "new";
 }
@@ -78,6 +102,8 @@ function statusFor(lead: Lead): "ready" | "sent" | "replied" | "enriching" | "di
 function statusLabel(s: string): string {
   switch (s) {
     case "ready":      return "Ready";
+    case "ripening":   return "Ripening";
+    case "drafting":   return "Drafting";
     case "sent":       return "Sent";
     case "replied":    return "Replied";
     case "enriching":  return "Enriching";
@@ -270,7 +296,17 @@ function LeadRowInner({
       {/* Foot */}
       <div className="dx-card-foot">
         <span className="dx-foot-meta">
-          {status === "enriching" ? (
+          {status === "drafting" ? (
+            <span style={{ color: "var(--dx-slate)" }}>
+              <Loader2 style={{ display: "inline", width: 12, height: 12, marginRight: 4 }} className="animate-spin" />
+              Drafting email…
+            </span>
+          ) : status === "ripening" ? (
+            <span style={{ color: "var(--dx-amber)", display: "inline-flex", alignItems: "center", gap: 4 }}>
+              <Clock style={{ width: 12, height: 12 }} />
+              Paper &lt; 7d old — hold off unless you have a reason
+            </span>
+          ) : status === "enriching" ? (
             <span style={{ color: "var(--dx-amber)" }}>
               <Loader2 style={{ display: "inline", width: 12, height: 12, marginRight: 4 }} className="animate-spin" />
               Enrichment in progress
@@ -337,6 +373,47 @@ function LeadRowInner({
               <ExternalLink />
               arXiv
             </a>
+          )}
+
+          {status === "ripening" && (
+            <>
+              <button type="button" className="dx-ghost" onClick={() => onSkip(lead.id)}>
+                Skip
+              </button>
+              <button type="button" className="dx-secondary" onClick={isExpanded ? startEdit : () => onToggleExpand(lead.id)}>
+                <Mail />
+                {isExpanded ? "Edit draft" : "View draft"}
+              </button>
+              {overrideArmed ? (
+                <>
+                  <button type="button" className="dx-ghost" onClick={() => setOverrideArmed(false)} disabled={isSending}>
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="dx-primary"
+                    disabled={isSending}
+                    onClick={() => onSend(lead, true)}
+                    title="Override the paper-age rule"
+                    style={{ background: "var(--dx-amber)" }}
+                  >
+                    {isSending ? <Loader2 className="animate-spin" /> : <Send />}
+                    Send anyway
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="dx-secondary"
+                  disabled={isSending}
+                  onClick={() => setOverrideArmed(true)}
+                  title="Paper is less than 7 days old"
+                >
+                  <Send />
+                  Override & send
+                </button>
+              )}
+            </>
           )}
 
           {status === "ready" && (
