@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
+
+// Analytics must always reflect the live DB — "This week" is time-sensitive
+// and drifts by a full day if cached. Force a fresh query on every hit.
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 import {
   DISCOVERY_SOURCES,
   KNOWN_CHANNELS,

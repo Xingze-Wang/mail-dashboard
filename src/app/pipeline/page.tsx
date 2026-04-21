@@ -436,16 +436,19 @@ export default function PipelinePage() {
   }, []);
 
   useEffect(() => {
-    if (analytics || analyticsLoading) return;
     const ctrl = new AbortController();
     setAnalyticsLoading(true);
-    fetch("/api/pipeline/analytics", { signal: ctrl.signal })
+    // cache: "no-store" defeats Next.js data cache so "This week" and
+    // other time-windowed counters reflect the live DB, not yesterday.
+    fetch("/api/pipeline/analytics", { signal: ctrl.signal, cache: "no-store" })
       .then((r) => r.json())
       .then((a: Analytics) => setAnalytics(a))
       .catch((err) => { if (err.name !== "AbortError") console.error(err); })
       .finally(() => setAnalyticsLoading(false));
     return () => ctrl.abort();
-  }, [analytics, analyticsLoading]);
+    // Re-pull whenever the leads array changes length — a new import or
+    // a send should update the stat strip immediately, not next reload.
+  }, [leads.length]);
 
   const refreshAnalytics = useCallback(() => setAnalytics(null), []);
 
@@ -769,7 +772,9 @@ export default function PipelinePage() {
       {
         label: "This week",
         value: String(thisWeek),
-        trend: { kind: thisWeek > 0 ? "up" : "flat", text: thisWeek > 0 ? "+new" : "±0" },
+        trend: thisWeek > 0
+          ? { kind: "up" as const, text: `+${thisWeek} new` }
+          : { kind: "flat" as const, text: "no new leads" },
         spark: { color: "#1D4ED8", points: sparkPoints },
       },
       {
