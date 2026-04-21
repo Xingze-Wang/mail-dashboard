@@ -179,12 +179,15 @@ interface ConversionData {
   baseline: number;
   totalSent: number;
   totalConverted: number;
+  withLeadData?: number;
+  coverage?: number;
   byScore: ConvBucket[];
   byTier: ConvBucket[];
   byCitations: ConvBucket[];
   bySchoolTier: ConvBucket[];
   byRep: ConvBucket[];
   byDirection: ConvBucket[];
+  byDomain?: ConvBucket[];
   byDay: ConvBucket[];
   topLift: (ConvBucket & { feature: string })[];
 }
@@ -208,10 +211,16 @@ export function ConversionTab() {
 
   return (
     <div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginBottom: 20 }}>
-        <Stat label="Baseline conv rate" value={`${data.baseline}%`} sub={`${data.totalConverted} / ${data.totalSent}`} emphasis />
-        <Stat label="Total sent" value={data.totalSent.toString()} />
-        <Stat label="WeChat adds" value={data.totalConverted.toString()} />
+      <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr 1fr 1fr", gap: 12, marginBottom: 20 }}>
+        <TechMetric label="Baseline conv rate" value={`${data.baseline}%`} sub={`${data.totalConverted} / ${data.totalSent}`} accent />
+        <TechMetric label="Total sent" value={data.totalSent.toLocaleString()} sub="unique recipients" />
+        <TechMetric label="WeChat adds" value={data.totalConverted.toLocaleString()} />
+        <TechMetric
+          label="Lead-data coverage"
+          value={typeof data.coverage === "number" ? `${data.coverage}%` : "—"}
+          sub={typeof data.withLeadData === "number" ? `${data.withLeadData.toLocaleString()} with features` : undefined}
+          tone={typeof data.coverage === "number" && data.coverage < 30 ? "alert" : undefined}
+        />
       </div>
 
       {data.topLift.length > 0 && (
@@ -235,11 +244,12 @@ export function ConversionTab() {
       )}
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        <BucketTable title="By email domain" buckets={data.byDomain ?? []} baseline={data.baseline} />
+        <BucketTable title="By rep" buckets={data.byRep} baseline={data.baseline} />
         <BucketTable title="By score" buckets={data.byScore} baseline={data.baseline} />
         <BucketTable title="By tier" buckets={data.byTier} baseline={data.baseline} />
         <BucketTable title="By citations" buckets={data.byCitations} baseline={data.baseline} />
         <BucketTable title="By school tier" buckets={data.bySchoolTier} baseline={data.baseline} />
-        <BucketTable title="By rep" buckets={data.byRep} baseline={data.baseline} />
         <BucketTable title="By day sent" buckets={data.byDay} baseline={data.baseline} />
       </div>
     </div>

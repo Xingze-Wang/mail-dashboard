@@ -42,9 +42,33 @@ export async function GET(req: NextRequest) {
     .eq("added_wechat", true);
   const wechatEmails = new Set(
     (wechatRaw ?? [])
-      .map((w) => (w.query as string | null)?.toLowerCase())
+      .map((w) => (w.query as string | null)?.toLowerCase().trim())
       .filter(Boolean) as string[],
   );
+
+  // Pull the real send log from `emails` to ground "sent" properly — the
+  // pipeline_leads.status='sent' filter only catches ~30 of 1000+ sends.
+  // We page through because Supabase caps REST at 1000 per request.
+  const sentRecipients = new Set<string>();
+  {
+    let cursor = 0;
+    const pageSize = 1000;
+    while (true) {
+      const { data: page } = await supabase
+        .from("emails")
+        .select("to")
+        .in("status", ["delivered", "clicked", "sent", "replied"])
+        .range(cursor, cursor + pageSize - 1);
+      if (!page || page.length === 0) break;
+      for (const e of page) {
+        const t = (e.to as string | null)?.toLowerCase().trim();
+        if (t) sentRecipients.add(t);
+      }
+      if (page.length < pageSize) break;
+      cursor += pageSize;
+      if (cursor > 20_000) break;
+    }
+  }
 
   // ── Distribution across current leads (not training snapshot) ──
   const buckets = Array.from({ length: 20 }, (_, i) => ({
@@ -63,9 +87,15 @@ export async function GET(req: NextRequest) {
     const idx = Math.min(19, Math.floor(s * 20));
     const bucket = buckets[idx];
     bucket.count++;
-    const sentStatus = lead.status === "sent" || lead.status === "replied" || lead.status === "wechat_added";
-    if (sentStatus) bucket.sent++;
-    if (wechatEmails.has((lead.author_email as string | null)?.toLowerCase() ?? "")) bucket.converted++;
+    const em = (lead.author_email as string | null)?.toLowerCase().trim() ?? "";
+    // "sent" = either the pipeline row says sent, OR there's a delivered
+    // email to this recipient (catches older sends that never transited
+    // the pipeline status field).
+    const wasSent =
+      lead.status === "sent" || lead.status === "replied" || lead.status === "wechat_added" ||
+      (em && sentRecipients.has(em));
+    if (wasSent) bucket.sent++;
+    if (em && wechatEmails.has(em)) bucket.converted++;
   }
 
   // Collapse to 10 bins for display; keep 20-bin precision for calibration math.
