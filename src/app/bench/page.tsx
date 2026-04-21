@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Play, Zap, BarChart3, ChevronDown, ChevronRight } from "lucide-react";
+import { Loader2, Play, Zap, BarChart3, ChevronDown, ChevronRight, FileText, Mail } from "lucide-react";
+import { SAMPLES } from "./samples";
 
 interface ModelAgg {
   model: string;
@@ -130,6 +131,17 @@ export default function BenchPage() {
     const d = await fetch(`/api/bench/${runId}`).then((r) => r.json());
     setOpenRunDetail(d);
   };
+
+  // Auto-load the latest run's detail so the Compare Outputs panel is
+  // populated on first paint — no clicking required.
+  const [latestDetail, setLatestDetail] = useState<RunDetail | null>(null);
+  useEffect(() => {
+    if (!data?.runs?.[0]?.runId) return;
+    fetch(`/api/bench/${data.runs[0].runId}`)
+      .then((r) => r.json())
+      .then(setLatestDetail)
+      .catch(() => {});
+  }, [data?.runs?.[0]?.runId]);
 
   if (gated !== "allowed") {
     return <div style={{ display: "flex", justifyContent: "center", padding: 96 }}><Loader2 className="h-6 w-6 animate-spin" /></div>;
@@ -270,6 +282,9 @@ export default function BenchPage() {
           </table>
         </div>
       )}
+
+      {/* Compare outputs — left: paper, right: every model's email stacked */}
+      {latestDetail && <CompareOutputs detail={latestDetail} />}
 
       {/* Historical runs */}
       {data && data.runs.length > 0 && (
@@ -431,5 +446,174 @@ function Badge({ ok, label }: { ok: boolean | undefined; label: string }) {
     }}>
       {ok ? "✓" : "✗"} {label}
     </span>
+  );
+}
+
+// ───────────────────────── Compare Outputs (paper-left, models-right) ─────────────────────────
+
+function CompareOutputs({ detail }: { detail: RunDetail }) {
+  const [paperIdx, setPaperIdx] = useState(0);
+  const [task, setTask] = useState<"intro" | "analyze">("intro");
+
+  // Group rows by sample → task → model
+  const grouped = useMemo(() => {
+    const m = new Map<number, Map<string, Map<string, RunDetail["rows"][0]>>>();
+    for (const r of detail.rows) {
+      const samp = m.get(r.sample_idx) ?? new Map();
+      const tasks = samp.get(r.task) ?? new Map();
+      tasks.set(r.model, r);
+      samp.set(r.task, tasks);
+      m.set(r.sample_idx, samp);
+    }
+    return m;
+  }, [detail.rows]);
+
+  const paper = SAMPLES[paperIdx];
+  const modelOutputs = useMemo(() => {
+    const inner = grouped.get(paperIdx)?.get(task);
+    if (!inner) return [];
+    return Array.from(inner.values()).sort((a, b) => b.score - a.score);
+  }, [grouped, paperIdx, task]);
+
+  const extractRaw = (row: RunDetail["rows"][0]): { raw: string; grade: Record<string, unknown> } => {
+    try {
+      const parsed = JSON.parse(row.output_text || "{}");
+      return { raw: parsed.raw ?? "", grade: parsed.grade ?? {} };
+    } catch {
+      return { raw: row.output_text || "", grade: {} };
+    }
+  };
+
+  return (
+    <div className="section-card" style={{ marginBottom: 24, padding: 0, overflow: "hidden" }}>
+      {/* Header tab strip */}
+      <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+          <h3 style={{ margin: 0, display: "flex", alignItems: "center", gap: 8 }}>
+            <Mail className="h-4 w-4" />
+            Compare outputs
+            <span className="lead-count" style={{ marginLeft: 6 }}>side-by-side</span>
+          </h3>
+          {/* Task switcher */}
+          <div className="dx-chip-group">
+            {(["intro", "analyze"] as const).map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setTask(t)}
+                className={`dx-chip ${task === t ? "active" : ""}`}
+              >
+                {t === "intro" ? "Email intro" : "Analysis JSON"}
+              </button>
+            ))}
+          </div>
+        </div>
+        {/* Paper picker */}
+        <div className="dx-chip-group">
+          {SAMPLES.map((s, i) => (
+            <button
+              key={i}
+              type="button"
+              onClick={() => setPaperIdx(i)}
+              className={`dx-chip ${paperIdx === i ? "active" : ""}`}
+              style={{ maxWidth: 320, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+            >
+              Paper {i + 1}: {s.title.slice(0, 40)}…
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Split: paper on left, model emails on right */}
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(280px, 1fr) 2fr", gap: 0 }}>
+        {/* LEFT — paper */}
+        <div style={{ padding: 20, borderRight: "1px solid var(--border)", background: "var(--bg)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>
+            <FileText style={{ width: 12, height: 12 }} />
+            Paper input
+          </div>
+          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 10, lineHeight: 1.35 }}>{paper.title}</div>
+          <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.6, marginBottom: 14 }}>
+            {paper.abstract}
+          </div>
+          <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 4 }}>
+            <strong>Authors:</strong> {paper.authors.join(", ")}
+          </div>
+          <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 14 }}>
+            <strong>Emails:</strong> {paper.emails.join(", ")}
+          </div>
+          <div style={{ padding: 10, background: "var(--card)", borderRadius: 6, border: "1px solid var(--border-light)" }}>
+            <div style={{ fontSize: 10.5, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6, fontWeight: 600 }}>
+              Ground truth
+            </div>
+            <div style={{ fontSize: 11.5, lineHeight: 1.7 }}>
+              <div><strong>Compute:</strong> {paper.truth.compute}</div>
+              <div><strong>Direction:</strong> {paper.truth.direction}</div>
+              <div><strong>Chinese author:</strong> {paper.truth.chinese ? "yes" : "no"}</div>
+            </div>
+          </div>
+        </div>
+
+        {/* RIGHT — every model's output stacked, sorted by score */}
+        <div style={{ padding: "20px 20px 24px", maxHeight: 720, overflowY: "auto" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 12 }}>
+            <Mail style={{ width: 12, height: 12 }} />
+            {modelOutputs.length} models · sorted by score
+          </div>
+          {modelOutputs.length === 0 && (
+            <div style={{ color: "var(--text-tertiary)", fontSize: 12 }}>No output for this task yet.</div>
+          )}
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {modelOutputs.map((row) => {
+              const { raw, grade } = extractRaw(row);
+              const scoreColor = row.score >= 0.85 ? "var(--green)"
+                : row.score >= 0.5 ? "var(--gold)" : "var(--coral)";
+              return (
+                <div key={row.model} style={{ border: "1px solid var(--border-light)", borderRadius: 8, overflow: "hidden", background: "var(--card)" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 12px", background: "var(--bg)", borderBottom: "1px solid var(--border-light)", fontSize: 11.5 }}>
+                    <span style={{ fontWeight: 700 }}>{row.model}</span>
+                    <span style={{ color: scoreColor, fontWeight: 600 }}>★ {row.score.toFixed(2)}</span>
+                    <span style={{ color: "var(--text-tertiary)" }}>{row.latency_s}s</span>
+                    <span style={{ color: "var(--text-tertiary)" }}>{row.tokens_out ?? "?"} tok</span>
+                    <div style={{ flex: 1 }} />
+                    {/* Per-fact badges inline */}
+                    {!row.error && (
+                      <div style={{ display: "flex", gap: 4 }}>
+                        {task === "analyze" && (
+                          <>
+                            <Badge ok={grade.correctNeedsCompute as boolean | undefined} label="算力" />
+                            <Badge ok={grade.correctLevel as boolean | undefined} label="等级" />
+                            <Badge ok={grade.correctDirection as boolean | undefined} label="方向" />
+                            <Badge ok={grade.correctChinese as boolean | undefined} label="中国人" />
+                          </>
+                        )}
+                        {task === "intro" && (
+                          <>
+                            <Badge ok={grade.threePart as boolean | undefined} label="三段论" />
+                            <Badge ok={grade.refsTitle as boolean | undefined} label="标题" />
+                            <Badge ok={grade.plausibleLength as boolean | undefined} label={`${grade.chars}字`} />
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <div style={{
+                    padding: 12,
+                    fontSize: task === "intro" ? 13.5 : 11.5,
+                    lineHeight: task === "intro" ? 1.7 : 1.5,
+                    fontFamily: task === "analyze" ? "ui-monospace, SFMono-Regular, monospace" : "inherit",
+                    color: row.error ? "var(--coral)" : "var(--text)",
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                  }}>
+                    {row.error ?? raw}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
