@@ -142,19 +142,42 @@ export function Sidebar() {
   const [me, setMe] = useState<{ repId: number; repName: string; role: "admin" | "sales" } | null>(null);
 
   useEffect(() => {
-    fetch("/api/auth/me")
-      .then((r) => r.json())
-      .then((d) => {
-        if (d.authenticated) {
-          setMe({ repId: d.repId, repName: d.repName, role: d.role === "admin" ? "admin" : "sales" });
-        }
-      })
-      .catch(() => { /* not signed in */ });
-  }, []);
+    let cancelled = false;
+    const loadMe = () => {
+      fetch("/api/auth/me", { cache: "no-store" })
+        .then((r) => r.json())
+        .then((d) => {
+          if (cancelled) return;
+          if (d.authenticated) {
+            setMe({ repId: d.repId, repName: d.repName, role: d.role === "admin" ? "admin" : "sales" });
+          } else {
+            setMe(null);
+          }
+        })
+        .catch(() => { /* keep last known */ });
+    };
+    loadMe();
+    // Refetch on tab focus AND on a custom auth:changed event (dispatched by
+    // login / logout so the sidebar updates without a full reload).
+    const onFocus = () => loadMe();
+    const onAuth = () => loadMe();
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("auth:changed", onAuth);
+    // Also re-check when the path changes — covers route-driven login redirects.
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("auth:changed", onAuth);
+    };
+  }, [pathname]);
 
   const logout = async () => {
     await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
-    router.replace("/login");
+    setMe(null);
+    // Hard navigation guarantees every cached client state (including other
+    // tabs' Sidebar instances via storage event below) is rebuilt.
+    window.dispatchEvent(new Event("auth:changed"));
+    window.location.assign("/login");
   };
 
   useEffect(() => {
@@ -188,6 +211,10 @@ export function Sidebar() {
     window.addEventListener("inbox:fast-poll-on",  fastOn);
     window.addEventListener("inbox:fast-poll-off", fastOff);
     window.addEventListener("inbox:read",          onRead);
+    // Re-pull counts when the tab regains focus or auth changes — both
+    // usually mean the visible numbers are stale.
+    window.addEventListener("focus",        onRead);
+    window.addEventListener("auth:changed", onRead);
 
     return () => {
       cancelled = true;
@@ -195,6 +222,8 @@ export function Sidebar() {
       window.removeEventListener("inbox:fast-poll-on",  fastOn);
       window.removeEventListener("inbox:fast-poll-off", fastOff);
       window.removeEventListener("inbox:read",          onRead);
+      window.removeEventListener("focus",        onRead);
+      window.removeEventListener("auth:changed", onRead);
     };
   }, []);
 

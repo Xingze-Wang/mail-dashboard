@@ -1,11 +1,10 @@
 "use client";
 
 import { Suspense, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { Lock, Loader2, User } from "lucide-react";
 
 function LoginInner() {
-  const router = useRouter();
   const params = useSearchParams();
   const next = params.get("next") || "/";
 
@@ -30,8 +29,10 @@ function LoginInner() {
         setSubmitting(false);
         return;
       }
-      router.replace(next);
-      router.refresh();
+      // Hard navigation guarantees Sidebar + every page-level useEffect
+      // re-runs against the new session cookie. router.replace by itself
+      // keeps the Sidebar instance mounted and shows the previous user.
+      window.location.assign(next);
     } catch {
       setError("Network error");
       setSubmitting(false);
