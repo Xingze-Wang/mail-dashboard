@@ -62,8 +62,13 @@ export default function BenchPage() {
     fetch("/api/bench").then((r) => r.json()).then((d: BenchData) => {
       setData(d);
       if (pickedModels.size === 0 && d.models?.length) {
-        // Pre-select cheap+fast Chinese models by default
-        setPicked(new Set(["glm-4.7", "deepseek-v3", "qwen3-235b", "gemini-3-flash"]));
+        // Pre-select 1 from each tier — the headline horse race.
+        setPicked(new Set([
+          "claude-opus-4.7", "claude-sonnet-4.5",
+          "gemini-3-pro", "gemini-3-flash",
+          "gpt-5", "gpt-5-mini",
+          "deepseek-v3", "qwen3-235b", "glm-4.7",
+        ]));
       }
     }).catch((e) => setError(String(e)));
   };
@@ -134,25 +139,45 @@ export default function BenchPage() {
         </div>
       </div>
 
-      {/* Model selector */}
+      {/* Model selector — grouped by tier */}
       <div className="section-card" style={{ marginBottom: 24 }}>
         <h3 style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
           <BarChart3 className="h-4 w-4" />
           Pick models to bench
         </h3>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-          {(data?.models ?? []).map((m) => (
-            <button
-              key={m}
-              onClick={() => togglePick(m)}
-              className={`dx-chip ${pickedModels.has(m) ? "active" : ""}`}
-              style={{ fontSize: 12 }}
-              type="button"
-            >
-              {m}
-            </button>
-          ))}
-        </div>
+        {(() => {
+          const groups: Record<string, string[]> = {
+            "Frontier": [], "Fast / Cheap": [], "Chinese": [], "Other": [],
+          };
+          for (const m of data?.models ?? []) {
+            if (/^(claude-(opus|sonnet)-(4|3)|gpt-5(\.|$)|gpt-4\.1$|gemini-(2\.5-pro|3-pro)|grok-4|^o[13]$)/.test(m)) groups["Frontier"].push(m);
+            else if (/(mini|nano|flash|sonnet-4$|grok-3|o4-mini)/.test(m)) groups["Fast / Cheap"].push(m);
+            else if (/^(glm|qwen|deepseek|kimi)/.test(m)) groups["Chinese"].push(m);
+            else groups["Other"].push(m);
+          }
+          return Object.entries(groups).map(([gname, list]) => (
+            list.length === 0 ? null : (
+              <div key={gname} style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>
+                  {gname}
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {list.map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => togglePick(m)}
+                      className={`dx-chip ${pickedModels.has(m) ? "active" : ""}`}
+                      style={{ fontSize: 12 }}
+                      type="button"
+                    >
+                      {m}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )
+          ));
+        })()}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 16 }}>
           <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
             {pickedModels.size} selected · ~{Math.round(pickedModels.size * 6 * 5)}s estimate

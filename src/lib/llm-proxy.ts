@@ -3,21 +3,56 @@
 
 const PROXY_URL = "https://openai-proxy.miracleplus.com/v1/chat/completions";
 
+// Curated. Ordered by what we actually want to evaluate first — flagship
+// reasoning models at the top, fast/cheap workhorses below, niche at the
+// bottom. Short alias → proxy id.
 export const KNOWN_MODELS: Record<string, string> = {
-  "glm-4.7":        "z-ai/glm-4.7",
-  "glm-5":          "z-ai/glm-5",
-  "qwen3-235b":     "qwen/qwen3-235b-a22b-2507",
-  "qwen3-next-80b": "qwen/qwen3-next-80b-a3b-instruct",
-  "deepseek-v3":    "deepseek/deepseek-chat-v3.1",
-  "kimi-k2":        "moonshotai/kimi-k2.5",
-  "claude-opus":    "anthropic/claude-opus-4.7",
-  "claude-sonnet":  "anthropic/claude-sonnet-4.5",
-  "gpt-5":          "openai/gpt-5",
-  "gpt-5-mini":     "openai/gpt-5-mini",
-  "gpt-5-nano":     "openai/gpt-5-nano",
-  "gemini-3-pro":   "gemini-3-pro-preview",
-  "gemini-3-flash": "google/gemini-3-flash-preview",
-  "grok-4":         "x-ai/grok-4",
+  // ───── Frontier flagships ─────
+  "claude-opus-4.7":   "anthropic/claude-opus-4.7",
+  "claude-opus-4.6":   "anthropic/claude-opus-4.6",
+  "claude-opus-4.5":   "anthropic/claude-opus-4.5",
+  "claude-sonnet-4.6": "claude-sonnet-4-6",
+  "claude-sonnet-4.5": "anthropic/claude-sonnet-4.5",
+  "claude-sonnet-3.7": "anthropic/claude-3.7-sonnet",
+  "gpt-5":             "openai/gpt-5",
+  "gpt-5.2":           "openai/gpt-5.2",
+  "gpt-5.1":           "openai/gpt-5.1",
+  "gpt-4.1":           "openai/gpt-4.1",
+  "gemini-3-pro":      "google/gemini-3-pro-preview",
+  "gemini-2.5-pro":    "google/gemini-2.5-pro",
+  "grok-4":            "x-ai/grok-4",
+  "o3":                "openai/o3",
+  "o1":                "openai/o1",
+
+  // ───── Fast / cheap workhorses ─────
+  "gemini-3-flash":    "google/gemini-3-flash-preview",
+  "gemini-2.5-flash":  "google/gemini-2.5-flash",
+  "gpt-5-mini":        "openai/gpt-5-mini",
+  "gpt-5-nano":        "openai/gpt-5-nano",
+  "gpt-4.1-mini":      "openai/gpt-4.1-mini",
+  "gpt-4.1-nano":      "openai/gpt-4.1-nano",
+  "gpt-4o-mini":       "openai/gpt-4o-mini",
+  "o4-mini":           "openai/o4-mini",
+  "claude-sonnet-4":   "anthropic/claude-sonnet-4",
+  "grok-3":            "x-ai/grok-3",
+
+  // ───── Chinese leaders ─────
+  "glm-5":               "z-ai/glm-5",
+  "glm-4.7":             "z-ai/glm-4.7",
+  "glm-4.6":             "z-ai/glm-4.6",
+  "qwen3.5-397b":        "qwen/qwen3.5-397b-a17b",
+  "qwen3-235b-thinking": "qwen/qwen3-235b-a22b-thinking-2507",
+  "qwen3-235b":          "qwen/qwen3-235b-a22b-2507",
+  "qwen3-next-80b":      "qwen/qwen3-next-80b-a3b-instruct",
+  "qwen3-next-80b-think":"qwen/qwen3-next-80b-a3b-thinking",
+  "qwen3-30b":           "qwen/qwen3-30b-a3b-instruct-2507",
+  "deepseek-v3":         "deepseek/deepseek-chat-v3.1",
+  "kimi-k2":             "moonshotai/kimi-k2.5",
+  "kimi-k2-thinking":    "moonshotai/kimi-k2-thinking",
+
+  // ───── Other ─────
+  "minimax-m2.5":  "minimax/minimax-m2.5",
+  "nemotron-3":    "nvidia/nemotron-3-super-120b-a12b:free",
 };
 
 export interface LlmCallResult {
