@@ -83,27 +83,40 @@ export default function BenchPage() {
     });
   };
 
+  const [progress, setProgress] = useState<{ done: number; total: number; cur: string } | null>(null);
+
   const runBench = async () => {
     if (pickedModels.size === 0) return;
     setRunning(true);
     setError(null);
-    try {
-      const r = await fetch("/api/bench", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ models: Array.from(pickedModels) }),
-      });
-      if (!r.ok) {
-        const e = await r.json().catch(() => ({}));
-        setError(e.error || `HTTP ${r.status}`);
-      } else {
-        refresh();
+    const models = Array.from(pickedModels);
+    // Single shared runId across the per-model fan-out
+    const runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    setProgress({ done: 0, total: models.length, cur: models[0] ?? "" });
+
+    let succeeded = 0;
+    for (const m of models) {
+      setProgress({ done: succeeded, total: models.length, cur: m });
+      try {
+        const r = await fetch("/api/bench", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ models: [m], runId }),
+        });
+        if (!r.ok) {
+          const e = await r.json().catch(() => ({}));
+          setError(`${m}: ${e.error || `HTTP ${r.status}`}`);
+        }
+      } catch (e) {
+        setError(`${m}: ${String(e)}`);
       }
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setRunning(false);
+      succeeded++;
+      // Refresh after each model so the leaderboard fills in live.
+      refresh();
     }
+
+    setProgress(null);
+    setRunning(false);
   };
 
   const expandRun = async (runId: string) => {
@@ -193,6 +206,17 @@ export default function BenchPage() {
             {running ? "Running…" : "Run benchmark"}
           </button>
         </div>
+        {progress && (
+          <div style={{ marginTop: 12, padding: 8, background: "var(--bg)", borderRadius: 6, fontSize: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+              <span>Running: <strong>{progress.cur}</strong></span>
+              <span style={{ color: "var(--text-tertiary)" }}>{progress.done} / {progress.total}</span>
+            </div>
+            <div style={{ height: 4, background: "var(--border-light)", borderRadius: 2, overflow: "hidden" }}>
+              <div style={{ height: "100%", width: `${(progress.done / progress.total) * 100}%`, background: "var(--blue)", transition: "width 0.3s" }} />
+            </div>
+          </div>
+        )}
         {error && <div style={{ marginTop: 12, fontSize: 12, color: "#DC2626" }}>{error}</div>}
       </div>
 

@@ -65,8 +65,10 @@ function aggregateByModel(rows: Array<Record<string, unknown>>) {
   })).sort((a, b) => (b.analyzeAvg + b.introAvg) - (a.analyzeAvg + a.introAvg));
 }
 
-// POST /api/bench { models: ["glm-4.7", "deepseek-v3"] } → run a benchmark.
-// Returns { runId, perModel: [...] } with per-model aggregates from this run.
+// POST /api/bench { models: ["glm-4.7", ...], runId? } → run benchmark.
+// If the request includes runId, it appends to an existing run (so the
+// client can fan out one model per request — sidesteps the 5-min Vercel
+// limit and lets the UI show progress as each model lands).
 export async function POST(req: NextRequest) {
   const gate = await requireAdmin(req);
   if ("response" in gate) return gate.response;
@@ -76,10 +78,9 @@ export async function POST(req: NextRequest) {
     ? body.models
     : listKnownModels();
 
-  const runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const runId: string = body.runId
+    ?? `run_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 
-  // Run models in parallel — each one is ~6 sequential calls (2 tasks × 3 samples).
-  // Promise.all caps total wall time at the slowest model.
   const results = await Promise.allSettled(
     requested.map((m) => benchOneModel(m, runId)),
   );

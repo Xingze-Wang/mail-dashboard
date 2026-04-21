@@ -292,7 +292,8 @@ function scoreIntro(text: string, sample: typeof BENCH_SAMPLES[0]): IntroScore {
   const chars = [...t].length;
 
   // The prompt mandates 三段论: 最近在 X，读到 Y，其中 Z
-  const threePart = /最近在.+[，,].+读到.+[，,].+/.test(t);
+  // Models drop the optional "了" and may add "时" before the comma; accept both.
+  const threePart = /最近在[\s\S]{4,80}?[，,][\s\S]{0,40}?读到[\s\S]{4,80}?[，,][\s\S]+/.test(t);
 
   // Banned symbols (per prompt's strict rule)
   const noBannedSym = !/["*$%]|\/\//.test(t);
