@@ -267,18 +267,7 @@ export default function BenchPage() {
                   <code style={{ color: "var(--text-tertiary)", fontSize: 11 }}>{r.runId}</code>
                 </button>
                 {openRun === r.runId && openRunDetail && (
-                  <div style={{ borderTop: "1px solid var(--border-light)", padding: 12, background: "var(--card)", display: "flex", flexDirection: "column", gap: 8 }}>
-                    {openRunDetail.rows.map((row, i) => (
-                      <div key={i} style={{ display: "grid", gridTemplateColumns: "120px 70px 50px auto", gap: 12, fontSize: 11.5, alignItems: "start" }}>
-                        <span style={{ fontWeight: 600 }}>{row.model}</span>
-                        <span style={{ color: "var(--text-tertiary)" }}>{row.task} #{row.sample_idx + 1}</span>
-                        <span style={{ color: row.score >= 0.7 ? "var(--green)" : row.score >= 0.4 ? "var(--gold)" : "var(--coral)", fontWeight: 600 }}>{row.score.toFixed(2)}</span>
-                        <span style={{ color: row.error ? "var(--coral)" : "var(--text-secondary)", whiteSpace: "pre-wrap", overflow: "hidden", textOverflow: "ellipsis", maxHeight: 60, lineHeight: 1.4 }}>
-                          {row.error ?? row.output_text.slice(0, 280)}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
+                  <RunDetail rows={openRunDetail.rows} />
                 )}
               </div>
             ))}
@@ -286,5 +275,137 @@ export default function BenchPage() {
         </div>
       )}
     </div>
+  );
+}
+
+// ───────────────────────── Run-detail viewer ─────────────────────────
+
+const SAMPLE_TITLES = [
+  "4D Gaussian Splatting (heavy compute, 3D Vision, Chinese author)",
+  "FastInfer (heavy compute, LLM Architecture, Chinese author)",
+  "Survey of Tokenization (no compute, NLP, non-Chinese author)",
+];
+
+function RunDetail({ rows }: { rows: RunDetail["rows"] }) {
+  // Group rows: model → sample_idx → {analyze, intro}
+  const byModel = new Map<string, Map<number, { analyze?: typeof rows[0]; intro?: typeof rows[0] }>>();
+  for (const r of rows) {
+    const mm = byModel.get(r.model) ?? new Map();
+    const ss = mm.get(r.sample_idx) ?? {};
+    if (r.task === "analyze") ss.analyze = r;
+    if (r.task === "intro") ss.intro = r;
+    mm.set(r.sample_idx, ss);
+    byModel.set(r.model, mm);
+  }
+
+  // Active model selector (first model by default)
+  const models = Array.from(byModel.keys());
+  const [activeModel, setActiveModel] = useState<string>(models[0] ?? "");
+
+  return (
+    <div style={{ borderTop: "1px solid var(--border-light)", padding: 16, background: "var(--card)" }}>
+      {/* Model tab strip */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14 }}>
+        {models.map((m) => (
+          <button
+            key={m}
+            type="button"
+            onClick={() => setActiveModel(m)}
+            className={`dx-chip ${activeModel === m ? "active" : ""}`}
+            style={{ fontSize: 11 }}
+          >
+            {m}
+          </button>
+        ))}
+      </div>
+
+      {/* Per-sample rows for active model */}
+      {activeModel && [0, 1, 2].map((sampleIdx) => {
+        const pair = byModel.get(activeModel)?.get(sampleIdx);
+        if (!pair) return null;
+        return (
+          <div key={sampleIdx} style={{ marginBottom: 18, padding: 12, background: "var(--bg)", borderRadius: 8, border: "1px solid var(--border-light)" }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 10 }}>
+              Paper #{sampleIdx + 1}: {SAMPLE_TITLES[sampleIdx]}
+            </div>
+
+            {/* Analyze */}
+            {pair.analyze && <TaskCard row={pair.analyze} task="analyze" />}
+            {/* Intro */}
+            {pair.intro && <TaskCard row={pair.intro} task="intro" />}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function TaskCard({ row, task }: { row: RunDetail["rows"][0]; task: "analyze" | "intro" }) {
+  // output_text is JSON-encoded {raw, grade}
+  let raw = "";
+  let grade: Record<string, unknown> = {};
+  try {
+    const parsed = JSON.parse(row.output_text || "{}");
+    raw = parsed.raw ?? "";
+    grade = parsed.grade ?? {};
+  } catch {
+    raw = row.output_text || "";
+  }
+
+  const scoreColor = row.score >= 0.85 ? "var(--green)"
+    : row.score >= 0.5 ? "var(--gold)" : "var(--coral)";
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 6, fontSize: 11.5 }}>
+        <span style={{ fontWeight: 600, textTransform: "uppercase", color: "var(--text-tertiary)", letterSpacing: "0.04em" }}>
+          {task}
+        </span>
+        <span style={{ color: scoreColor, fontWeight: 700 }}>★ {row.score.toFixed(2)}</span>
+        <span style={{ color: "var(--text-tertiary)" }}>{row.latency_s}s</span>
+        <span style={{ color: "var(--text-tertiary)" }}>{row.tokens_out ?? "?"} tokens</span>
+        {row.error && <span style={{ color: "var(--coral)" }}>ERROR</span>}
+      </div>
+
+      {/* Grade breakdown */}
+      {!row.error && Object.keys(grade).length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8, fontSize: 10.5 }}>
+          {task === "analyze" && (
+            <>
+              <Badge ok={grade.correctNeedsCompute as boolean | undefined} label="needs_compute" />
+              <Badge ok={grade.correctLevel as boolean | undefined} label="level" />
+              <Badge ok={grade.correctDirection as boolean | undefined} label="direction" />
+              <Badge ok={grade.correctChinese as boolean | undefined} label="is_chinese" />
+            </>
+          )}
+          {task === "intro" && (
+            <>
+              <Badge ok={grade.threePart as boolean | undefined} label="三段论" />
+              <Badge ok={grade.noBannedSym as boolean | undefined} label="符号干净" />
+              <Badge ok={grade.refsTitle as boolean | undefined} label="引用标题" />
+              <Badge ok={grade.plausibleLength as boolean | undefined} label={`长度 ${grade.chars}字`} />
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Raw output */}
+      <div style={{ background: "var(--card)", border: "1px solid var(--border-light)", borderRadius: 6, padding: "8px 10px", fontSize: 11.5, whiteSpace: "pre-wrap", maxHeight: 200, overflowY: "auto", fontFamily: task === "analyze" ? "ui-monospace, SFMono-Regular, monospace" : "inherit", lineHeight: 1.5 }}>
+        {row.error ? <span style={{ color: "var(--coral)" }}>{row.error}</span> : raw}
+      </div>
+    </div>
+  );
+}
+
+function Badge({ ok, label }: { ok: boolean | undefined; label: string }) {
+  if (ok === undefined) return null;
+  return (
+    <span style={{
+      padding: "2px 6px", borderRadius: 4, fontWeight: 600,
+      background: ok ? "var(--dx-green-soft)" : "var(--dx-coral-soft)",
+      color: ok ? "var(--dx-green)" : "var(--dx-coral)",
+    }}>
+      {ok ? "✓" : "✗"} {label}
+    </span>
   );
 }
