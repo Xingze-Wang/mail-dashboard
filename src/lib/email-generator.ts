@@ -110,7 +110,7 @@ function generateThirdParagraph(
 
 // ============ Prompt template loading ============
 
-const DEFAULT_INTRO_PROMPT_NAME = "pipeline_intro_prompt";
+export const DEFAULT_INTRO_PROMPT_NAME = "pipeline_intro_prompt";
 
 /**
  * Load a prompt template from the DB (templates table).
@@ -132,7 +132,7 @@ async function loadPromptTemplate(name: string): Promise<string | null> {
 
 // ============ Gemini personalized intro ============
 
-const DEFAULT_INTRO_PROMPT = `根据论文写一句个性化开头（1句话）。
+export const DEFAULT_INTRO_PROMPT = `根据论文写一句个性化开头（1句话）。
 
 标题: {{title}}
 摘要: {{abstract}}

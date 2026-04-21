@@ -7,6 +7,7 @@ import { Lock, Loader2, User } from "lucide-react";
 function LoginInner() {
   const params = useSearchParams();
   const next = params.get("next") || "/";
+  const stack = params.get("stack") === "1";
 
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
@@ -21,7 +22,7 @@ function LoginInner() {
       const r = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ identifier, password }),
+        body: JSON.stringify({ identifier, password, stack }),
       });
       if (!r.ok) {
         const d = await r.json().catch(() => ({}));

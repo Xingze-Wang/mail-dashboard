@@ -162,28 +162,55 @@ export function ReviewPane({ leads, onExit, onSent, onSkipped, initialLeadId }: 
     setIdx((i) => Math.max(i - 1, 0));
   }, []);
 
-  const doSend = useCallback(async () => {
+  // Edit-reason modal state. Opens when sales hits Send AND the draft was
+  // edited from the AI's original. Skippable.
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [pendingEditReasons, setPendingEditReasons] = useState<Set<string>>(new Set());
+  const [pendingEditNote, setPendingEditNote] = useState("");
+
+  // Compare plain-text to plain-text (not HTML-to-HTML) — `body` is
+  // initialized as htmlToPlainText(draftHtml), and the round-trip through
+  // plainToHtml() never equals the original HTML, so comparing HTML would
+  // mark every unedited send as "edited" and pop the reason modal every time.
+  const isEdited = useMemo(() => {
+    if (!lead) return false;
+    const originalBody = lead.draftHtml ? htmlToPlainText(lead.draftHtml) : "";
+    return subject !== (lead.draftSubject || "") || body !== originalBody;
+  }, [lead, subject, body]);
+
+  const requestSend = useCallback(() => {
     if (!lead || sending || !canEmail) return;
     if (gated && !override) {
       setError(`Lead is < ${MIN_AGE_DAYS}d old — flip the override toggle to send.`);
       return;
     }
+    if (isEdited) {
+      setPendingEditReasons(new Set());
+      setPendingEditNote("");
+      setShowEditModal(true);
+    } else {
+      void actuallySend([], "");
+    }
+  }, [lead, sending, canEmail, gated, override, isEdited]); // eslint-disable-line
+
+  const actuallySend = useCallback(async (reasons: string[], note: string) => {
+    if (!lead) return;
     setSending(true);
     setError(null);
+    setShowEditModal(false);
     try {
-      // Save edited draft first (only if changed)
       const editedHtml = plainToHtml(body);
-      if (subject !== (lead.draftSubject || "") || editedHtml !== (lead.draftHtml || "")) {
-        await fetch(`/api/pipeline/${lead.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ draftSubject: subject, draftHtml: editedHtml }),
-        });
-      }
       const res = await fetch("/api/pipeline/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: lead.id, override: gated && override }),
+        body: JSON.stringify({
+          id: lead.id,
+          override: gated && override,
+          editedSubject: subject,
+          editedHtml,
+          editReasons: reasons.length ? reasons : null,
+          editNote: note || null,
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -197,7 +224,11 @@ export function ReviewPane({ leads, onExit, onSent, onSkipped, initialLeadId }: 
     } finally {
       setSending(false);
     }
-  }, [lead, sending, canEmail, gated, override, subject, body, onSent, advance]);
+  }, [lead, gated, override, subject, body, onSent, advance]);
+
+  // Old name kept for the keyboard handler — wraps requestSend so Cmd+Enter
+  // still triggers the same intercept.
+  const doSend = requestSend;
 
   const doSkip = useCallback(async () => {
     if (!lead || skipping) return;
@@ -439,6 +470,121 @@ export function ReviewPane({ leads, onExit, onSent, onSkipped, initialLeadId }: 
           )}
         </div>
       </div>
+
+      {/* Edit-reason modal */}
+      {showEditModal && (
+        <EditReasonModal
+          editDistance={approxEditDistance(lead?.draftHtml || "", plainToHtml(body))}
+          reasons={pendingEditReasons}
+          note={pendingEditNote}
+          onReasonsChange={setPendingEditReasons}
+          onNoteChange={setPendingEditNote}
+          onConfirm={() => actuallySend(Array.from(pendingEditReasons), pendingEditNote)}
+          onSkip={() => actuallySend([], "")}
+          onCancel={() => setShowEditModal(false)}
+        />
+      )}
     </div>
   );
+}
+
+// ─────────── Edit reason modal ───────────
+
+const EDIT_REASON_OPTIONS: Array<{ key: string; label: string; hint?: string }> = [
+  { key: "ai_misunderstood", label: "AI 对论文理解不对" },
+  { key: "format",           label: "格式 / 标点不舒服" },
+  { key: "too_verbose",      label: "太啰嗦" },
+  { key: "too_robotic",      label: "太套路 / 不像人话" },
+  { key: "individual_taste", label: "想换说法（个人偏好）" },
+];
+
+function EditReasonModal({
+  editDistance, reasons, note,
+  onReasonsChange, onNoteChange, onConfirm, onSkip, onCancel,
+}: {
+  editDistance: number;
+  reasons: Set<string>;
+  note: string;
+  onReasonsChange: (s: Set<string>) => void;
+  onNoteChange: (s: string) => void;
+  onConfirm: () => void;
+  onSkip: () => void;
+  onCancel: () => void;
+}) {
+  const toggle = (k: string) => {
+    const next = new Set(reasons);
+    if (next.has(k)) next.delete(k);
+    else next.add(k);
+    onReasonsChange(next);
+  };
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      style={{
+        position: "fixed", inset: 0, background: "rgba(10,10,10,0.45)",
+        display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000,
+      }}
+      onClick={onCancel}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "var(--card)", borderRadius: 12, padding: 24, maxWidth: 460, width: "92%",
+          boxShadow: "0 20px 50px rgba(0,0,0,0.18)",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 4 }}>
+          <h3 style={{ margin: 0, fontSize: 16 }}>You edited this draft</h3>
+          <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+            {editDistance > 0 ? `${editDistance} char diff` : "minor tweak"}
+          </span>
+        </div>
+        <p style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 6, marginBottom: 16 }}>
+          Why? (optional, multi-select — helps us improve the AI prompt)
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
+          {EDIT_REASON_OPTIONS.map((o) => (
+            <label key={o.key} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={reasons.has(o.key)}
+                onChange={() => toggle(o.key)}
+              />
+              {o.label}
+            </label>
+          ))}
+        </div>
+        <textarea
+          value={note}
+          onChange={(e) => onNoteChange(e.target.value)}
+          placeholder="Optional: anything else? (free text)"
+          style={{
+            width: "100%", minHeight: 60, padding: 8, border: "1px solid var(--border)",
+            borderRadius: 6, fontSize: 12, fontFamily: "inherit", marginBottom: 14, boxSizing: "border-box",
+          }}
+        />
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+          <button type="button" className="dx-ghost" onClick={onCancel}>Cancel</button>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button type="button" className="dx-secondary" onClick={onSkip}>Skip & send</button>
+            <button type="button" className="dx-primary" onClick={onConfirm}>
+              {reasons.size > 0 ? `Send (${reasons.size} tagged)` : "Send"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function approxEditDistance(a: string, b: string): number {
+  if (!a && !b) return 0;
+  if (a === b) return 0;
+  const counts = new Map<string, number>();
+  for (const c of a) counts.set(c, (counts.get(c) ?? 0) + 1);
+  for (const c of b) counts.set(c, (counts.get(c) ?? 0) - 1);
+  let diff = 0;
+  for (const v of counts.values()) diff += Math.abs(v);
+  return Math.floor(diff / 2);
 }

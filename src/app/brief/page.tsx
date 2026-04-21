@@ -13,6 +13,11 @@ import {
   Compass,
   Clock,
   Send,
+  Copy,
+  Check,
+  RefreshCw,
+  MessageCircle,
+  Sparkles,
 } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 
@@ -165,18 +170,45 @@ function DetailView({
   onBack: () => void;
 }) {
   const { paper, research, outreach, authorMismatch } = brief;
-  const [summary, setSummary] = useState<string | null>(null);
+  const [structured, setStructured] = useState<{
+    paper: string;
+    mainIdea: string;
+    coreInnovation: string;
+    questions: string[];
+    approach: string;
+  } | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(true);
   const [wechatMarked, setWechatMarked] = useState(false);
   const [wechatSaving, setWechatSaving] = useState(false);
+  const [wechatAt, setWechatAt] = useState<string | null>(null);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  const loadBrief = (bustCache = false) => {
+    setSummaryLoading(true);
+    const url = `/api/brief/summary?id=${encodeURIComponent(brief.id)}${bustCache ? `&t=${Date.now()}` : ""}`;
+    fetch(url, bustCache ? { cache: "no-store" } : undefined)
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.paper && d.mainIdea && d.coreInnovation && Array.isArray(d.questions) && d.approach) {
+          setStructured({
+            paper: d.paper,
+            mainIdea: d.mainIdea,
+            coreInnovation: d.coreInnovation,
+            questions: d.questions,
+            approach: d.approach,
+          });
+        } else if (d.summary) {
+          setStructured({ paper: "", mainIdea: d.summary, coreInnovation: "", questions: [], approach: "" });
+        } else {
+          setStructured(null);
+        }
+      })
+      .catch(() => setStructured(null))
+      .finally(() => setSummaryLoading(false));
+  };
 
   useEffect(() => {
-    setSummaryLoading(true);
-    fetch(`/api/brief/summary?id=${encodeURIComponent(brief.id)}`)
-      .then((r) => r.json())
-      .then((d) => setSummary(d.summary ?? null))
-      .catch(() => setSummary(null))
-      .finally(() => setSummaryLoading(false));
+    loadBrief(false);
 
     // Check if already marked
     const params = new URLSearchParams();
@@ -184,9 +216,23 @@ function DetailView({
     else params.set("lead_id", brief.id);
     fetch(`/api/brief/wechat?${params}`)
       .then((r) => r.json())
-      .then((d) => setWechatMarked(d.addedWechat))
+      .then((d) => {
+        setWechatMarked(!!d.addedWechat);
+        setWechatAt(d.record?.wechat_at ?? null);
+      })
       .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [brief.id, brief.paper.arxivId]);
+
+  const copyToClipboard = async (text: string, key: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedKey(key);
+      setTimeout(() => setCopiedKey((k) => (k === key ? null : k)), 1500);
+    } catch {
+      // navigator.clipboard is unavailable on http or old browsers; no-op.
+    }
+  };
 
   const markWechat = async () => {
     setWechatSaving(true);
@@ -201,6 +247,7 @@ function DetailView({
         }),
       });
       setWechatMarked(true);
+      setWechatAt(new Date().toISOString());
     } catch {
       // ignore
     } finally {
@@ -210,48 +257,44 @@ function DetailView({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <button onClick={onBack} className="btn">
-          <ArrowLeft />
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <button onClick={onBack} className="btn" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <ArrowLeft style={{ width: 14, height: 14 }} />
           Back to results
         </button>
 
         {wechatMarked ? (
-          <span className="badge-status replied" style={{ padding: "5px 14px" }}>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "6px 14px", borderRadius: 999, background: "#ECFDF5", border: "1px solid #A7F3D0", color: "#047857", fontSize: 12, fontWeight: 500 }}>
+            <Check style={{ width: 14, height: 14 }} />
             Added on WeChat
-          </span>
+            {wechatAt && (
+              <span style={{ color: "#047857", opacity: 0.7, marginLeft: 4 }}>
+                · {formatDate(wechatAt)}
+              </span>
+            )}
+          </div>
         ) : (
-          <button onClick={markWechat} disabled={wechatSaving} className="btn btn-primary">
-            {wechatSaving ? "Saving..." : "Mark: Added on WeChat"}
+          <button
+            onClick={markWechat}
+            disabled={wechatSaving}
+            className="btn btn-primary"
+            style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+          >
+            <MessageCircle style={{ width: 14, height: 14 }} />
+            {wechatSaving ? "Saving…" : "Mark: Added on WeChat"}
           </button>
         )}
       </div>
 
-      {/* AI Summary — the main thing sales reads */}
-      <div style={{ borderRadius: 10, border: "1px solid #BFDBFE", background: "var(--blue-bg)", padding: 20 }}>
-        <h3 style={{ fontFamily: "var(--font-heading)", fontSize: 16, fontWeight: 600, color: "var(--blue)", marginBottom: 12, letterSpacing: "-0.01em" }}>
-          Sales Brief
-        </h3>
-        {summaryLoading ? (
-          <p style={{ fontSize: 13, color: "var(--text-tertiary)" }}>Generating brief...</p>
-        ) : summary ? (
-          <p style={{ fontSize: 13, color: "var(--text)", lineHeight: 1.7, whiteSpace: "pre-line" }}>
-            {summary}
-          </p>
-        ) : (
-          <p style={{ fontSize: 12, color: "var(--text-tertiary)" }}>Unable to generate summary</p>
-        )}
-      </div>
-
-      {/* Header */}
-      <div className="section-card" style={{ padding: 20 }}>
+      {/* Name header (compact) */}
+      <div className="section-card" style={{ padding: 16 }}>
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16 }}>
           <div>
             <h2 style={{ fontFamily: "var(--font-heading)", fontSize: 20, fontWeight: 600, color: "var(--text)", marginBottom: 4, letterSpacing: "-0.01em" }}>
               {brief.personName}
             </h2>
             {research.schoolName && (
-              <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-secondary)", marginBottom: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-secondary)" }}>
                 <GraduationCap style={{ width: 14, height: 14 }} />
                 {research.schoolName}
                 {tierLabel(research.schoolTier) && (
@@ -263,15 +306,14 @@ function DetailView({
             )}
           </div>
           {paper.pdfUrl && (
-            <a href={paper.pdfUrl} target="_blank" rel="noopener noreferrer" className="btn">
-              <ExternalLink />
+            <a href={paper.pdfUrl} target="_blank" rel="noopener noreferrer" className="btn" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <ExternalLink style={{ width: 14, height: 14 }} />
               PDF
             </a>
           )}
         </div>
       </div>
 
-      {/* Author mismatch warning */}
       {authorMismatch && (
         <div style={{ borderRadius: 10, border: "1px solid #FDE68A", background: "#FFFBEB", padding: 16 }}>
           <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
@@ -288,70 +330,180 @@ function DetailView({
         </div>
       )}
 
-      {/* Paper info */}
-      <div className="section-card" style={{ padding: 20 }}>
-        <h3 style={{ fontFamily: "var(--font-heading)", fontSize: 14, fontWeight: 600, color: "var(--text)", marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
-          <FileText style={{ width: 14, height: 14 }} />
-          Paper
-        </h3>
-        <p style={{ fontSize: 14, color: "var(--text)", fontWeight: 600, marginBottom: 8 }}>
-          {paper.title}
-        </p>
-        <p style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 12 }}>
-          {paper.authors}
-        </p>
-        {paper.abstract && (
-          <p style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.6 }}>
-            {paper.abstract.length > 600
-              ? paper.abstract.slice(0, 600) + "..."
-              : paper.abstract}
-          </p>
-        )}
-      </div>
+      {/* Main two-column: brief on left (primary), paper+research context on right */}
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 3fr) minmax(0, 2fr)", gap: 20 }}>
 
-      {/* Research profile */}
-      <div className="section-card" style={{ padding: 20 }}>
-        <h3 style={{ fontFamily: "var(--font-heading)", fontSize: 14, fontWeight: 600, color: "var(--text)", marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
-          <Cpu style={{ width: 14, height: 14 }} />
-          Research Profile
-        </h3>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-          {research.computeLevel && (
-            <div>
-              <p style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em", fontWeight: 600 }}>
-                Compute Need
-              </p>
-              <span className={computeBadgeClass(research.computeLevel)}>
-                {research.computeLevel}
-              </span>
-              {research.computeConfidence != null && (
-                <span style={{ marginLeft: 8, fontSize: 11, color: "var(--text-tertiary)" }}>
-                  {Math.round(research.computeConfidence * 100)}% conf
-                </span>
+        {/* LEFT: Sales Brief — the thing sales actually reads */}
+        <div style={{ borderRadius: 10, border: "1px solid #BFDBFE", background: "var(--blue-bg)", padding: 20 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 14 }}>
+            <h3 style={{ fontFamily: "var(--font-heading)", fontSize: 16, fontWeight: 600, color: "var(--blue)", letterSpacing: "-0.01em", display: "inline-flex", alignItems: "center", gap: 8, margin: 0 }}>
+              <Sparkles style={{ width: 16, height: 16 }} />
+              Sales Brief
+            </h3>
+            <div style={{ display: "flex", gap: 8 }}>
+              {structured && !summaryLoading && (
+                <button
+                  onClick={() => copyToClipboard(briefToPlain(structured), "all")}
+                  className="btn"
+                  style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, padding: "4px 10px" }}
+                >
+                  {copiedKey === "all" ? <Check style={{ width: 12, height: 12 }} /> : <Copy style={{ width: 12, height: 12 }} />}
+                  {copiedKey === "all" ? "Copied" : "Copy all"}
+                </button>
+              )}
+              <button
+                onClick={() => loadBrief(true)}
+                disabled={summaryLoading}
+                className="btn"
+                style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, padding: "4px 10px" }}
+              >
+                <RefreshCw style={{ width: 12, height: 12, animation: summaryLoading ? "spin 1s linear infinite" : undefined }} />
+                {summaryLoading ? "…" : "Regenerate"}
+              </button>
+            </div>
+          </div>
+
+          {summaryLoading ? (
+            <BriefSkeleton />
+          ) : structured ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              {structured.paper && (
+                <div style={{ fontSize: 13.5, color: "var(--text)", fontWeight: 500, lineHeight: 1.55 }}>
+                  {structured.paper}
+                </div>
+              )}
+              {structured.mainIdea && (
+                <BriefSection
+                  label="主要想法"
+                  body={structured.mainIdea}
+                  onCopy={() => copyToClipboard(structured.mainIdea, "main")}
+                  copied={copiedKey === "main"}
+                />
+              )}
+              {structured.coreInnovation && (
+                <BriefSection
+                  label="核心创新"
+                  body={structured.coreInnovation}
+                  onCopy={() => copyToClipboard(structured.coreInnovation, "core")}
+                  copied={copiedKey === "core"}
+                />
+              )}
+              {structured.questions.length > 0 && (
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                    <div style={sectionLabel}>可以聊的技术问题</div>
+                    <CopyBtn
+                      onClick={() => copyToClipboard(structured.questions.map((q, i) => `${i + 1}. ${q}`).join("\n"), "qs")}
+                      copied={copiedKey === "qs"}
+                    />
+                  </div>
+                  <ol style={{ margin: 0, paddingLeft: 20, display: "flex", flexDirection: "column", gap: 6 }}>
+                    {structured.questions.map((q, i) => (
+                      <li key={i} style={{ fontSize: 13, color: "var(--text)", lineHeight: 1.6 }}>
+                        <span style={{ display: "flex", alignItems: "flex-start", gap: 6, justifyContent: "space-between" }}>
+                          <span>{q}</span>
+                          <CopyBtn
+                            onClick={() => copyToClipboard(q, `q${i}`)}
+                            copied={copiedKey === `q${i}`}
+                            subtle
+                          />
+                        </span>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              )}
+              {structured.approach && (
+                <BriefSection
+                  label="怎么切入"
+                  body={structured.approach}
+                  onCopy={() => copyToClipboard(structured.approach, "approach")}
+                  copied={copiedKey === "approach"}
+                />
               )}
             </div>
-          )}
-          {research.directions.length > 0 && (
-            <div>
-              <p style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em", fontWeight: 600 }}>
-                <Compass style={{ width: 12, height: 12, display: "inline", marginRight: 4 }} />
-                Directions
-              </p>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                {research.directions.map((d) => (
-                  <span key={d} className="direction-tag" style={{ background: "var(--blue-bg)", color: "var(--blue)", borderColor: "#BFDBFE" }}>
-                    {d}
-                  </span>
-                ))}
-              </div>
+          ) : (
+            <div style={{ padding: 16, textAlign: "center" }}>
+              <p style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 10 }}>Unable to generate brief</p>
+              <button onClick={() => loadBrief(true)} className="btn" style={{ fontSize: 12 }}>
+                Try again
+              </button>
             </div>
           )}
         </div>
-        {research.computeReason && (
-          <p style={{ marginTop: 12, fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.6 }}>
-            {research.computeReason}
-          </p>
-        )}
+
+        {/* RIGHT: paper + research context (secondary, renders immediately) */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div className="section-card" style={{ padding: 16 }}>
+            <h3 style={{ fontFamily: "var(--font-heading)", fontSize: 13, fontWeight: 600, color: "var(--text)", marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
+              <FileText style={{ width: 13, height: 13 }} />
+              Paper
+            </h3>
+            <p style={{ fontSize: 13, color: "var(--text)", fontWeight: 600, marginBottom: 6, lineHeight: 1.4 }}>
+              {paper.title}
+            </p>
+            {paper.authors && (
+              <p style={{ fontSize: 11.5, color: "var(--text-tertiary)", marginBottom: 10 }}>
+                {paper.authors}
+              </p>
+            )}
+            {paper.abstract && (
+              <details style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.6 }}>
+                <summary style={{ cursor: "pointer", color: "var(--text-tertiary)", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.04em", fontWeight: 600, marginBottom: 6 }}>
+                  Abstract
+                </summary>
+                <p style={{ marginTop: 6 }}>{paper.abstract}</p>
+              </details>
+            )}
+          </div>
+
+          {(research.computeLevel || research.directions.length > 0 || research.computeReason) && (
+            <div className="section-card" style={{ padding: 16 }}>
+              <h3 style={{ fontFamily: "var(--font-heading)", fontSize: 13, fontWeight: 600, color: "var(--text)", marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
+                <Cpu style={{ width: 13, height: 13 }} />
+                Research Profile
+              </h3>
+              {research.computeLevel && (
+                <div style={{ marginBottom: 10 }}>
+                  <p style={profileLabel}>Compute Need</p>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span className={computeBadgeClass(research.computeLevel)}>
+                      {research.computeLevel}
+                    </span>
+                    {research.computeConfidence != null && (
+                      <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+                        {Math.round(research.computeConfidence * 100)}% conf
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+              {research.directions.length > 0 && (
+                <div style={{ marginBottom: 10 }}>
+                  <p style={profileLabel}>
+                    <Compass style={{ width: 11, height: 11, display: "inline", marginRight: 4 }} />
+                    Directions
+                  </p>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                    {research.directions.map((d) => (
+                      <span key={d} className="direction-tag" style={{ background: "var(--blue-bg)", color: "var(--blue)", borderColor: "#BFDBFE" }}>
+                        {d}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {research.computeReason && (
+                <div>
+                  <p style={profileLabel}>Why compute matters</p>
+                  <p style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.55, margin: 0 }}>
+                    {research.computeReason}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Outreach status */}
@@ -559,4 +711,113 @@ export default function BriefPage() {
       ) : null}
     </div>
   );
+}
+
+const sectionLabel: React.CSSProperties = {
+  fontSize: 11,
+  fontWeight: 600,
+  color: "var(--blue)",
+  textTransform: "uppercase",
+  letterSpacing: "0.05em",
+  marginBottom: 6,
+};
+
+const profileLabel: React.CSSProperties = {
+  fontSize: 10.5,
+  color: "var(--text-tertiary)",
+  marginBottom: 6,
+  textTransform: "uppercase",
+  letterSpacing: "0.04em",
+  fontWeight: 600,
+};
+
+function BriefSection({
+  label,
+  body,
+  onCopy,
+  copied,
+}: {
+  label: string;
+  body: string;
+  onCopy?: () => void;
+  copied?: boolean;
+}) {
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+        <div style={{ ...sectionLabel, marginBottom: 0 }}>{label}</div>
+        {onCopy && <CopyBtn onClick={onCopy} copied={!!copied} subtle />}
+      </div>
+      <p style={{ fontSize: 13, color: "var(--text)", lineHeight: 1.65, margin: 0, whiteSpace: "pre-line" }}>{body}</p>
+    </div>
+  );
+}
+
+function CopyBtn({ onClick, copied, subtle }: { onClick: () => void; copied: boolean; subtle?: boolean }) {
+  return (
+    <button
+      onClick={onClick}
+      title={copied ? "Copied" : "Copy"}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        padding: subtle ? "2px 6px" : "3px 8px",
+        fontSize: 10.5,
+        color: copied ? "#047857" : "var(--text-tertiary)",
+        background: "transparent",
+        border: subtle ? "none" : "1px solid var(--border-light)",
+        borderRadius: 4,
+        cursor: "pointer",
+      }}
+    >
+      {copied ? <Check style={{ width: 11, height: 11 }} /> : <Copy style={{ width: 11, height: 11 }} />}
+      {!subtle && (copied ? "Copied" : "Copy")}
+    </button>
+  );
+}
+
+function BriefSkeleton() {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div className="skeleton" style={{ height: 18, width: "70%", borderRadius: 4 }} />
+      <div>
+        <div className="skeleton" style={{ height: 11, width: 80, borderRadius: 4, marginBottom: 6 }} />
+        <div className="skeleton" style={{ height: 14, width: "100%", borderRadius: 4, marginBottom: 4 }} />
+        <div className="skeleton" style={{ height: 14, width: "92%", borderRadius: 4 }} />
+      </div>
+      <div>
+        <div className="skeleton" style={{ height: 11, width: 80, borderRadius: 4, marginBottom: 6 }} />
+        <div className="skeleton" style={{ height: 14, width: "100%", borderRadius: 4, marginBottom: 4 }} />
+        <div className="skeleton" style={{ height: 14, width: "88%", borderRadius: 4 }} />
+      </div>
+      <div>
+        <div className="skeleton" style={{ height: 11, width: 120, borderRadius: 4, marginBottom: 6 }} />
+        <div className="skeleton" style={{ height: 14, width: "95%", borderRadius: 4, marginBottom: 4 }} />
+        <div className="skeleton" style={{ height: 14, width: "90%", borderRadius: 4, marginBottom: 4 }} />
+        <div className="skeleton" style={{ height: 14, width: "85%", borderRadius: 4 }} />
+      </div>
+    </div>
+  );
+}
+
+function briefToPlain(s: {
+  paper: string;
+  mainIdea: string;
+  coreInnovation: string;
+  questions: string[];
+  approach: string;
+}): string {
+  return [
+    s.paper,
+    "",
+    `【主要想法】${s.mainIdea}`,
+    "",
+    `【核心创新】${s.coreInnovation}`,
+    "",
+    "【可以聊的技术问题】",
+    ...s.questions.map((q, i) => `${i + 1}. ${q}`),
+    "",
+    `【怎么切入】${s.approach}`,
+  ].join("\n");
 }

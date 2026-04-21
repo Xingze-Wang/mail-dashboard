@@ -131,6 +131,10 @@ async function processOne(row: Record<string, unknown>): Promise<boolean> {
         assigned_rep_id: newRepId,
         draft_subject: draft.subject,
         draft_html: draft.html,
+        // Snapshot for diff mining (frozen even as sales edits).
+        draft_original_subject: draft.subject,
+        draft_original_html: draft.html,
+        draft_model: "server-gemini",
         status: "ready",
       })
       .eq("id", id);

@@ -1767,3 +1767,153 @@ button { font-family: inherit; }
 @media (max-width: 720px) {
   .dx-stat-strip { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* ──────────────────────────────────────────────────────────────
+ * High-tech primitives (used by /scorer dashboard)
+ * ────────────────────────────────────────────────────────────── */
+
+/* Metric with monospaced value — feels like an observability tool */
+.metric-tech {
+  position: relative;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 18px 20px;
+  overflow: hidden;
+}
+.metric-tech::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(to right, rgba(59,130,246,0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(59,130,246,0.04) 1px, transparent 1px);
+  background-size: 20px 20px;
+  pointer-events: none;
+}
+.metric-tech > * { position: relative; z-index: 1; }
+.metric-tech .metric-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.metric-tech .metric-value {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 30px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.metric-tech .metric-value.gradient {
+  background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.metric-tech .metric-sub {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.metric-tech .metric-delta.up { color: #16a34a; }
+.metric-tech .metric-delta.down { color: #dc2626; }
+
+/* Pulse dot indicating live data */
+.pulse-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #16a34a;
+  position: relative;
+  flex-shrink: 0;
+}
+.pulse-dot::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  background: #16a34a;
+  opacity: 0.3;
+  animation: pulse-ring 2s ease-out infinite;
+}
+@keyframes pulse-ring {
+  0%   { transform: scale(0.7); opacity: 0.4; }
+  100% { transform: scale(1.8); opacity: 0;   }
+}
+
+/* Spinner for loading states */
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* Gradient accent bar (shown at top of active card) */
+.accent-bar {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, #3b82f6 0%, #8b5cf6 50%, #ec4899 100%);
+  opacity: 0.85;
+}
+
+/* Tech card with subtle grid + hover-lift */
+.tech-card {
+  position: relative;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
+  overflow: hidden;
+  transition: border-color 150ms, transform 150ms, box-shadow 150ms;
+}
+.tech-card:hover {
+  border-color: rgba(59,130,246,0.2);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(59,130,246,0.05);
+}
+.tech-card > .tech-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.tech-card .tech-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Loading shimmer bar that runs across a row */
+.shimmer-line {
+  position: relative;
+  height: 2px;
+  background: linear-gradient(90deg, transparent 0%, rgba(59,130,246,0.4) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: shimmer-sweep 1.5s linear infinite;
+}
+@keyframes shimmer-sweep {
+  0%   { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
+/* Mono number used inline */
+.mono-num {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}

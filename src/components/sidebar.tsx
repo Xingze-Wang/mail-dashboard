@@ -79,6 +79,12 @@ const LogsIcon = () => (
   </svg>
 );
 
+const DriftIcon = () => (
+  <svg {...Common}>
+    <path d="M3 12h4l3-9 4 18 3-9h4" />
+  </svg>
+);
+
 const SettingsIcon = () => (
   <svg {...Common}>
     <circle cx="12" cy="12" r="3" />
@@ -114,6 +120,7 @@ const toolsNav = [
   { href: "/templates", label: "Templates", Icon: TemplatesIcon, adminOnly: false },
   { href: "/scorer",    label: "Scorer",    Icon: ScorerIcon,    adminOnly: true  },
   { href: "/bench",     label: "Bench",     Icon: ScorerIcon,    adminOnly: true  },
+  { href: "/drift",     label: "Drift",     Icon: DriftIcon,     adminOnly: true  },
   { href: "/logs",      label: "Logs",      Icon: LogsIcon,      adminOnly: true  },
 ];
 
@@ -141,6 +148,9 @@ export function Sidebar() {
   const [unread, setUnread] = useState(0);
   const [ready, setReady]   = useState(0);
   const [me, setMe] = useState<{ repId: number; repName: string; role: "admin" | "sales" } | null>(null);
+  const [accounts, setAccounts] = useState<Array<{ repId: number; repName: string; email: string; role: string; active: boolean }>>([]);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [switching, setSwitching] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -155,6 +165,10 @@ export function Sidebar() {
             setMe(null);
           }
         })
+        .catch(() => { /* keep last known */ });
+      fetch("/api/auth/accounts", { cache: "no-store" })
+        .then((r) => r.json())
+        .then((d) => { if (!cancelled) setAccounts(d.accounts ?? []); })
         .catch(() => { /* keep last known */ });
     };
     loadMe();
@@ -173,13 +187,65 @@ export function Sidebar() {
   }, [pathname]);
 
   const logout = async () => {
-    await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
+    const r = await fetch("/api/auth/logout", { method: "POST" }).catch(() => null);
+    const d = r ? await r.json().catch(() => ({})) : {};
     setMe(null);
-    // Hard navigation guarantees every cached client state (including other
-    // tabs' Sidebar instances via storage event below) is rebuilt.
     window.dispatchEvent(new Event("auth:changed"));
-    window.location.assign("/login");
+    // If there was another account in the pool, the server rotated us into
+    // it — just reload, stay signed in. Otherwise go to /login.
+    if (d?.rotatedTo) window.location.reload();
+    else window.location.assign("/login");
   };
+
+  const switchAccount = async (repId: number) => {
+    if (repId === me?.repId) { setMenuOpen(false); return; }
+    setSwitching(repId);
+    try {
+      const r = await fetch("/api/auth/switch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ repId }),
+      });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        alert(d.error ?? "Switch failed");
+        return;
+      }
+      // Full reload — every component holds stale user-scoped data.
+      window.location.reload();
+    } finally {
+      setSwitching(null);
+      setMenuOpen(false);
+    }
+  };
+
+  const removeAccount = async (repId: number) => {
+    const r = await fetch("/api/auth/remove", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repId }),
+    });
+    if (!r.ok) return;
+    if (repId === me?.repId) {
+      // Removed self — server already rotated or cleared; reload refreshes state.
+      window.location.reload();
+    } else {
+      setAccounts((prev) => prev.filter((a) => a.repId !== repId));
+    }
+  };
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest?.(".account-menu")) return;
+      if (target?.closest?.(".user-pill")) return;
+      setMenuOpen(false);
+    };
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [menuOpen]);
 
   useEffect(() => {
     let cancelled = false;
@@ -271,43 +337,162 @@ export function Sidebar() {
           ))}
       </nav>
 
-      <div className="sidebar-footer">
-        <div className="user" style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          {me?.role === "admin" ? (
-            <Link href="/settings" style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none", flex: 1, minWidth: 0 }}>
-              <div className="avatar">{initialsOf(me?.repName)}</div>
-              <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
-                <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {me?.repName ?? "Signed out"}
-                </span>
-                <span style={{ fontSize: 11.5, color: "#B45309", fontWeight: 600 }}>Admin</span>
-              </div>
-            </Link>
-          ) : (
-            <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0 }}>
-              <div className="avatar">{initialsOf(me?.repName)}</div>
-              <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
-                <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {me?.repName ?? "Signed out"}
-                </span>
-                <span style={{ fontSize: 11.5, color: "var(--text-tertiary)" }}>Sales</span>
-              </div>
+      <div className="sidebar-footer" style={{ position: "relative" }}>
+        <button
+          type="button"
+          className="user-pill"
+          onClick={() => setMenuOpen((v) => !v)}
+          style={{
+            display: "flex", alignItems: "center", gap: 10,
+            width: "100%", padding: 0, background: "transparent", border: 0,
+            cursor: "pointer", textAlign: "left",
+          }}
+        >
+          <div className="avatar" style={{ position: "relative" }}>
+            {initialsOf(me?.repName)}
+            {accounts.length > 1 && (
+              <span style={{
+                position: "absolute", top: -2, right: -2,
+                background: "#3B82F6", color: "white",
+                fontSize: 9, fontWeight: 700, lineHeight: 1,
+                padding: "2px 4px", borderRadius: 999,
+                border: "1.5px solid var(--card)",
+              }}>
+                {accounts.length}
+              </span>
+            )}
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", minWidth: 0, flex: 1 }}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {me?.repName ?? "Signed out"}
+            </span>
+            <span style={{ fontSize: 11.5, color: me?.role === "admin" ? "#B45309" : "var(--text-tertiary)", fontWeight: me?.role === "admin" ? 600 : 400 }}>
+              {me?.role === "admin" ? "Admin" : me ? "Sales" : ""}
+            </span>
+          </div>
+          <svg
+            width="14" height="14" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"
+            style={{ color: "var(--text-tertiary)", transform: menuOpen ? "rotate(180deg)" : undefined, transition: "transform 150ms" }}
+          >
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </button>
+
+        {menuOpen && (
+          <div
+            className="account-menu"
+            style={{
+              position: "absolute",
+              bottom: "calc(100% + 8px)",
+              left: 0, right: 0,
+              background: "var(--card)",
+              border: "1px solid var(--border)",
+              borderRadius: 10,
+              boxShadow: "0 10px 30px rgba(0,0,0,0.08)",
+              overflow: "hidden",
+              zIndex: 50,
+            }}
+          >
+            <div style={{ padding: "10px 12px 6px", fontSize: 10.5, fontWeight: 600, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.06em", borderBottom: "1px solid var(--border-light)" }}>
+              Accounts
             </div>
-          )}
-          {me && (
-            <button
-              onClick={logout}
-              title="Sign out"
-              style={{ background: "transparent", border: 0, color: "var(--text-tertiary)", cursor: "pointer", padding: 4, borderRadius: 4 }}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
-                <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4" />
-                <polyline points="16 17 21 12 16 7" />
-                <line x1="21" y1="12" x2="9" y2="12" />
-              </svg>
-            </button>
-          )}
-        </div>
+            {accounts.map((a) => (
+              <div
+                key={a.repId}
+                style={{
+                  display: "flex", alignItems: "center", gap: 10,
+                  padding: "10px 12px",
+                  background: a.active ? "var(--bg)" : "transparent",
+                  borderBottom: "1px solid var(--border-light)",
+                  cursor: a.active ? "default" : "pointer",
+                }}
+                onClick={() => !a.active && switchAccount(a.repId)}
+              >
+                <div className="avatar" style={{ width: 28, height: 28, fontSize: 11 }}>{initialsOf(a.repName)}</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {a.repName}
+                    {a.active && (
+                      <span style={{ marginLeft: 6, fontSize: 10, color: "#16a34a", fontWeight: 600 }}>● active</span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 10.5, color: a.role === "admin" ? "#B45309" : "var(--text-tertiary)", fontWeight: a.role === "admin" ? 600 : 400 }}>
+                    {a.role === "admin" ? "Admin" : "Sales"}
+                    {switching === a.repId && <span style={{ marginLeft: 6 }}>switching…</span>}
+                  </div>
+                </div>
+                {!a.active && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); removeAccount(a.repId); }}
+                    title="Remove account"
+                    style={{ background: "transparent", border: 0, color: "var(--text-tertiary)", cursor: "pointer", padding: 4, borderRadius: 4, lineHeight: 0 }}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                      <line x1="18" y1="6" x2="6" y2="18" />
+                      <line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            ))}
+            <div style={{ display: "flex", flexDirection: "column" }}>
+              <Link
+                href="/login?stack=1"
+                onClick={() => setMenuOpen(false)}
+                style={{
+                  display: "flex", alignItems: "center", gap: 8,
+                  padding: "10px 12px", fontSize: 12.5, fontWeight: 500,
+                  color: "var(--blue)", textDecoration: "none",
+                  borderBottom: "1px solid var(--border-light)",
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="8" x2="12" y2="16" />
+                  <line x1="8" y1="12" x2="16" y2="12" />
+                </svg>
+                Add another account
+              </Link>
+              {me?.role === "admin" && (
+                <Link
+                  href="/settings"
+                  onClick={() => setMenuOpen(false)}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 8,
+                    padding: "10px 12px", fontSize: 12.5, fontWeight: 500,
+                    color: "var(--text-secondary)", textDecoration: "none",
+                    borderBottom: "1px solid var(--border-light)",
+                  }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="3" />
+                    <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" />
+                  </svg>
+                  Settings
+                </Link>
+              )}
+              <button
+                type="button"
+                onClick={logout}
+                style={{
+                  display: "flex", alignItems: "center", gap: 8,
+                  padding: "10px 12px", fontSize: 12.5, fontWeight: 500,
+                  color: "var(--text-secondary)", background: "transparent",
+                  border: 0, cursor: "pointer", textAlign: "left",
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4" />
+                  <polyline points="16 17 21 12 16 7" />
+                  <line x1="21" y1="12" x2="9" y2="12" />
+                </svg>
+                Sign out current
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </aside>
   );

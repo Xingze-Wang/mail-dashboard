@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Star, TrendingUp, BarChart3, GitCompare, AlertTriangle } from "lucide-react";
+import { Star, TrendingUp, BarChart3, GitCompare, AlertTriangle, Sparkles, Target, Users2, Loader2 } from "lucide-react";
+import { EmailQualityTab, ConversionTab, MatchTab, TechMetric } from "./_tabs";
 import {
   BarChart, Bar, LineChart, Line,
   XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell,
@@ -84,6 +85,8 @@ interface LiveData {
   sourceBreakdown: { pythonScored: number; apiScored: number; unscored: number };
 }
 
+type ScorerTab = "lead" | "email" | "conversion" | "match";
+
 export default function ScorerPage() {
   const router = useRouter();
   const [gated, setGated] = useState<"checking" | "allowed" | "forbidden">("checking");
@@ -92,6 +95,7 @@ export default function ScorerPage() {
   const [live, setLive] = useState<LiveData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [tab, setTab] = useState<ScorerTab>("lead");
 
   useEffect(() => {
     fetch("/api/auth/me")
@@ -119,78 +123,166 @@ export default function ScorerPage() {
       })
       .catch(() => setError("Failed to load scorer data"))
       .finally(() => setLoading(false));
-  }, []);
+  }, [gated]);
 
-  if (loading) {
-    return (
-      <div>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 28 }}>
-          <h1 className="page-title" style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <Star className="h-6 w-6" />
-            Scorer
-          </h1>
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr 1fr 1.2fr", gap: 16, marginBottom: 24 }}>
-          {Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className="skeleton" style={{ height: 100 }} />
-          ))}
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-          <div className="skeleton" style={{ height: 240 }} />
-          <div className="skeleton" style={{ height: 240 }} />
-        </div>
-      </div>
-    );
+  if (gated !== "allowed") {
+    // Render nothing while we're redirecting — the router.replace is already in flight.
+    return null;
   }
 
-  if (error || !meta) {
-    return (
-      <div>
-        <h1 className="page-title" style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
-          <Star className="h-6 w-6" />
-          Scorer
-        </h1>
-        <div className="empty-state">
-          <div className="empty-icon">
-            <Star style={{ width: 22, height: 22 }} />
-          </div>
-          <h3>No scorer model found</h3>
-          <p>
-            Run <code style={{ background: "var(--bg)", padding: "2px 6px", borderRadius: 4, border: "1px solid var(--border-light)", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 11.5 }}>python train_scorer.py</code> to train the model.
-          </p>
-        </div>
-      </div>
-    );
-  }
+  const trainedDate = meta
+    ? new Date(meta.trained_at).toLocaleDateString("en-US", {
+        month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit",
+      })
+    : null;
 
-  const trainedDate = new Date(meta.trained_at).toLocaleDateString("en-US", {
-    month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit",
-  });
-
-  const labelData = Object.entries(meta.label_distribution)
-    .filter(([, v]) => v > 0)
-    .map(([k, v]) => ({ name: k.replace(/_/g, " ").replace(/\d\.\d/, ""), count: v }));
+  const labelData = meta
+    ? Object.entries(meta.label_distribution)
+        .filter(([, v]) => v > 0)
+        .map(([k, v]) => ({ name: k.replace(/_/g, " ").replace(/\d\.\d/, ""), count: v }))
+    : [];
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 28 }}>
-        <div>
-          <h1 className="page-title" style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <Star className="h-6 w-6" />
-            Scorer
-          </h1>
-          <p style={{ fontSize: 13, color: "var(--text-secondary)", marginTop: 6 }}>
-            {meta.embedder} · Trained {trainedDate}
-          </p>
+      {/* Hero header */}
+      <div style={{ position: "relative", marginBottom: 24, paddingBottom: 18, borderBottom: "1px solid var(--border)" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 20, flexWrap: "wrap" }}>
+          <div>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>
+              <span className="pulse-dot" />
+              Live
+              <span style={{ color: "var(--border)", margin: "0 4px" }}>·</span>
+              4 scorers online
+            </div>
+            <h1 className="page-title" style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 30, letterSpacing: "-0.02em" }}>
+              Scorer
+            </h1>
+            <p style={{ fontSize: 13, color: "var(--text-secondary)", marginTop: 6 }}>
+              {tab === "lead" ? (meta ? `${meta.embedder} · Trained ${trainedDate}` : "Loading training snapshot…") :
+               tab === "email" ? "How human do the AI drafts sound? — LLM ensemble + sales edits" :
+               tab === "conversion" ? "Which features predict WeChat conversion?" :
+               "Is the right rep handling each lead?"}
+            </p>
+          </div>
+          {loading && (
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-tertiary)", fontFamily: "ui-monospace, monospace" }}>
+              <Loader2 style={{ width: 12, height: 12 }} className="spin" />
+              syncing…
+            </div>
+          )}
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1.2fr 1fr 1fr 1.2fr", gap: 16, marginBottom: 24 }}>
-        <MetricCard label="F1 Score"  value={meta.cv_f1_mean.toFixed(3)} sub={`± ${meta.cv_f1_std.toFixed(3)}`} emphasis />
-        <MetricCard label="AUC"       value={meta.cv_auc.toFixed(3)} emphasis />
-        <MetricCard label="Precision" value={meta.cv_precision.toFixed(3)} />
-        <MetricCard label="Recall"    value={meta.cv_recall.toFixed(3)} />
-        <MetricCard label="Samples"   value={meta.n_samples.toLocaleString()} sub={`${meta.n_positive} pos · ${meta.n_negative} neg`} />
+      {/* Tab nav */}
+      <div style={{ display: "flex", gap: 4, marginBottom: 24, borderBottom: "1px solid var(--border)" }}>
+        <ScorerTabBtn active={tab === "lead"} onClick={() => setTab("lead")} icon={<Star style={{ width: 14, height: 14 }} />} label="Lead quality" />
+        <ScorerTabBtn active={tab === "email"} onClick={() => setTab("email")} icon={<Sparkles style={{ width: 14, height: 14 }} />} label="Email quality" />
+        <ScorerTabBtn active={tab === "conversion"} onClick={() => setTab("conversion")} icon={<Target style={{ width: 14, height: 14 }} />} label="Conversion" />
+        <ScorerTabBtn active={tab === "match"} onClick={() => setTab("match")} icon={<Users2 style={{ width: 14, height: 14 }} />} label="Sales match" />
+      </div>
+
+      {tab === "email" && <EmailQualityTab />}
+      {tab === "conversion" && <ConversionTab />}
+      {tab === "match" && <MatchTab />}
+      {tab === "lead" && (
+        loading ? <LeadQualityLoading /> :
+        error ? <LeadQualityError err={error} /> :
+        !meta ? <LeadQualityMissing /> :
+        <LeadQualityView meta={meta} history={history} live={live} labelData={labelData} />
+      )}
+    </div>
+  );
+}
+
+function LeadQualityLoading() {
+  return (
+    <div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 20 }}>
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div key={i} className="metric-tech" style={{ height: 104 }}>
+            <div className="metric-label">
+              <span className="skeleton" style={{ height: 10, width: 80, display: "inline-block", borderRadius: 2 }} />
+            </div>
+            <div className="skeleton" style={{ height: 30, width: 90, borderRadius: 4, marginTop: 4 }} />
+            <div className="shimmer-line" style={{ marginTop: 14 }} />
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        <div className="tech-card" style={{ height: 240 }}>
+          <div className="tech-header"><div className="tech-title">Score distribution</div></div>
+          <div className="shimmer-line" style={{ marginTop: 30 }} />
+        </div>
+        <div className="tech-card" style={{ height: 240 }}>
+          <div className="tech-header"><div className="tech-title">Label distribution</div></div>
+          <div className="shimmer-line" style={{ marginTop: 30 }} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LeadQualityError({ err }: { err: string }) {
+  return (
+    <div className="empty-state">
+      <div className="empty-icon"><AlertTriangle style={{ width: 22, height: 22 }} /></div>
+      <h3>Scorer failed to load</h3>
+      <p>{err}</p>
+    </div>
+  );
+}
+
+function LeadQualityMissing() {
+  return (
+    <div className="empty-state">
+      <div className="empty-icon"><Star style={{ width: 22, height: 22 }} /></div>
+      <h3>No trained scorer found</h3>
+      <p>
+        Run <code style={{ background: "var(--bg)", padding: "2px 6px", borderRadius: 4, border: "1px solid var(--border-light)", fontFamily: "ui-monospace, monospace", fontSize: 11.5 }}>python train_scorer.py</code> to train the model.
+      </p>
+    </div>
+  );
+}
+
+function ScorerTabBtn({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        display: "inline-flex", alignItems: "center", gap: 6,
+        padding: "8px 14px", fontSize: 13,
+        fontWeight: active ? 600 : 400,
+        background: "transparent",
+        border: "none",
+        borderBottom: "2px solid " + (active ? "var(--fg, var(--text))" : "transparent"),
+        color: active ? "var(--text)" : "var(--text-tertiary)",
+        cursor: "pointer",
+        marginBottom: -1,
+      }}
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}
+
+function LeadQualityView({
+  meta, history, live, labelData,
+}: {
+  meta: ScorerMeta;
+  history: HistoryEntry[];
+  live: LiveData | null;
+  labelData: { name: string; count: number }[];
+}) {
+  return (
+    <div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 1fr 1fr 1.2fr", gap: 12, marginBottom: 20 }}>
+        <TechMetric label="F1 Score"  value={meta.cv_f1_mean.toFixed(3)} sub={`σ ± ${meta.cv_f1_std.toFixed(3)}`} accent />
+        <TechMetric label="AUC"       value={meta.cv_auc.toFixed(3)} accent />
+        <TechMetric label="Precision" value={meta.cv_precision.toFixed(3)} />
+        <TechMetric label="Recall"    value={meta.cv_recall.toFixed(3)} />
+        <TechMetric label="Samples"   value={meta.n_samples.toLocaleString()} sub={`${meta.n_positive} pos · ${meta.n_negative} neg`} />
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 24 }}>
@@ -461,3 +553,4 @@ export default function ScorerPage() {
     </div>
   );
 }
+

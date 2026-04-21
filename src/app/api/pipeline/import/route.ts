@@ -222,6 +222,12 @@ export async function POST(req: NextRequest) {
         matched_directions: (lead.matchedDirections as string) || null,
         draft_subject: finalSubject,
         draft_html: finalHtml,
+        // Snapshot of the AI's original output so sales-edit diffs can be
+        // mined. Identical to draft_* at insert time, but draft_* will be
+        // overwritten by sales editing while these stay frozen.
+        draft_original_subject: finalSubject,
+        draft_original_html: finalHtml,
+        draft_model: (lead.draftModel as string) || "python",
         status: finalStatus,
         local_score: finalScore,
         source,
