@@ -7,7 +7,7 @@ import {
   BarChart, Bar, LineChart, Line,
   XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from "recharts";
-import { Sparkles, Target, Users2, Play, Loader2, AlertTriangle, TrendingUp } from "lucide-react";
+import { Sparkles, Target, Users2, Play, Loader2, AlertTriangle, TrendingUp, Cpu, FileEdit, Save, RotateCcw, Zap } from "lucide-react";
 
 const TOOLTIP = {
   backgroundColor: "#FFFFFF",
@@ -109,6 +109,9 @@ export function EmailQualityTab() {
         </button>
       </div>
       {note && <div style={noteBar}>{note}</div>}
+
+      <RubricEditor />
+
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginBottom: 20 }}>
         <Stat label="Mean score (0-10)" value={data.meanScore.toFixed(1)} emphasis />
@@ -242,6 +245,8 @@ export function ConversionTab() {
           </div>
         </div>
       )}
+
+      <ConversionTrainer />
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
         <BucketTable title="By email domain" buckets={data.byDomain ?? []} baseline={data.baseline} />
@@ -379,6 +384,8 @@ export function MatchTab() {
           </div>
         </div>
       </div>
+
+      <RulesConsole />
     </div>
   );
 }
@@ -450,3 +457,523 @@ const noteBar: React.CSSProperties = {
   margin: "16px 0",
   fontSize: 13,
 };
+
+/* ================================================================
+ * Workbench components — each scorer tab has an admin-editing panel.
+ * ================================================================ */
+
+/* ── Lead quality: train + promote workbench ─────────────────────── */
+
+interface RunRow {
+  id?: string;
+  trained_at: string;
+  n_samples: number;
+  cv_f1: number;
+  cv_auc: number;
+  cv_precision: number;
+  cv_recall: number;
+  embedder: string;
+}
+
+export function LeadTrainWorkbench() {
+  const [runs, setRuns] = useState<RunRow[]>([]);
+  const [active, setActive] = useState<{ id: string; promoted_at?: string; promoted_by?: string } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [training, setTraining] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const [autoPromote, setAutoPromote] = useState(false);
+
+  const reload = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [rRuns, rActive] = await Promise.all([
+        fetch("/api/scorer", { cache: "no-store" }).then((r) => r.json()),
+        fetch("/api/scorer/promote", { cache: "no-store" }).then((r) => r.json()).catch(() => ({ active: null })),
+      ]);
+      setRuns(rRuns.history ?? []);
+      setActive(rActive.active ?? null);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  useEffect(() => { reload(); }, [reload]);
+
+  async function train() {
+    setTraining(true);
+    setNote(null);
+    try {
+      const r = await fetch("/api/scorer/train", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ autoPromote }),
+      });
+      const d = await r.json();
+      if (!r.ok) setNote(`❌ ${d.error ?? "train failed"}`);
+      else setNote(`✓ Training started. Watch progress: ${d.workflowUrl}`);
+    } catch (e) {
+      setNote(`❌ ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setTraining(false);
+    }
+  }
+
+  async function promote(runId: string | undefined) {
+    if (!runId) return;
+    const r = await fetch("/api/scorer/promote", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ runId }),
+    });
+    const d = await r.json();
+    if (!r.ok) alert(d.error ?? "promote failed");
+    else { setNote(`✓ Promoted ${runId.slice(0, 8)}`); reload(); }
+  }
+
+  return (
+    <div className="tech-card" style={{ marginTop: 20 }}>
+      <div className="tech-header">
+        <div className="tech-title"><Cpu style={{ width: 13, height: 13 }} /> Training workbench</div>
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          <label style={{ fontSize: 11, color: "var(--text-tertiary)", display: "inline-flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
+            <input type="checkbox" checked={autoPromote} onChange={(e) => setAutoPromote(e.target.checked)} />
+            auto-promote on success
+          </label>
+          <button className="btn btn-primary" onClick={train} disabled={training} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+            {training ? <Loader2 style={{ width: 13, height: 13 }} className="spin" /> : <Zap style={{ width: 13, height: 13 }} />}
+            {training ? "Kicking off…" : "Train new model"}
+          </button>
+        </div>
+      </div>
+      {note && <div style={{ ...noteBar, margin: "0 0 14px" }}>{note}</div>}
+      {loading ? (
+        <div className="shimmer-line" />
+      ) : runs.length === 0 ? (
+        <p style={{ fontSize: 12, color: "var(--text-tertiary)" }}>No runs yet.</p>
+      ) : (
+        <table style={{ width: "100%", fontSize: 12 }}>
+          <thead>
+            <tr style={{ color: "var(--text-tertiary)" }}>
+              <th style={{ textAlign: "left", padding: "4px 0" }}>Trained</th>
+              <th style={{ textAlign: "right" }}>F1</th>
+              <th style={{ textAlign: "right" }}>AUC</th>
+              <th style={{ textAlign: "right" }}>n</th>
+              <th style={{ textAlign: "right" }}>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {runs.slice(0, 8).map((r, i) => {
+              const isActive = active?.id && r.id === active.id;
+              return (
+                <tr key={r.id ?? r.trained_at + i} style={{ borderTop: "1px solid var(--border-light)" }}>
+                  <td style={{ padding: "7px 0" }}>
+                    {new Date(r.trained_at).toLocaleDateString()}{" "}
+                    {isActive && <span style={{ fontSize: 10, color: "#16a34a", fontWeight: 600, marginLeft: 6 }}>● active</span>}
+                  </td>
+                  <td style={{ textAlign: "right", fontWeight: 500 }} className="mono-num">{r.cv_f1?.toFixed(3) ?? "—"}</td>
+                  <td style={{ textAlign: "right" }} className="mono-num">{r.cv_auc?.toFixed(3) ?? "—"}</td>
+                  <td style={{ textAlign: "right", color: "var(--text-tertiary)" }} className="mono-num">{r.n_samples?.toLocaleString() ?? "—"}</td>
+                  <td style={{ textAlign: "right" }}>
+                    {!isActive && r.id && (
+                      <button onClick={() => promote(r.id)} className="btn" style={{ fontSize: 11, padding: "3px 8px" }}>
+                        Promote
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+/* ── Email quality: rubric editor ────────────────────────────────── */
+
+export function RubricEditor() {
+  const [rubric, setRubric] = useState<string>("");
+  const [initial, setInitial] = useState<string>("");
+  const [defaultRubric, setDefaultRubric] = useState<string>("");
+  const [isDefault, setIsDefault] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/scorer/rubric", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => {
+        setRubric(d.intro_rubric ?? "");
+        setInitial(d.intro_rubric ?? "");
+        setDefaultRubric(d.default_intro_rubric ?? "");
+        setIsDefault(!!d.is_default);
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  const dirty = rubric !== initial;
+
+  async function save() {
+    setSaving(true);
+    setNote(null);
+    try {
+      const r = await fetch("/api/scorer/rubric", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ intro_rubric: rubric }),
+      });
+      const d = await r.json();
+      if (!r.ok) setNote(`❌ ${d.error}`);
+      else {
+        setInitial(rubric);
+        setIsDefault(false);
+        setNote("✓ Rubric saved. Next batch of judgings will use it.");
+      }
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function reset() {
+    setRubric(defaultRubric);
+  }
+
+  return (
+    <div className="tech-card" style={{ marginBottom: 20 }}>
+      <div className="tech-header">
+        <div className="tech-title">
+          <FileEdit style={{ width: 13, height: 13 }} />
+          Rubric
+          <span style={{ marginLeft: 8, fontSize: 10.5, color: isDefault ? "var(--text-tertiary)" : "#16a34a", fontWeight: 500 }}>
+            {isDefault ? "using default" : "custom"}
+          </span>
+        </div>
+        <button onClick={() => setExpanded((v) => !v)} className="btn" style={{ fontSize: 11, padding: "3px 8px" }}>
+          {expanded ? "Hide" : "Edit"}
+        </button>
+      </div>
+      {expanded && (
+        <>
+          {loading ? (
+            <div className="shimmer-line" />
+          ) : (
+            <>
+              <textarea
+                value={rubric}
+                onChange={(e) => setRubric(e.target.value)}
+                rows={12}
+                style={{
+                  width: "100%",
+                  padding: 10,
+                  fontSize: 12,
+                  lineHeight: 1.5,
+                  fontFamily: "ui-monospace, monospace",
+                  border: "1px solid var(--border)",
+                  borderRadius: 6,
+                  resize: "vertical",
+                  background: "var(--card)",
+                  color: "var(--text)",
+                  boxSizing: "border-box",
+                }}
+              />
+              <div style={{ display: "flex", gap: 8, marginTop: 10, alignItems: "center" }}>
+                <button className="btn btn-primary" onClick={save} disabled={!dirty || saving} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+                  {saving ? <Loader2 style={{ width: 13, height: 13 }} className="spin" /> : <Save style={{ width: 13, height: 13 }} />}
+                  {saving ? "Saving…" : "Save rubric"}
+                </button>
+                <button className="btn" onClick={reset} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+                  <RotateCcw style={{ width: 13, height: 13 }} />
+                  Reset to default
+                </button>
+                {dirty && <span style={{ fontSize: 11, color: "#d97706" }}>unsaved changes</span>}
+                {note && <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>{note}</span>}
+              </div>
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ── Conversion: logistic-regression trainer ─────────────────────── */
+
+interface LRModelDoc {
+  featureNames: string[];
+  weights: number[];
+  intercept: number;
+  nSamples: number;
+  nPositive: number;
+  auc: number;
+  logLoss: number;
+  trainLogLoss: number;
+  iterations: number;
+  trained_at?: string;
+  trained_by?: string;
+}
+
+export function ConversionTrainer() {
+  const [model, setModel] = useState<LRModelDoc | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [training, setTraining] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+
+  const reload = useCallback(() => {
+    setLoading(true);
+    fetch("/api/scorer/conversion-model", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => setModel(d.model ?? null))
+      .finally(() => setLoading(false));
+  }, []);
+  useEffect(() => { reload(); }, [reload]);
+
+  async function train() {
+    setTraining(true);
+    setNote(null);
+    try {
+      const r = await fetch("/api/scorer/conversion-model", { method: "POST" });
+      const d = await r.json();
+      if (!r.ok) setNote(`❌ ${d.error}`);
+      else {
+        setModel(d.model);
+        setNote(`✓ Trained on ${d.model.nSamples} samples (${d.model.nPositive} positive). Held-out AUC ${d.model.auc.toFixed(3)}.`);
+      }
+    } finally {
+      setTraining(false);
+    }
+  }
+
+  return (
+    <div className="tech-card" style={{ marginBottom: 20 }}>
+      <div className="tech-header">
+        <div className="tech-title"><Zap style={{ width: 13, height: 13 }} /> Learned predictor</div>
+        <button className="btn btn-primary" onClick={train} disabled={training} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+          {training ? <Loader2 style={{ width: 13, height: 13 }} className="spin" /> : <Zap style={{ width: 13, height: 13 }} />}
+          {training ? "Fitting…" : model ? "Retrain" : "Train model"}
+        </button>
+      </div>
+      {note && <div style={{ ...noteBar, margin: "0 0 12px" }}>{note}</div>}
+      {loading ? (
+        <div className="shimmer-line" />
+      ) : !model ? (
+        <p style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
+          No trained model yet. Click <b>Train model</b> to fit a logistic regression on the current sent-recipient data.
+        </p>
+      ) : (
+        <div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 12 }}>
+            <MiniStat label="Held-out AUC" value={model.auc.toFixed(3)} />
+            <MiniStat label="Train logloss" value={model.trainLogLoss.toFixed(3)} />
+            <MiniStat label="Test logloss" value={model.logLoss.toFixed(3)} />
+            <MiniStat label="Samples" value={`${model.nSamples} · ${model.nPositive}+`} />
+          </div>
+          <table style={{ width: "100%", fontSize: 12 }}>
+            <thead>
+              <tr style={{ color: "var(--text-tertiary)" }}>
+                <th style={{ textAlign: "left", padding: "4px 0" }}>Feature</th>
+                <th style={{ textAlign: "right" }}>Weight</th>
+                <th style={{ textAlign: "right" }}>Effect</th>
+              </tr>
+            </thead>
+            <tbody>
+              {model.featureNames.map((n, i) => {
+                const w = model.weights[i];
+                return (
+                  <tr key={n} style={{ borderTop: "1px solid var(--border-light)" }}>
+                    <td style={{ padding: "5px 0" }}>{n}</td>
+                    <td style={{ textAlign: "right", color: w > 0 ? "#16a34a" : w < 0 ? "#dc2626" : "var(--text-tertiary)", fontWeight: 500 }} className="mono-num">
+                      {w >= 0 ? "+" : ""}{w.toFixed(3)}
+                    </td>
+                    <td style={{ textAlign: "right", color: "var(--text-tertiary)", fontSize: 11 }}>
+                      {Math.abs(w) < 0.05 ? "negligible" : w > 0 ? "lifts conversion" : "hurts conversion"}
+                    </td>
+                  </tr>
+                );
+              })}
+              <tr style={{ borderTop: "1px solid var(--border-light)" }}>
+                <td style={{ padding: "5px 0", color: "var(--text-tertiary)" }}>intercept</td>
+                <td style={{ textAlign: "right", color: "var(--text-tertiary)" }} className="mono-num">{model.intercept.toFixed(3)}</td>
+                <td></td>
+              </tr>
+            </tbody>
+          </table>
+          {model.trained_at && (
+            <p style={{ fontSize: 10.5, color: "var(--text-tertiary)", marginTop: 10 }}>
+              Trained {new Date(model.trained_at).toLocaleString()}
+              {model.trained_by ? ` by ${model.trained_by}` : ""} · {model.iterations} gradient steps
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MiniStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ padding: 10, border: "1px solid var(--border-light)", borderRadius: 6, background: "var(--bg)" }}>
+      <div style={{ fontSize: 10, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 3 }}>{label}</div>
+      <div className="mono-num" style={{ fontSize: 16, fontWeight: 500 }}>{value}</div>
+    </div>
+  );
+}
+
+/* ── Match: rules console ────────────────────────────────────────── */
+
+interface RulesConfig {
+  strong_criteria: {
+    min_citation: number;
+    min_citation_unverified: number;
+    max_school_tier: number;
+    min_local_score: number;
+  };
+  assignment: {
+    strong: { rep_id: number };
+    overseas: { rep_id: number };
+    domestic: { rep_id: number };
+    by_direction?: Record<string, number>;
+  };
+}
+
+export function RulesConsole() {
+  const [config, setConfig] = useState<RulesConfig | null>(null);
+  const [initial, setInitial] = useState<RulesConfig | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [preview, setPreview] = useState<null | { nLeads: number; reroutes: number; tierFlips: number; byOldRep: Record<string, number>; byNewRep: Record<string, number> }>(null);
+  const [previewing, setPreviewing] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/scorer/assignment-config", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => {
+        setConfig(d.current);
+        setInitial(d.current);
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  const dirty = JSON.stringify(config) !== JSON.stringify(initial);
+
+  function updateCrit<K extends keyof RulesConfig["strong_criteria"]>(k: K, v: number) {
+    if (!config) return;
+    setConfig({ ...config, strong_criteria: { ...config.strong_criteria, [k]: v } });
+  }
+
+  async function doPreview() {
+    if (!config) return;
+    setPreviewing(true);
+    try {
+      const r = await fetch("/api/scorer/assignment-config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ config, preview: true }),
+      });
+      const d = await r.json();
+      if (!r.ok) setNote(`❌ ${d.error}`);
+      else setPreview(d);
+    } finally {
+      setPreviewing(false);
+    }
+  }
+
+  async function save() {
+    if (!config) return;
+    setSaving(true);
+    setNote(null);
+    try {
+      const r = await fetch("/api/scorer/assignment-config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ config }),
+      });
+      const d = await r.json();
+      if (!r.ok) setNote(`❌ ${d.error}`);
+      else {
+        setInitial(config);
+        setNote("✓ Rules saved. New leads use them immediately.");
+      }
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading || !config) return <div className="tech-card" style={{ marginTop: 20 }}><div className="shimmer-line" /></div>;
+  const crit = config.strong_criteria;
+
+  return (
+    <div className="tech-card" style={{ marginTop: 20 }}>
+      <div className="tech-header">
+        <div className="tech-title"><FileEdit style={{ width: 13, height: 13 }} /> Rules console</div>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button className="btn" onClick={doPreview} disabled={!dirty || previewing} style={{ fontSize: 12, display: "inline-flex", alignItems: "center", gap: 6 }}>
+            {previewing ? <Loader2 style={{ width: 13, height: 13 }} className="spin" /> : <Target style={{ width: 13, height: 13 }} />}
+            Preview impact
+          </button>
+          <button className="btn btn-primary" onClick={save} disabled={!dirty || saving} style={{ fontSize: 12, display: "inline-flex", alignItems: "center", gap: 6 }}>
+            {saving ? <Loader2 style={{ width: 13, height: 13 }} className="spin" /> : <Save style={{ width: 13, height: 13 }} />}
+            Save
+          </button>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <RuleInput label="Min citations (school verified)" value={crit.min_citation} onChange={(v) => updateCrit("min_citation", v)} />
+        <RuleInput label="Min citations (school unknown)" value={crit.min_citation_unverified} onChange={(v) => updateCrit("min_citation_unverified", v)} />
+        <RuleInput label="Max school tier for strong" value={crit.max_school_tier} min={1} max={3} onChange={(v) => updateCrit("max_school_tier", v)} />
+        <RuleInput label="Min local score for strong" value={crit.min_local_score} step={0.05} min={0} max={1} onChange={(v) => updateCrit("min_local_score", v)} />
+      </div>
+
+      {preview && (
+        <div style={{ marginTop: 14, padding: 12, background: "var(--bg)", border: "1px solid var(--border-light)", borderRadius: 6 }}>
+          <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 8 }}>
+            Preview across {preview.nLeads} leads:
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, fontSize: 12 }}>
+            <div>
+              <span style={{ color: "var(--text-tertiary)" }}>Reroutes:</span> <b className="mono-num">{preview.reroutes}</b>
+              <span style={{ marginLeft: 8, color: "var(--text-tertiary)" }}>({Math.round((preview.reroutes / preview.nLeads) * 1000) / 10}%)</span>
+            </div>
+            <div>
+              <span style={{ color: "var(--text-tertiary)" }}>Tier flips:</span> <b className="mono-num">{preview.tierFlips}</b>
+              <span style={{ marginLeft: 8, color: "var(--text-tertiary)" }}>({Math.round((preview.tierFlips / preview.nLeads) * 1000) / 10}%)</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {note && <div style={{ ...noteBar, margin: "14px 0 0" }}>{note}</div>}
+    </div>
+  );
+}
+
+function RuleInput({ label, value, onChange, step, min, max }: { label: string; value: number; onChange: (v: number) => void; step?: number; min?: number; max?: number }) {
+  return (
+    <div>
+      <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</div>
+      <input
+        type="number"
+        value={value}
+        step={step ?? 1}
+        min={min}
+        max={max}
+        onChange={(e) => onChange(Number(e.target.value))}
+        style={{
+          width: "100%",
+          padding: "6px 10px",
+          fontSize: 13,
+          fontFamily: "ui-monospace, monospace",
+          border: "1px solid var(--border)",
+          borderRadius: 6,
+          background: "var(--card)",
+          color: "var(--text)",
+          boxSizing: "border-box",
+        }}
+      />
+    </div>
+  );
+}
+

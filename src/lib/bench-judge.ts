@@ -6,6 +6,7 @@
 // Cheaper + more honest than trying to encode taste in code.
 
 import { llmChat } from "@/lib/llm-proxy";
+import { getConfig } from "@/lib/system-config";
 
 export const JUDGE_MODELS = ["claude-opus-4.7", "gemini-3-pro", "gpt-5"] as const;
 
@@ -18,7 +19,7 @@ export interface JudgeVerdict {
   error: string | null;
 }
 
-const INTRO_RUBRIC = `你在评价一封 B2B 销售邮件的开头句（中文）。打分 0-10：
+export const DEFAULT_INTRO_RUBRIC = `你在评价一封 B2B 销售邮件的开头句（中文）。打分 0-10：
 - 10 = 真人写的，引用论文里具体细节，自然不套路
 - 7  = 合格，结构对，细节泛泛
 - 4  = 套路话，任意论文都能用
@@ -49,8 +50,12 @@ export async function judgeIntro(
   modelName: string,
   output: string,
 ): Promise<JudgeVerdict[]> {
+  // Pull admin-edited rubric from system_config; fall back to hardcoded default.
+  // Caching is not worth it — one DB round-trip per batch, not per verdict.
+  const stored = await getConfig<{ intro_rubric?: string }>("active_rubric");
+  const rubric = stored?.intro_rubric?.trim() || DEFAULT_INTRO_RUBRIC;
   return judgeAll(
-    INTRO_RUBRIC,
+    rubric,
     `论文标题: ${paperTitle}\n论文摘要: ${paperAbstract}\n\n被评价模型: ${modelName}\n被评价输出:\n${output}\n\n只返回 JSON: ${RESPONSE_SCHEMA}`,
   );
 }
