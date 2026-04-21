@@ -18,15 +18,15 @@ export const KNOWN_MODELS: Record<string, string> = {
   "gpt-5.2":           "openai/gpt-5.2",
   "gpt-5.1":           "openai/gpt-5.1",
   "gpt-4.1":           "openai/gpt-4.1",
-  "gemini-3-pro":      "google/gemini-3-pro-preview",
-  "gemini-2.5-pro":    "google/gemini-2.5-pro",
+  "gemini-3-pro":      "gemini-3-pro-preview",
+  "gemini-2.5-pro":    "gemini-2.5-pro",
   "grok-4":            "x-ai/grok-4",
   "o3":                "openai/o3",
   "o1":                "openai/o1",
 
   // ───── Fast / cheap workhorses ─────
-  "gemini-3-flash":    "google/gemini-3-flash-preview",
-  "gemini-2.5-flash":  "google/gemini-2.5-flash",
+  "gemini-3-flash":    "gemini-3-flash-preview",
+  "gemini-2.5-flash":  "gemini-2.5-flash",
   "gpt-5-mini":        "openai/gpt-5-mini",
   "gpt-5-nano":        "openai/gpt-5-nano",
   "gpt-4.1-mini":      "openai/gpt-4.1-mini",
@@ -84,12 +84,25 @@ export async function llmChat(opts: {
   if (opts.system) messages.push({ role: "system", content: opts.system });
   messages.push({ role: "user", content: opts.user });
 
+  // Reasoning models (GPT-5/o-series, qwen *-thinking, kimi *-thinking, glm-4.7+)
+  // burn the token budget on internal reasoning before producing any visible
+  // output. Detect them and (a) bump the budget significantly, (b) ask for
+  // low reasoning effort so we get actual content.
+  const isReasoning =
+    /^(openai\/(gpt-5|o[13]|o4-mini)|gpt-5|o[13]$|o4-mini)/.test(modelId) ||
+    /thinking/.test(modelId) ||
+    /^z-ai\/glm/.test(modelId);
+
   const body: Record<string, unknown> = {
     model: modelId,
     messages,
     temperature: opts.temperature ?? 0.2,
-    max_tokens: opts.max_tokens ?? 1024,
+    // Reasoning models need 4-8× more tokens to leave room for the answer.
+    max_tokens: isReasoning ? Math.max(opts.max_tokens ?? 1024, 4000) : (opts.max_tokens ?? 1024),
   };
+  if (isReasoning) {
+    body.reasoning_effort = "low";
+  }
   if (opts.json) body.response_format = { type: "json_object" };
 
   const t0 = Date.now();
