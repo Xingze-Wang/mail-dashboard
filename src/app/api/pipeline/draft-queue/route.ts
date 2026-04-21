@@ -4,7 +4,6 @@ import { generateDraft } from "@/lib/email-generator";
 import { getRep, classifyLead, assignRep, getAssignmentConfig } from "@/lib/assignment";
 import { verifySession, AUTH_COOKIE } from "@/lib/auth";
 import { lookupAuthor } from "@/lib/semantic-scholar";
-import { lookupCitationsViaTavily } from "@/lib/tavily";
 import { scoreWithGemini } from "@/lib/gemini-scorer";
 
 /**
@@ -75,12 +74,9 @@ async function processOne(row: Record<string, unknown>): Promise<boolean> {
       } catch (err) {
         console.error("draft-queue S2 lookup failed", { email, err: String(err) });
       }
-      if (citationCount === null) {
-        try {
-          const tav = await lookupCitationsViaTavily(lookupName, email);
-          if (tav?.citationCount) citationCount = tav.citationCount;
-        } catch { /* best-effort */ }
-      }
+      // Tavily fallback was here — dropped. When S2 misses, classify now
+      // falls through to local_score (sentence-transformer trained F1=0.88)
+      // which is a better signal than a scraped Scholar page.
     }
 
     // 1b. Score with Gemini when Python didn't supply a local_score.
@@ -106,7 +102,7 @@ async function processOne(row: Record<string, unknown>): Promise<boolean> {
       : Array.isArray(mdRaw) ? (mdRaw as string[]) : [];
 
     const config = await getAssignmentConfig();
-    const newTier = classifyLead(config, { citationCount, hIndex, schoolTier, authorEmail: email });
+    const newTier = classifyLead(config, { citationCount, hIndex, schoolTier, authorEmail: email, localScore });
     const newRepId = assignRep(config, newTier, email, matchedDirs);
 
     // 3. Look up the (possibly re-assigned) rep and generate the draft.

@@ -9,7 +9,6 @@ import {
   assignRep,
   getRep,
 } from "@/lib/assignment";
-import { lookupCitationsViaTavily } from "@/lib/tavily";
 import { scoreWithGemini } from "@/lib/gemini-scorer";
 
 // Manual scan also does S2 + Tavily + Gemini per lead — pin to 300s.
@@ -130,23 +129,22 @@ async function runScan() {
       // S2 enrichment failure is non-blocking
     }
 
-    // 2. Classify and assign
+    // 2. Score first (best-effort) so classify can use it as the
+    //    "S2-missed but still good lead" path.
     const hIndex = s2?.hIndex ?? null;
-    let citationCount = s2?.citationCount ?? null;
+    const citationCount = s2?.citationCount ?? null;
 
-    if (citationCount === null && lead.authorName) {
-      try {
-        const tav = await lookupCitationsViaTavily(lead.authorName, lead.authorEmail);
-        if (tav?.citationCount) citationCount = tav.citationCount;
-      } catch {
-        // non-blocking
-      }
-    }
+    let localScore: number | null = null;
+    try {
+      localScore = await scoreWithGemini(lead.title, lead.abstract);
+    } catch { /* non-blocking */ }
+
     const tier = classifyLead(config, {
       citationCount,
       hIndex,
       schoolTier: lead.schoolTier,
       authorEmail: lead.authorEmail,
+      localScore,
     });
     const repId = assignRep(config, tier, lead.authorEmail, lead.matchedDirections);
 
@@ -171,12 +169,7 @@ async function runScan() {
       stats.errors.push(`draft ${lead.arxivId}: ${err instanceof Error ? err.message : String(err)}`);
     }
 
-    // 5. Score (best-effort) and insert with enrichment data
-    let localScore: number | null = null;
-    try {
-      localScore = await scoreWithGemini(lead.title, lead.abstract);
-    } catch { /* non-blocking */ }
-
+    // 5. Insert with enrichment data
     const { error } = await insertLead(lead, draft, {
       s2AuthorId: s2?.authorId ?? null,
       hIndex: s2?.hIndex ?? null,

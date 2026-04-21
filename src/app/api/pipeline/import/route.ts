@@ -142,16 +142,19 @@ export async function POST(req: NextRequest) {
       const authorName = (lead.authorName as string) || null;
       const schoolTier = (lead.schoolTier as number) || null;
 
-      // Enrichment (S2 + Tavily) is deferred to the draft-queue worker so the
-      // import request stays < 2s even for 50-lead batches. Classification
-      // runs here with what the caller gave us — typically school_tier. Leads
-      // that should be "strong" solely on citation will be reclassified when
-      // the worker runs, because it updates lead_tier after enrichment.
+      // Classification uses what Python sent us. Python already ran S2 +
+      // local_scorer — we don't re-enrich server-side (burned Vercel CPU
+      // for no gain). If Python missed a citation, the local_score path
+      // in classifyLead picks up slack.
+      const pyCitation = typeof lead.citationCount === "number" ? lead.citationCount : null;
+      const pyHIndex = typeof lead.hIndex === "number" ? lead.hIndex : null;
+      const pyLocalScore = typeof lead.localScore === "number" ? lead.localScore : null;
       const leadTier = classifyLead(config, {
-        citationCount: null,
-        hIndex: null,
+        citationCount: pyCitation,
+        hIndex: pyHIndex,
         schoolTier,
         authorEmail: email,
+        localScore: pyLocalScore,
       });
       const assignedRepId = assignRep(
         config,
@@ -222,10 +225,10 @@ export async function POST(req: NextRequest) {
         status: finalStatus,
         local_score: finalScore,
         source,
-        s2_author_id: null,
-        h_index: null,
-        citation_count: null,
-        paper_count: null,
+        s2_author_id: (lead.s2AuthorId as string | null) ?? null,
+        h_index: pyHIndex,
+        citation_count: pyCitation,
+        paper_count: typeof lead.paperCount === "number" ? lead.paperCount : null,
         lead_tier: leadTier,
         assigned_rep_id: assignedRepId,
       });

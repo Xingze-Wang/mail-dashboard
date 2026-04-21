@@ -30,6 +30,7 @@ interface AssignmentConfig {
   strong_criteria: {
     min_citation: number;
     min_citation_unverified: number;
+    min_local_score: number;
     max_school_tier: number;
   };
   assignment: {
@@ -41,7 +42,7 @@ interface AssignmentConfig {
 }
 
 const DEFAULT_CONFIG: AssignmentConfig = {
-  strong_criteria: { min_citation: 2000, min_citation_unverified: 5000, max_school_tier: 2 },
+  strong_criteria: { min_citation: 2000, min_citation_unverified: 5000, max_school_tier: 2, min_local_score: 0.85 },
   assignment: {
     strong: { rep_id: 1 },
     overseas: { rep_id: 3 },
@@ -142,6 +143,9 @@ export default function SettingsPage() {
               min_citation_unverified:
                 configData.strong_criteria.min_citation_unverified ??
                 DEFAULT_CONFIG.strong_criteria.min_citation_unverified,
+              min_local_score:
+                configData.strong_criteria.min_local_score ??
+                DEFAULT_CONFIG.strong_criteria.min_local_score,
               max_school_tier:
                 configData.strong_criteria.max_school_tier ??
                 DEFAULT_CONFIG.strong_criteria.max_school_tier,

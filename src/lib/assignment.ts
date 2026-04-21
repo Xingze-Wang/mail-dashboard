@@ -21,6 +21,7 @@ export interface AssignmentConfig {
     min_citation: number;
     min_citation_unverified: number;
     max_school_tier: number;
+    min_local_score: number;
   };
   assignment: {
     strong: { rep_id: number };
@@ -91,6 +92,7 @@ export function defaultConfig(): AssignmentConfig {
       min_citation: 2000,
       min_citation_unverified: 5000,
       max_school_tier: 2,
+      min_local_score: 0.85,
     },
     assignment: {
       strong: { rep_id: DEFAULT_REP_IDS.leo },
@@ -109,6 +111,8 @@ function normalizeConfig(raw: unknown): AssignmentConfig {
   const sc = (r.strong_criteria as Record<string, unknown> | undefined) ?? {};
   const min_citation =
     typeof sc.min_citation === "number" ? sc.min_citation : def.strong_criteria.min_citation;
+  const min_local_score =
+    typeof sc.min_local_score === "number" ? sc.min_local_score : def.strong_criteria.min_local_score;
   const min_citation_unverified =
     typeof sc.min_citation_unverified === "number"
       ? sc.min_citation_unverified
@@ -158,7 +162,7 @@ function normalizeConfig(raw: unknown): AssignmentConfig {
   }
 
   return {
-    strong_criteria: { min_citation, min_citation_unverified, max_school_tier },
+    strong_criteria: { min_citation, min_citation_unverified, max_school_tier, min_local_score },
     assignment: {
       strong: { rep_id: strongRep },
       overseas: { rep_id: overseasRep ?? def.assignment.overseas.rep_id },
@@ -243,15 +247,23 @@ export function classifyLead(
     hIndex?: number | null;
     schoolTier: number | null;
     authorEmail?: string;
+    localScore?: number | null;
   },
 ): "strong" | "normal" {
-  const { min_citation, min_citation_unverified, max_school_tier } = config.strong_criteria;
+  const { min_citation, min_citation_unverified, max_school_tier, min_local_score } =
+    config.strong_criteria;
   const tier = lead.schoolTier;
   const cite = lead.citationCount ?? 0;
+  const score = lead.localScore ?? null;
 
+  // Top school always wins.
   if (tier !== null && tier !== undefined && tier >= 1 && tier <= max_school_tier) return "strong";
+  // Verified non-top school + high citation.
   if (tier !== null && tier !== undefined && cite > min_citation) return "strong";
+  // School unknown + very high citation.
   if ((tier === null || tier === undefined) && cite > min_citation_unverified) return "strong";
+  // Trained scorer says high quality (works even when S2 missed).
+  if (score !== null && score >= min_local_score) return "strong";
 
   return "normal";
 }
