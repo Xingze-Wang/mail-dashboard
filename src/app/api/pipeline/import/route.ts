@@ -4,6 +4,7 @@ import { wasRecentlyContacted, paperWasRecentlyContacted } from "@/lib/contact-g
 import { canonicalizeEmail } from "@/lib/email-id";
 import { canonicalizeArxivId } from "@/lib/arxiv-id";
 import { fillRepPlaceholders } from "@/lib/rep-template";
+import { scoreWithGemini } from "@/lib/gemini-scorer";
 import {
   getAssignmentConfig,
   classifyLead,
@@ -167,21 +168,33 @@ export async function POST(req: NextRequest) {
       // {{REP_NAME}} / {{REP_WECHAT}} placeholders), fill those with the
       // assigned rep's identity and mark the lead 'ready' immediately.
       // Otherwise the draft-queue worker will generate from scratch later.
+      // Scoring runs in parallel with the rep lookup so import stays fast.
       const incomingSubject = (lead.draftSubject as string) || null;
       const incomingHtml = (lead.draftHtml as string) || null;
+      const incomingScore = typeof lead.localScore === "number" ? lead.localScore : null;
+      const abstractStr = (lead.abstract as string) || "";
+
+      const [repLookup, scoreLookup] = await Promise.all([
+        incomingSubject && incomingHtml ? getRep(assignedRepId) : Promise.resolve(null),
+        // Score every lead at import time, even when Python supplied a local_score
+        // we trust that one; otherwise fire Gemini fallback. ~1-2s per call,
+        // bounded by scoreWithGemini's 8s timeout, returns null on any failure.
+        incomingScore !== null ? Promise.resolve(incomingScore) : scoreWithGemini(title, abstractStr),
+      ]);
+
       let finalSubject: string | null = null;
       let finalHtml: string | null = null;
       let finalStatus: "ready" | "queued" = "queued";
       if (incomingSubject && incomingHtml) {
-        const rep = await getRep(assignedRepId);
         const filled = fillRepPlaceholders(
           { subject: incomingSubject, html: incomingHtml },
-          rep ? { sender_name: rep.sender_name, wechat_id: rep.wechat_id } : null,
+          repLookup ? { sender_name: repLookup.sender_name, wechat_id: repLookup.wechat_id } : null,
         );
         finalSubject = filled.subject;
         finalHtml = filled.html;
         finalStatus = "ready";
       }
+      const finalScore = scoreLookup ?? null;
 
       // Draft is generated server-side by /api/pipeline/draft-queue using the
       // assigned rep's identity — we do NOT trust incoming drafts from the
@@ -207,7 +220,7 @@ export async function POST(req: NextRequest) {
         draft_subject: finalSubject,
         draft_html: finalHtml,
         status: finalStatus,
-        local_score: typeof lead.localScore === "number" ? lead.localScore : null,
+        local_score: finalScore,
         source,
         s2_author_id: null,
         h_index: null,

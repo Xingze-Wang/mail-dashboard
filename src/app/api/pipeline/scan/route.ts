@@ -10,6 +10,7 @@ import {
   getRep,
 } from "@/lib/assignment";
 import { lookupCitationsViaTavily } from "@/lib/tavily";
+import { scoreWithGemini } from "@/lib/gemini-scorer";
 
 // Manual scan also does S2 + Tavily + Gemini per lead — pin to 300s.
 export const maxDuration = 300;
@@ -24,6 +25,7 @@ async function insertLead(
     paperCount?: number | null;
     leadTier?: string;
     assignedRepId?: number;
+    localScore?: number | null;
   },
 ) {
   return supabase.from("pipeline_leads").insert({
@@ -49,6 +51,7 @@ async function insertLead(
     h_index: extras.hIndex ?? null,
     citation_count: extras.citationCount ?? null,
     paper_count: extras.paperCount ?? null,
+    local_score: extras.localScore ?? null,
     lead_tier: extras.leadTier ?? "normal",
     assigned_rep_id: extras.assignedRepId ?? null,
   });
@@ -168,7 +171,12 @@ async function runScan() {
       stats.errors.push(`draft ${lead.arxivId}: ${err instanceof Error ? err.message : String(err)}`);
     }
 
-    // 5. Insert with enrichment data
+    // 5. Score (best-effort) and insert with enrichment data
+    let localScore: number | null = null;
+    try {
+      localScore = await scoreWithGemini(lead.title, lead.abstract);
+    } catch { /* non-blocking */ }
+
     const { error } = await insertLead(lead, draft, {
       s2AuthorId: s2?.authorId ?? null,
       hIndex: s2?.hIndex ?? null,
@@ -176,6 +184,7 @@ async function runScan() {
       paperCount: s2?.paperCount ?? null,
       leadTier: tier,
       assignedRepId: repId,
+      localScore,
     });
     if (error) {
       stats.errors.push(`insert ${lead.arxivId}: ${error.message}`);

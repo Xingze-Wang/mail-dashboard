@@ -7,6 +7,7 @@ import {
   getRep,
 } from "@/lib/assignment";
 import { normalizeSourceLabel } from "@/lib/sources";
+import { scoreWithGemini } from "@/lib/gemini-scorer";
 
 /**
  * POST /api/discovery/[id]/promote
@@ -149,6 +150,12 @@ export async function POST(
   // stable-ish id mirroring the manual-import pattern in /api/pipeline/import.
   const arxivId = `${disc.source}_${disc.id}_${Date.now().toString(36)}`;
 
+  // Best-effort score before insert so the row never lands as null.
+  let localScore: number | null = null;
+  try {
+    localScore = await scoreWithGemini(title, disc.bio || "");
+  } catch { /* non-blocking */ }
+
   const { data: inserted, error: insertErr } = await supabase
     .from("pipeline_leads")
     .insert({
@@ -162,6 +169,7 @@ export async function POST(
       source: sourceLabel,
       lead_tier: leadTier,
       assigned_rep_id: repId,
+      local_score: localScore,
     })
     .select("id")
     .single();
