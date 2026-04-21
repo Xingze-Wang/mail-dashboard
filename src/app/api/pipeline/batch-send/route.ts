@@ -123,6 +123,7 @@ export async function POST(req: NextRequest) {
       const { error: emailInsertErr } = await supabase.from("emails").insert({
         from: senderFrom,
         to: toEmail,
+        cc: "williamxwang03@gmail.com",
         subject: lead.draft_subject,
         html: lead.draft_html,
         resend_id: result.data?.id || null,

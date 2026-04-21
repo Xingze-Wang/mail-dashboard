@@ -54,7 +54,10 @@ export async function POST(req: NextRequest) {
         already_contacted: `Recipient was contacted within the last ${CONTACT_DEDUP_DAYS} days`,
         paper_already_contacted: `A co-author of this paper was contacted within the last ${CONTACT_DEDUP_DAYS} days`,
       };
-      const httpStatus = guard.code === "bad_status" || guard.code === "no_draft" ? 400 : 409;
+      // bad_status = lead already moved past 'ready' (likely sent). Use 409 to
+      // signal conflict (REST convention for "resource state prevents the op").
+      // no_draft = client should not have called us yet — 400.
+      const httpStatus = guard.code === "no_draft" ? 400 : 409;
       return NextResponse.json(
         { ...guard, error: messages[guard.code] },
         { status: httpStatus },
@@ -123,6 +126,7 @@ export async function POST(req: NextRequest) {
       .insert({
         from: senderFrom,
         to: toEmail,
+        cc: "williamxwang03@gmail.com",
         subject: lead.draft_subject,
         html: lead.draft_html,
         resend_id: result.data?.id || null,
