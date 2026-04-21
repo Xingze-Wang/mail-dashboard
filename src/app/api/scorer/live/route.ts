@@ -1,6 +1,7 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { resolveCategory } from "@/lib/assignment";
+import { requireAdmin } from "@/lib/auth-helpers";
 
 /**
  * GET /api/scorer/live
@@ -22,7 +23,9 @@ import { resolveCategory } from "@/lib/assignment";
  *   - sourceBreakdown : Python-trained-classifier vs Gemini-fallback
  *                     coverage, so admin can spot drift.
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const gate = await requireAdmin(req);
+  if ("response" in gate) return gate.response;
   const { data: leads, error } = await supabase
     .from("pipeline_leads")
     .select(

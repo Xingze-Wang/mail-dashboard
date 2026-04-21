@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 
+// Explicit allowlist — never SELECT * here, password_hash and login_email
+// must NOT leak to clients (admin UI doesn't need them; nothing else does).
+const SAFE_REP_COLUMNS =
+  "id, name, sender_name, sender_email, wechat_id, active, role, username, created_at";
+
 export async function GET() {
   try {
     const { data, error } = await supabase
       .from("sales_reps")
-      .select("*")
+      .select(SAFE_REP_COLUMNS)
       .order("id");
 
     if (error) {
@@ -37,7 +42,7 @@ export async function POST(req: NextRequest) {
       .from("sales_reps")
       .update({ name, sender_email, sender_name, wechat_id, active: active ?? true })
       .eq("id", id)
-      .select()
+      .select(SAFE_REP_COLUMNS)
       .single();
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });

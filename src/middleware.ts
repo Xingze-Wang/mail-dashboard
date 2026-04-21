@@ -5,11 +5,15 @@ const PUBLIC_PREFIXES = [
   "/login",
   "/api/auth",
   "/api/cron",
-  "/api/inbound",
   "/api/scorer",
   "/_next",
   "/favicon",
 ];
+
+// /api/inbound is split: POST (Resend webhook) is public — protected by its
+// own INBOUND_SECRET bearer check inside the handler. GET (used by /inbox UI)
+// requires a session.
+const PUBLIC_POST_ONLY = ["/api/inbound"];
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
@@ -17,7 +21,9 @@ export async function middleware(req: NextRequest) {
   reqHeaders.set("x-pathname", pathname);
 
   const isPublic = PUBLIC_PREFIXES.some((p) => pathname.startsWith(p)) || pathname.includes(".");
-  if (isPublic) {
+  const isPublicPostOnly =
+    req.method === "POST" && PUBLIC_POST_ONLY.some((p) => pathname.startsWith(p));
+  if (isPublic || isPublicPostOnly) {
     return NextResponse.next({ request: { headers: reqHeaders } });
   }
 
