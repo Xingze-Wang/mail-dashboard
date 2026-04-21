@@ -239,6 +239,16 @@ function isOverseas(email: string | null | undefined): boolean {
  *   - OR citation_count > min_citation AND school_tier is verified    (verified non-top + high cite)
  *   - OR citation_count > min_citation_unverified                      (school unknown — needs higher bar)
  */
+/**
+ * Strong = "senior researcher" (top school OR many citations).
+ * NOT a function of paper quality (`local_score`) — that's a separate axis
+ * about whether this particular paper is a good outreach target.
+ *
+ *   Strong if any of:
+ *     - schoolTier ∈ [1, max_school_tier]                          (顶校)
+ *     - schoolTier verified AND cite > min_citation                (verified non-top + high cite)
+ *     - schoolTier unknown AND cite > min_citation_unverified      (unknown school, very high cite)
+ */
 export function classifyLead(
   config: AssignmentConfig,
   lead: {
@@ -247,23 +257,17 @@ export function classifyLead(
     hIndex?: number | null;
     schoolTier: number | null;
     authorEmail?: string;
+    /** Accepted for future-compat but not used in tier classification. */
     localScore?: number | null;
   },
 ): "strong" | "normal" {
-  const { min_citation, min_citation_unverified, max_school_tier, min_local_score } =
-    config.strong_criteria;
+  const { min_citation, min_citation_unverified, max_school_tier } = config.strong_criteria;
   const tier = lead.schoolTier;
   const cite = lead.citationCount ?? 0;
-  const score = lead.localScore ?? null;
 
-  // Top school always wins.
   if (tier !== null && tier !== undefined && tier >= 1 && tier <= max_school_tier) return "strong";
-  // Verified non-top school + high citation.
   if (tier !== null && tier !== undefined && cite > min_citation) return "strong";
-  // School unknown + very high citation.
   if ((tier === null || tier === undefined) && cite > min_citation_unverified) return "strong";
-  // Trained scorer says high quality (works even when S2 missed).
-  if (score !== null && score >= min_local_score) return "strong";
 
   return "normal";
 }
