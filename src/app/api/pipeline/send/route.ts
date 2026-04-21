@@ -106,9 +106,11 @@ export async function POST(req: NextRequest) {
     // we must NOT return 500 to the user because the email already went out.
     // Mark the lead sent BEFORE writing the emails row so a failure in the
     // emails insert doesn't strand the lead at status='sending'.
+    // Save thread_id on the lead so "Open thread" can jump to the inbox.
+    const threadId = `thread_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
     const { error: leadUpdateErr } = await supabase
       .from("pipeline_leads")
-      .update({ status: "sent", sent_at: new Date().toISOString() })
+      .update({ status: "sent", sent_at: new Date().toISOString(), thread_id: threadId })
       .eq("id", id);
     if (leadUpdateErr) {
       console.error("pipeline_leads update failed after send", { id, err: leadUpdateErr });
@@ -116,7 +118,6 @@ export async function POST(req: NextRequest) {
 
     // Save to emails table (audit log). Failure here is a logging gap, not a
     // user-facing error — the email was delivered to Resend successfully.
-    const threadId = `thread_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
     const { data: email, error: emailError } = await supabase
       .from("emails")
       .insert({

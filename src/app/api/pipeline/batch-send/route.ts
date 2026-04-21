@@ -108,17 +108,18 @@ export async function POST(req: NextRequest) {
       }
 
       // Resend accepted — mark the lead sent FIRST so a downstream failure
-      // in the emails insert doesn't strand it at status='sending'.
+      // in the emails insert doesn't strand it at status='sending'. We also
+      // persist thread_id here so "Open thread" works on the lead row later.
+      const threadId = `thread_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
       const { error: leadUpdateErr } = await supabase
         .from("pipeline_leads")
-        .update({ status: "sent", sent_at: new Date().toISOString() })
+        .update({ status: "sent", sent_at: new Date().toISOString(), thread_id: threadId })
         .eq("id", id);
       if (leadUpdateErr) {
         console.error("batch pipeline_leads update failed", { id, err: leadUpdateErr });
       }
 
       // Audit log (best-effort).
-      const threadId = `thread_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
       const { error: emailInsertErr } = await supabase.from("emails").insert({
         from: senderFrom,
         to: toEmail,

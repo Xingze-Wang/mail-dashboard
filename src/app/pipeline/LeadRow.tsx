@@ -518,18 +518,38 @@ function LeadRowInner({
 
           {status === "sent" && (
             <>
-              <button type="button" className="dx-ghost" onClick={() => onToggleExpand(lead.id)}>
-                {isExpanded ? "Hide" : "Open thread"}
-              </button>
+              {lead.threadId ? (
+                <a
+                  href={`/inbox?thread=${encodeURIComponent(lead.threadId)}`}
+                  className="dx-ghost"
+                  style={{ textDecoration: "none" }}
+                >
+                  Open thread
+                </a>
+              ) : (
+                <button type="button" className="dx-ghost" onClick={() => onToggleExpand(lead.id)}>
+                  {isExpanded ? "Hide" : "Show draft"}
+                </button>
+              )}
               <button type="button" className="dx-secondary">Follow up</button>
             </>
           )}
 
           {status === "replied" && (
             <>
-              <button type="button" className="dx-ghost" onClick={() => onToggleExpand(lead.id)}>
-                {isExpanded ? "Hide" : "Open thread"}
-              </button>
+              {lead.threadId ? (
+                <a
+                  href={`/inbox?thread=${encodeURIComponent(lead.threadId)}`}
+                  className="dx-ghost"
+                  style={{ textDecoration: "none" }}
+                >
+                  Open thread
+                </a>
+              ) : (
+                <button type="button" className="dx-ghost" onClick={() => onToggleExpand(lead.id)}>
+                  {isExpanded ? "Hide" : "Show draft"}
+                </button>
+              )}
               <button type="button" className="dx-primary">WeChat</button>
             </>
           )}

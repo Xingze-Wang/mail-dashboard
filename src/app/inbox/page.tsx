@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { RefreshCw, Reply, Mail, Send, FileText } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 import { sanitizeHtml } from "@/lib/sanitize";
@@ -19,9 +20,20 @@ interface InboundEmail {
   text: string | null;
   isRead: boolean;
   createdAt: string;
+  threadId?: string | null;
 }
 
 export default function InboxPage() {
+  return (
+    <Suspense fallback={<div style={{ padding: 40 }}>Loading…</div>}>
+      <InboxInner />
+    </Suspense>
+  );
+}
+
+function InboxInner() {
+  const searchParams = useSearchParams();
+  const wantedThread = searchParams.get("thread");
   const [emails, setEmails] = useState<InboundEmail[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -62,6 +74,14 @@ export default function InboxPage() {
   useEffect(() => {
     fetchInbox();
   }, []);
+
+  // Auto-select the inbound email matching ?thread=<id> from a deep link
+  // (e.g. clicked "Open thread" on a replied lead in the pipeline page).
+  useEffect(() => {
+    if (!wantedThread || emails.length === 0 || selected) return;
+    const match = emails.find((e) => e.threadId === wantedThread);
+    if (match) setSelected(match);
+  }, [wantedThread, emails, selected]);
 
   // While the inbox page is mounted, ask the sidebar to poll faster.
   useEffect(() => {

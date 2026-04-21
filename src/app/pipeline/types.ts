@@ -27,6 +27,7 @@ export interface Lead {
   localScore: number | null;
   assignedRepId: number | null;
   s2AuthorId: string | null;
+  threadId: string | null;
 }
 
 export interface Rep {

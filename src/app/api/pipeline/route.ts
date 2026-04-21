@@ -60,6 +60,7 @@ function mapLead(l: Record<string, unknown>) {
     leadTier: l.lead_tier,
     localScore: l.local_score ?? null,
     assignedRepId: l.assigned_rep_id,
+    threadId: (l.thread_id as string | null) ?? null,
   };
 }
 
