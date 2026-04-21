@@ -92,7 +92,7 @@ export async function POST(req: NextRequest) {
     const result = await resend.emails.send({
       from: senderFrom,
       to: [toEmail],
-      bcc: ["williamxwang03@gmail.com"],
+      cc: ["williamxwang03@gmail.com"],
       subject: lead.draft_subject,
       html: lead.draft_html,
     });

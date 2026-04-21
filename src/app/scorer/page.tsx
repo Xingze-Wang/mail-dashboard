@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Star, TrendingUp, BarChart3, GitCompare, AlertTriangle } from "lucide-react";
 import {
   BarChart, Bar, LineChart, Line,
@@ -84,6 +85,8 @@ interface LiveData {
 }
 
 export default function ScorerPage() {
+  const router = useRouter();
+  const [gated, setGated] = useState<"checking" | "allowed" | "forbidden">("checking");
   const [meta, setMeta] = useState<ScorerMeta | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [live, setLive] = useState<LiveData | null>(null);
@@ -91,6 +94,17 @@ export default function ScorerPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    fetch("/api/auth/me")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.authenticated && d.role === "admin") setGated("allowed");
+        else { setGated("forbidden"); router.replace("/"); }
+      })
+      .catch(() => { setGated("forbidden"); router.replace("/"); });
+  }, [router]);
+
+  useEffect(() => {
+    if (gated !== "allowed") return;
     Promise.all([
       fetch("/api/scorer").then((r) => r.json()),
       fetch("/api/scorer/live").then((r) => r.json()).catch(() => null),

@@ -74,6 +74,7 @@ interface Props {
   onExit: () => void; // back to Browse
   onSent: (lead: Lead) => void; // refresh hook
   onSkipped: (lead: Lead) => void; // refresh hook
+  initialLeadId?: string | null; // jump to a specific lead on mount
 }
 
 function htmlToPlainText(html: string): string {
@@ -115,7 +116,7 @@ function ageLabel(createdAt: string): string {
   return `${Math.floor(days)}d old`;
 }
 
-export function ReviewPane({ leads, onExit, onSent, onSkipped }: Props) {
+export function ReviewPane({ leads, onExit, onSent, onSkipped, initialLeadId }: Props) {
   const ready = useMemo(() => leads.filter((l) => l.status === "ready"), [leads]);
   const [idx, setIdx] = useState(0);
   const [subject, setSubject] = useState("");
@@ -133,6 +134,16 @@ export function ReviewPane({ leads, onExit, onSent, onSkipped }: Props) {
   useEffect(() => {
     if (idx > 0 && idx >= ready.length) setIdx(Math.max(0, ready.length - 1));
   }, [ready.length, idx]);
+
+  // Jump to the requested lead on first load if specified.
+  useEffect(() => {
+    if (!initialLeadId) return;
+    const target = ready.findIndex((l) => l.id === initialLeadId);
+    if (target >= 0) setIdx(target);
+    // Only run on the first paint with a non-empty ready slice; subsequent
+    // changes shouldn't yank the user away from where they are.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready.length > 0]);
 
   // Sync editor fields when current lead changes
   useEffect(() => {

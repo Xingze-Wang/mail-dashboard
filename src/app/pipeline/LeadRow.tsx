@@ -437,10 +437,27 @@ function LeadRowInner({
                 Skip
               </button>
               {!editing ? (
-                <button type="button" className="dx-secondary" onClick={isExpanded ? startEdit : () => onToggleExpand(lead.id)}>
-                  <Mail />
-                  {isExpanded ? "Edit draft" : "View draft"}
-                </button>
+                <>
+                  <button
+                    type="button"
+                    className="dx-secondary"
+                    onClick={() => {
+                      // Deep-link into Review mode focused on this lead.
+                      const url = new URL(window.location.href);
+                      url.searchParams.set("lead", lead.id);
+                      url.hash = "mode=review";
+                      window.history.replaceState(null, "", url.toString());
+                      window.dispatchEvent(new Event("hashchange"));
+                    }}
+                    title="Open in Review mode (paper left, draft right)"
+                  >
+                    <Mail />
+                    Review
+                  </button>
+                  <button type="button" className="dx-ghost" onClick={isExpanded ? startEdit : () => onToggleExpand(lead.id)}>
+                    {isExpanded ? "Edit draft" : "Preview"}
+                  </button>
+                </>
               ) : null}
               <button
                 type="button"

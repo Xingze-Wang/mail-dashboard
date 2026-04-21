@@ -357,6 +357,13 @@ export default function PipelinePage() {
     writeModeToHash(sendMode);
   }, [sendMode]);
 
+  // Listen for hash changes — clicking "Review" on a row deep-links via hash.
+  useEffect(() => {
+    const onHash = () => setSendMode(readModeFromHash());
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+
   /* ── Fetchers ────────────────────────────────────────────────────── */
 
   const fetchLeads = useCallback(
@@ -988,10 +995,20 @@ export default function PipelinePage() {
                   </span>
                 </div>
               </div>
-              <button onClick={handleBatchSend} disabled={batchSending} className="dx-primary">
-                {batchSending ? <Loader2 style={{ width: 13, height: 13 }} className="animate-spin" /> : <Send />}
-                {batchSending ? "Sending…" : `Send all (${batchLeads.length})`}
-              </button>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  type="button"
+                  onClick={() => setSendMode("review")}
+                  className="dx-secondary"
+                  title="Review one-by-one (paper on left, draft on right)"
+                >
+                  Review batch
+                </button>
+                <button onClick={handleBatchSend} disabled={batchSending} className="dx-primary">
+                  {batchSending ? <Loader2 style={{ width: 13, height: 13 }} className="animate-spin" /> : <Send />}
+                  {batchSending ? "Sending…" : `Send all (${batchLeads.length})`}
+                </button>
+              </div>
             </div>
           )}
 
@@ -999,6 +1016,7 @@ export default function PipelinePage() {
           {sendMode === "review" && !loading && (
             <ReviewPane
               leads={sortedArxiv}
+              initialLeadId={typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("lead") : null}
               onExit={() => setSendMode("browse")}
               onSent={(lead) => {
                 toast({ variant: "success", title: "Email sent", description: lead.authorEmail });
