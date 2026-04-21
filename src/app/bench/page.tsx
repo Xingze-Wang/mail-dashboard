@@ -9,11 +9,14 @@ interface ModelAgg {
   model: string;
   analyzeAvg: number;
   introAvg: number;
+  judgeAnalyzeAvg: number | null;
+  judgeIntroAvg: number | null;
   latencyAvg: number;
   tokensInAvg: number;
   tokensOutAvg: number;
   jsonValidPct: number | null;
   errors: number;
+  promptLeaks: number;
 }
 
 interface Run {
@@ -245,39 +248,42 @@ export default function BenchPage() {
             <thead>
               <tr>
                 <th>Model</th>
-                <th>Analyze</th>
-                <th>Intro</th>
-                <th>Combined</th>
-                <th>Latency (avg/call)</th>
+                <th title="Machine rule-based score (JSON validity + ground truth)">Rule (A)</th>
+                <th title="Machine rule-based score (format + refs)">Rule (I)</th>
+                <th title="Ensemble of Opus + Gemini-3-Pro + GPT-5 judging 0-10">Judge (A)</th>
+                <th title="Ensemble of Opus + Gemini-3-Pro + GPT-5 judging 0-10">Judge (I)</th>
+                <th>Latency</th>
                 <th>Tokens out</th>
-                <th>JSON ✓</th>
+                <th title="Any {{placeholder}} / AI self-ref / prompt echo detected">Leak</th>
                 <th>Errors</th>
               </tr>
             </thead>
             <tbody>
-              {latest.models.map((m) => {
-                const combined = Math.round((m.analyzeAvg + m.introAvg) * 50) / 100;
-                return (
-                  <tr key={m.model}>
-                    <td style={{ fontWeight: 600 }}>{m.model}</td>
-                    <td style={{ color: m.analyzeAvg >= 0.85 ? "var(--green)" : m.analyzeAvg >= 0.5 ? "var(--gold)" : "var(--coral)", fontWeight: 600 }}>
-                      {m.analyzeAvg.toFixed(2)}
-                    </td>
-                    <td style={{ color: m.introAvg >= 0.7 ? "var(--green)" : m.introAvg >= 0.4 ? "var(--gold)" : "var(--coral)", fontWeight: 600 }}>
-                      {m.introAvg.toFixed(2)}
-                    </td>
-                    <td style={{ fontWeight: 700 }}>{combined.toFixed(2)}</td>
-                    <td>{m.latencyAvg.toFixed(1)}s</td>
-                    <td style={{ color: "var(--text-tertiary)" }}>{m.tokensOutAvg}</td>
-                    <td style={{ color: m.jsonValidPct === 100 ? "var(--green)" : m.jsonValidPct === null ? "var(--text-tertiary)" : "var(--coral)" }}>
-                      {m.jsonValidPct === null ? "—" : `${m.jsonValidPct}%`}
-                    </td>
-                    <td style={{ color: m.errors > 0 ? "var(--coral)" : "var(--text-tertiary)" }}>
-                      {m.errors}
-                    </td>
-                  </tr>
-                );
-              })}
+              {latest.models.map((m) => (
+                <tr key={m.model}>
+                  <td style={{ fontWeight: 600 }}>{m.model}</td>
+                  <td style={{ color: m.analyzeAvg >= 0.85 ? "var(--green)" : m.analyzeAvg >= 0.5 ? "var(--gold)" : "var(--coral)", fontWeight: 600 }}>
+                    {m.analyzeAvg.toFixed(2)}
+                  </td>
+                  <td style={{ color: m.introAvg >= 0.7 ? "var(--green)" : m.introAvg >= 0.4 ? "var(--gold)" : "var(--coral)", fontWeight: 600 }}>
+                    {m.introAvg.toFixed(2)}
+                  </td>
+                  <td style={{ color: m.judgeAnalyzeAvg !== null && m.judgeAnalyzeAvg >= 8 ? "var(--green)" : m.judgeAnalyzeAvg !== null && m.judgeAnalyzeAvg >= 5 ? "var(--gold)" : "var(--text-tertiary)", fontWeight: 700 }}>
+                    {m.judgeAnalyzeAvg === null ? "—" : m.judgeAnalyzeAvg.toFixed(1)}
+                  </td>
+                  <td style={{ color: m.judgeIntroAvg !== null && m.judgeIntroAvg >= 8 ? "var(--green)" : m.judgeIntroAvg !== null && m.judgeIntroAvg >= 5 ? "var(--gold)" : "var(--text-tertiary)", fontWeight: 700 }}>
+                    {m.judgeIntroAvg === null ? "—" : m.judgeIntroAvg.toFixed(1)}
+                  </td>
+                  <td>{m.latencyAvg.toFixed(1)}s</td>
+                  <td style={{ color: "var(--text-tertiary)" }}>{m.tokensOutAvg}</td>
+                  <td style={{ color: m.promptLeaks > 0 ? "var(--coral)" : "var(--text-tertiary)", fontWeight: m.promptLeaks > 0 ? 700 : 400 }}>
+                    {m.promptLeaks > 0 ? `⚠ ${m.promptLeaks}` : "—"}
+                  </td>
+                  <td style={{ color: m.errors > 0 ? "var(--coral)" : "var(--text-tertiary)" }}>
+                    {m.errors}
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>

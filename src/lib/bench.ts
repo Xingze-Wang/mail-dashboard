@@ -7,6 +7,7 @@
 import { llmChat, KNOWN_MODELS } from "@/lib/llm-proxy";
 import { supabase } from "@/lib/db";
 import { ALL_DIRECTIONS } from "@/lib/scanner-config";
+import { judgeIntro, judgeAnalyze, type JudgeVerdict } from "@/lib/bench-judge";
 
 // ───────────────────────── Sample papers + ground truth ─────────────────────────
 //
@@ -333,6 +334,9 @@ export interface BenchRow {
   finish_reason: string | null;
   provider: string | null;
   error: string | null;
+  judges?: JudgeVerdict[];
+  judgeAvg?: number | null;
+  promptLeak?: boolean;
 }
 
 export async function benchOneModel(model: string, runId: string): Promise<BenchRow[]> {
@@ -351,6 +355,11 @@ export async function benchOneModel(model: string, runId: string): Promise<Bench
         timeoutMs: 60_000,
       });
       const sc = scoreAnalyze(r.text, s.truth);
+      // Judge in parallel — 3 LLMs rate the output on specificity,
+      // format, prompt-leak. Best-effort; failure is non-blocking.
+      const verdicts = await judgeAnalyze(s.title, s.abstract, model, r.text);
+      const judgeAvg = avgJudgeScores(verdicts);
+      const anyLeak = verdicts.some((v) => v.prompt_leak);
       rows.push({
         model, task: "analyze", sampleIdx: i, score: sc.score,
         latency_s: r.meta.latency_s, tokens_in: r.meta.tokens_in,
@@ -358,6 +367,7 @@ export async function benchOneModel(model: string, runId: string): Promise<Bench
         output_text: JSON.stringify({ raw: r.text.slice(0, 2000), grade: sc.meta }),
         json_valid: sc.jsonValid, finish_reason: r.meta.finish_reason,
         provider: r.meta.provider, error: null,
+        judges: verdicts, judgeAvg, promptLeak: anyLeak,
       });
     } catch (e) {
       rows.push({
@@ -375,6 +385,9 @@ export async function benchOneModel(model: string, runId: string): Promise<Bench
         temperature: 0.7, max_tokens: 800, timeoutMs: 60_000,
       });
       const sc = scoreIntro(r.text, s);
+      const verdicts = await judgeIntro(s.title, s.abstract, model, r.text);
+      const judgeAvg = avgJudgeScores(verdicts);
+      const anyLeak = verdicts.some((v) => v.prompt_leak);
       rows.push({
         model, task: "intro", sampleIdx: i, score: sc.score,
         latency_s: r.meta.latency_s, tokens_in: r.meta.tokens_in,
@@ -382,6 +395,7 @@ export async function benchOneModel(model: string, runId: string): Promise<Bench
         output_text: JSON.stringify({ raw: r.text.slice(0, 2000), grade: sc.meta }),
         json_valid: null, finish_reason: r.meta.finish_reason,
         provider: r.meta.provider, error: null,
+        judges: verdicts, judgeAvg, promptLeak: anyLeak,
       });
     } catch (e) {
       rows.push({
@@ -399,9 +413,20 @@ export async function benchOneModel(model: string, runId: string): Promise<Bench
       score: r.score, latency_s: r.latency_s, tokens_in: r.tokens_in,
       tokens_out: r.tokens_out, output_text: r.output_text, json_valid: r.json_valid,
       finish_reason: r.finish_reason, provider: r.provider, error: r.error,
+      judges: r.judges ?? null,
+      judge_avg: r.judgeAvg ?? null,
+      prompt_leak: r.promptLeak ?? null,
     })),
   );
   return rows;
+}
+
+function avgJudgeScores(verdicts: JudgeVerdict[]): number | null {
+  const good = verdicts.filter((v) => v.error === null);
+  if (good.length === 0) return null;
+  return Math.round(
+    (good.reduce((a, v) => a + v.score_0_10, 0) / good.length) * 10,
+  ) / 10;
 }
 
 export function listKnownModels(): string[] {

@@ -12,7 +12,7 @@ export async function GET(req: NextRequest) {
 
   const { data: rows } = await supabase
     .from("model_bench_runs")
-    .select("model, task, score, latency_s, tokens_in, tokens_out, json_valid, error, created_at, run_id")
+    .select("model, task, score, latency_s, tokens_in, tokens_out, json_valid, error, created_at, run_id, judge_avg, prompt_leak")
     .order("created_at", { ascending: false })
     .limit(2000);
 
@@ -35,20 +35,24 @@ export async function GET(req: NextRequest) {
 }
 
 function aggregateByModel(rows: Array<Record<string, unknown>>) {
-  const byModel = new Map<string, { analyze: number[]; intro: number[]; lat: number[]; tin: number[]; tout: number[]; errs: number; jsonOk: number; jsonTot: number }>();
+  const byModel = new Map<string, { analyze: number[]; intro: number[]; lat: number[]; tin: number[]; tout: number[]; errs: number; jsonOk: number; jsonTot: number; judgeAnalyze: number[]; judgeIntro: number[]; leaks: number }>();
   for (const r of rows) {
     const m = r.model as string;
-    const e = byModel.get(m) ?? { analyze: [], intro: [], lat: [], tin: [], tout: [], errs: 0, jsonOk: 0, jsonTot: 0 };
+    const e = byModel.get(m) ?? { analyze: [], intro: [], lat: [], tin: [], tout: [], errs: 0, jsonOk: 0, jsonTot: 0, judgeAnalyze: [], judgeIntro: [], leaks: 0 };
     if (r.error) e.errs++;
+    if (r.prompt_leak === true) e.leaks++;
     e.lat.push(Number(r.latency_s) || 0);
     e.tin.push(Number(r.tokens_in) || 0);
     e.tout.push(Number(r.tokens_out) || 0);
+    const ja = r.judge_avg == null ? null : Number(r.judge_avg);
     if (r.task === "analyze") {
       e.analyze.push(Number(r.score) || 0);
       e.jsonTot++;
       if (r.json_valid) e.jsonOk++;
+      if (ja !== null && !isNaN(ja)) e.judgeAnalyze.push(ja);
     } else if (r.task === "intro") {
       e.intro.push(Number(r.score) || 0);
+      if (ja !== null && !isNaN(ja)) e.judgeIntro.push(ja);
     }
     byModel.set(m, e);
   }
@@ -57,12 +61,21 @@ function aggregateByModel(rows: Array<Record<string, unknown>>) {
     model,
     analyzeAvg: Math.round(avg(s.analyze) * 100) / 100,
     introAvg: Math.round(avg(s.intro) * 100) / 100,
+    judgeAnalyzeAvg: s.judgeAnalyze.length ? Math.round(avg(s.judgeAnalyze) * 10) / 10 : null,
+    judgeIntroAvg: s.judgeIntro.length ? Math.round(avg(s.judgeIntro) * 10) / 10 : null,
     latencyAvg: Math.round(avg(s.lat) * 10) / 10,
     tokensInAvg: Math.round(avg(s.tin)),
     tokensOutAvg: Math.round(avg(s.tout)),
     jsonValidPct: s.jsonTot > 0 ? Math.round((s.jsonOk / s.jsonTot) * 100) : null,
     errors: s.errs,
-  })).sort((a, b) => (b.analyzeAvg + b.introAvg) - (a.analyzeAvg + a.introAvg));
+    promptLeaks: s.leaks,
+  })).sort((a, b) => {
+    // Prefer judge-averaged ranking when available
+    const ja = (a.judgeAnalyzeAvg ?? 0) + (a.judgeIntroAvg ?? 0);
+    const jb = (b.judgeAnalyzeAvg ?? 0) + (b.judgeIntroAvg ?? 0);
+    if (ja !== jb) return jb - ja;
+    return (b.analyzeAvg + b.introAvg) - (a.analyzeAvg + a.introAvg);
+  });
 }
 
 // POST /api/bench { models: ["glm-4.7", ...], runId? } → run benchmark.
