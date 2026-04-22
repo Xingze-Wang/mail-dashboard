@@ -5,6 +5,7 @@ import { canonicalizeEmail } from "@/lib/email-id";
 import { canonicalizeArxivId } from "@/lib/arxiv-id";
 import { fillRepPlaceholders } from "@/lib/rep-template";
 import { scoreWithGemini } from "@/lib/gemini-scorer";
+import { lookupAuthor } from "@/lib/semantic-scholar";
 import {
   getAssignmentConfig,
   classifyLead,
@@ -142,13 +143,29 @@ export async function POST(req: NextRequest) {
       const authorName = (lead.authorName as string) || null;
       const schoolTier = (lead.schoolTier as number) || null;
 
-      // Classification uses what Python sent us. Python already ran S2 +
-      // local_scorer — we don't re-enrich server-side (burned Vercel CPU
-      // for no gain). If Python missed a citation, the local_score path
-      // in classifyLead picks up slack.
-      const pyCitation = typeof lead.citationCount === "number" ? lead.citationCount : null;
-      const pyHIndex = typeof lead.hIndex === "number" ? lead.hIndex : null;
+      // Classification uses what Python sent us. If Python missed citation
+      // data (most leads — Python's S2 path is flaky), fall back to a quick
+      // server-side S2 lookup. Adds ~3-5s to imports that need it but means
+      // the dashboard actually has citation/h-index data to score on.
+      let pyCitation = typeof lead.citationCount === "number" ? lead.citationCount : null;
+      let pyHIndex = typeof lead.hIndex === "number" ? lead.hIndex : null;
+      let pyS2AuthorId = (lead.s2AuthorId as string | null) ?? null;
+      let pyPaperCount = typeof lead.paperCount === "number" ? lead.paperCount : null;
       const pyLocalScore = typeof lead.localScore === "number" ? lead.localScore : null;
+      if (pyCitation === null && authorName) {
+        try {
+          const s2 = await lookupAuthor(title, authorName);
+          if (s2) {
+            pyCitation = s2.citationCount;
+            pyHIndex = s2.hIndex;
+            pyS2AuthorId = s2.authorId;
+            pyPaperCount = s2.paperCount;
+          }
+        } catch {
+          // S2 timeout / rate limit — leave nulls, backfill route can
+          // pick this up later.
+        }
+      }
       const leadTier = classifyLead(config, {
         citationCount: pyCitation,
         hIndex: pyHIndex,
@@ -231,10 +248,10 @@ export async function POST(req: NextRequest) {
         status: finalStatus,
         local_score: finalScore,
         source,
-        s2_author_id: (lead.s2AuthorId as string | null) ?? null,
+        s2_author_id: pyS2AuthorId,
         h_index: pyHIndex,
         citation_count: pyCitation,
-        paper_count: typeof lead.paperCount === "number" ? lead.paperCount : null,
+        paper_count: pyPaperCount,
         lead_tier: leadTier,
         assigned_rep_id: assignedRepId,
       });
