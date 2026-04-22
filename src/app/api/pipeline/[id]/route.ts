@@ -55,7 +55,7 @@ export async function GET(
 
   // Ownership — non-privileged reps only see their own leads. 404 to
   // avoid leaking which ids exist.
-  const isPrivileged = session.role === "admin" || session.role === "senior";
+  const isPrivileged = session.role === "admin";
   if (!isPrivileged && lead.assigned_rep_id !== session.repId) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
@@ -79,7 +79,7 @@ export async function PATCH(
     .eq("id", id)
     .single();
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  const isPrivileged = session.role === "admin" || session.role === "senior";
+  const isPrivileged = session.role === "admin";
   if (!isPrivileged && existing.assigned_rep_id !== session.repId) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }

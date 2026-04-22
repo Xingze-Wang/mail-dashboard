@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const isPrivileged = session.role === "admin" || session.role === "senior";
+  const isPrivileged = session.role === "admin";
   let repFromPattern: string | null = null;
   let threadIdScope: string[] | null = null;
   if (!isPrivileged) {

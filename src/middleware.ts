@@ -5,7 +5,6 @@ const PUBLIC_PREFIXES = [
   "/login",
   "/api/auth",
   "/api/cron",
-  "/api/scorer",
   "/_next",
   "/favicon",
 ];
@@ -33,6 +32,9 @@ export async function middleware(req: NextRequest) {
     reqHeaders.set("x-rep-id", String(session.repId));
     reqHeaders.set("x-rep-name", session.repName);
     reqHeaders.set("x-rep-email", session.email);
+    // NOTE: x-rep-role from the JWT may be stale (30-day cookie). Handlers
+    // MUST NOT trust this header for authorization — use requireSession(),
+    // which re-reads the current role from sales_reps on every call.
     reqHeaders.set("x-rep-role", session.role);
     return NextResponse.next({ request: { headers: reqHeaders } });
   }

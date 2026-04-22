@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const isPrivileged = session.role === "admin" || session.role === "senior";
+    const isPrivileged = session.role === "admin";
     const actingRepId = session.repId;
 
     const overrideSet = new Set(Array.isArray(overrides) ? overrides : []);

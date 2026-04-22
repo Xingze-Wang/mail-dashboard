@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Ownership — non-privileged users can only switch-author their own leads.
-  const isPrivileged = session.role === "admin" || session.role === "senior";
+  const isPrivileged = session.role === "admin";
   const { data: ownerCheck } = await supabase
     .from("pipeline_leads")
     .select("assigned_rep_id")

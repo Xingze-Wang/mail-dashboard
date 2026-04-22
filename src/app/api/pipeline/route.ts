@@ -86,7 +86,7 @@ export async function GET(req: NextRequest) {
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const isPrivileged = session.role === "admin" || session.role === "senior";
+  const isPrivileged = session.role === "admin";
   // Non-privileged users are HARD-SCOPED to their own repId. Any
   // rep_id= param they pass is ignored. Privileged users may pass
   // rep_id to narrow the view, but default to seeing everything.

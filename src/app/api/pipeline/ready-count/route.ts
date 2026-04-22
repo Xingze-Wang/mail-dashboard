@@ -16,7 +16,7 @@ export async function GET(req: NextRequest) {
   if (!session) {
     return NextResponse.json({ count: 0 });
   }
-  const isPrivileged = session.role === "admin" || session.role === "senior";
+  const isPrivileged = session.role === "admin";
 
   let q = supabase
     .from("pipeline_leads")

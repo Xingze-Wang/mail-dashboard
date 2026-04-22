@@ -11,7 +11,7 @@ export async function GET(req: NextRequest) {
   if (!session) {
     return NextResponse.json({ count: 0 });
   }
-  const isPrivileged = session.role === "admin" || session.role === "senior";
+  const isPrivileged = session.role === "admin";
 
   if (!isPrivileged) {
     const rep = await getRep(session.repId);

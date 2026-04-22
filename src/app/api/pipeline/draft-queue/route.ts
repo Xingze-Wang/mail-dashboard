@@ -34,7 +34,7 @@ async function checkAuth(req: NextRequest): Promise<boolean> {
   // effects on other reps' leads.
   const session = await verifySession(req.cookies.get(AUTH_COOKIE)?.value);
   if (!session) return false;
-  return session.role === "admin" || session.role === "senior";
+  return session.role === "admin";
 }
 
 async function processOne(row: Record<string, unknown>): Promise<boolean> {

@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Ownership: non-privileged users must own the thread.
-    const isPrivileged = session.role === "admin" || session.role === "senior";
+    const isPrivileged = session.role === "admin";
     if (!isPrivileged && inbound.thread_id) {
       const rep = await getRep(session.repId);
       if (!rep?.sender_email) {

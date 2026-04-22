@@ -36,7 +36,7 @@ export async function PATCH(
     }
 
     // Ownership check (only for sales role).
-    const isPrivileged = session.role === "admin" || session.role === "senior";
+    const isPrivileged = session.role === "admin";
     if (!isPrivileged) {
       const rep = await getRep(session.repId);
       if (!rep?.sender_email) {

@@ -26,7 +26,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
   // Per-rep scoping: sales see only their own outbound. Admin + senior
   // unrestricted.
-  const isPrivileged = session.role === "admin" || session.role === "senior";
+  const isPrivileged = session.role === "admin";
   if (!isPrivileged) {
     const rep = await getRep(session.repId);
     const fromStr = typeof email.from === "string" ? email.from.toLowerCase() : "";

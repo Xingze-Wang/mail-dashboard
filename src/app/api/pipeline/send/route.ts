@@ -60,7 +60,7 @@ export async function POST(req: NextRequest) {
     // leads. Previously any sales could POST another rep's lead id and
     // the send would go out under that rep's sender. 404 (not 403) to
     // avoid leaking which lead ids exist outside the caller's scope.
-    const isPrivileged = session.role === "admin" || session.role === "senior";
+    const isPrivileged = session.role === "admin";
     if (!isPrivileged && lead.assigned_rep_id !== session.repId) {
       return NextResponse.json({ error: "Lead not found" }, { status: 404 });
     }
