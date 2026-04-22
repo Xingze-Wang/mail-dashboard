@@ -198,8 +198,8 @@ export default function OverviewPage() {
         </div>
         <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12, padding: 24, textAlign: "center" }}>
           <p style={{ color: "var(--text-secondary)", marginBottom: 8 }}>Ready to send your next batch?</p>
-          <a href="/pipeline" className="btn btn-primary" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-            Open pipeline
+          <a href="/pipeline#mode=review" className="btn btn-primary" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            Open next batch
           </a>
         </div>
       </div>
