@@ -370,7 +370,10 @@ export default function PipelinePage() {
     (signal?: AbortSignal) => {
       if (!hasInitialised.current) setLoading(true);
       else setRefreshing(true);
-      return fetch(`/api/pipeline?limit=200`, { signal })
+      // 1000 covers the current ~300 leads with plenty of room. Payload
+      // stays under ~500KB so this is a non-event for performance. If we
+      // ever cross 1000 active leads, switch to load-more pagination.
+      return fetch(`/api/pipeline?limit=1000`, { signal })
         .then((r) => r.json())
         .then((data) => {
           setLeads(data.leads || []);
