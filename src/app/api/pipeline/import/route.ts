@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { wasRecentlyContacted, paperWasRecentlyContacted } from "@/lib/contact-guard";
+import { checkBlocked } from "@/lib/blocklist";
 import { canonicalizeEmail } from "@/lib/email-id";
 import { canonicalizeArxivId } from "@/lib/arxiv-id";
 import { fillRepPlaceholders } from "@/lib/rep-template";
@@ -89,6 +90,15 @@ export async function POST(req: NextRequest) {
       //   - "+tag" subaddresses (john+work@x.com → john@x.com)
       //   - Gmail dots and googlemail.com aliases
       const email = canonicalizeEmail(rawEmail);
+
+      // Hard blocklist — domain or email blacklisted by senior/admin.
+      // Stops bad leads from ever reaching the pipeline.
+      const blockHit = await checkBlocked(email);
+      if (blockHit) {
+        blockedByGuard.push({ email: `[blocked] ${email}`, lastContactedAt: blockHit.blocked_at });
+        skipped++;
+        continue;
+      }
 
       // Person firewall — has anyone contacted THIS RECIPIENT in 365 days?
       // Three tables (emails / email_contact_history / persons) — see

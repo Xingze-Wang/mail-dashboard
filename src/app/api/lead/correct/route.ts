@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { requireSession } from "@/lib/auth-helpers";
+import { blockEmail } from "@/lib/blocklist";
 
 export const dynamic = "force-dynamic";
 
@@ -45,6 +46,17 @@ export async function POST(req: NextRequest) {
   const reason = typeof body.reason === "string" ? body.reason.slice(0, 500) : null;
   const payload = body.payload && typeof body.payload === "object" ? body.payload : null;
   const skip = body.skip === true;
+  // 'soft' = note for monitoring; 'hard' = block this person from ever
+  // being sent to. Hard requires senior or admin role — junior sales can
+  // still flag soft, just can't escalate to blocklist.
+  const severityRaw = String(body.severity ?? "soft").toLowerCase();
+  const severity: "soft" | "hard" = severityRaw === "hard" ? "hard" : "soft";
+  if (severity === "hard" && session.role !== "admin" && session.role !== "senior") {
+    return NextResponse.json(
+      { error: "Hard-flagging (blocking a recipient) requires senior or admin role." },
+      { status: 403 },
+    );
+  }
 
   if (!leadId) return NextResponse.json({ error: "leadId required" }, { status: 400 });
   if (!VALID_TYPES.has(type)) {
@@ -56,7 +68,7 @@ export async function POST(req: NextRequest) {
 
   const { data: lead } = await supabase
     .from("pipeline_leads")
-    .select("id")
+    .select("id, author_email")
     .eq("id", leadId)
     .maybeSingle();
   if (!lead) return NextResponse.json({ error: "Lead not found" }, { status: 404 });
@@ -68,23 +80,35 @@ export async function POST(req: NextRequest) {
       type,
       reason,
       payload,
+      severity,
       corrected_by: session.email,
     })
     .select()
     .single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  // Optional: also skip the lead so it disappears from sales queues.
-  // Only honored when the correction type genuinely warrants skipping
-  // (the rest are signals to learn from but the lead may still be sendable).
-  if (skip && (type === "bad_compute" || type === "wrong_author" || type === "wrong_direction")) {
+  let blockedEmail: string | null = null;
+  if (severity === "hard") {
+    // Hard flag = block this person from ever being sent to + skip the
+    // current lead. The block reason carries the correction type so admin
+    // can audit later.
+    const em = (lead.author_email as string | null)?.toLowerCase().trim() ?? "";
+    if (em) {
+      const ok = await blockEmail(em, `${type}: ${reason ?? "(no reason)"}`, session.email);
+      if (ok) blockedEmail = em;
+    }
+    await supabase
+      .from("pipeline_leads")
+      .update({ status: "skipped" })
+      .eq("id", leadId);
+  } else if (skip && (type === "bad_compute" || type === "wrong_author" || type === "wrong_direction")) {
     await supabase
       .from("pipeline_leads")
       .update({ status: "skipped" })
       .eq("id", leadId);
   }
 
-  return NextResponse.json({ ok: true, correction: row });
+  return NextResponse.json({ ok: true, correction: row, blockedEmail });
 }
 
 export async function GET(req: NextRequest) {

@@ -10,7 +10,13 @@ function getKey(): Uint8Array {
   return new TextEncoder().encode(secret);
 }
 
-export type Role = "admin" | "sales";
+// Role hierarchy (ascending power):
+//   sales  — default junior rep; can flag leads as soft notes, but their
+//            good_lead / bad_compute flags are NOT used for training.
+//   senior — trusted rep; their good_lead / bad_compute can feed training
+//            (small weight), and they can hard-flag leads into blocklist.
+//   admin  — everything + prompt/rule editing.
+export type Role = "admin" | "senior" | "sales";
 
 export interface SessionPayload {
   repId: number;
@@ -36,7 +42,9 @@ export async function verifySession(token: string | undefined): Promise<SessionP
       typeof payload.repName === "string" &&
       typeof payload.email === "string"
     ) {
-      const role: Role = payload.role === "admin" ? "admin" : "sales";
+      const role: Role =
+        payload.role === "admin" ? "admin" :
+        payload.role === "senior" ? "senior" : "sales";
       return {
         repId: payload.repId,
         repName: payload.repName,

@@ -791,6 +791,19 @@ function FlagButton({ leadId, onSkipped }: { leadId: string; onSkipped: () => vo
   const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
+  // 'soft' = note only; 'hard' = block sender + skip lead. Hard requires
+  // senior or admin role.
+  const [severity, setSeverity] = useState<"soft" | "hard">("soft");
+  const [role, setRole] = useState<string>("sales");
+
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((r) => r.json())
+      .then((d) => setRole(d.role ?? "sales"))
+      .catch(() => {});
+  }, []);
+
+  const canHardFlag = role === "admin" || role === "senior";
 
   async function submit() {
     if (!chosen) return;
@@ -803,16 +816,18 @@ function FlagButton({ leadId, onSkipped }: { leadId: string; onSkipped: () => vo
           leadId,
           type: chosen.type,
           reason: reason.trim() || undefined,
-          skip: chosen.skipsLead,
+          severity,
+          // soft skip is implicit for some types; hard always skips server-side.
+          skip: chosen.skipsLead && severity === "soft",
         }),
       });
       if (r.ok) {
         setDone(true);
-        if (chosen.skipsLead) {
-          // briefly show success, then advance
-          setTimeout(() => { setOpen(false); setDone(false); setChosen(null); setReason(""); onSkipped(); }, 700);
+        const willSkip = severity === "hard" || chosen.skipsLead;
+        if (willSkip) {
+          setTimeout(() => { setOpen(false); setDone(false); setChosen(null); setReason(""); setSeverity("soft"); onSkipped(); }, 800);
         } else {
-          setTimeout(() => { setOpen(false); setDone(false); setChosen(null); setReason(""); }, 900);
+          setTimeout(() => { setOpen(false); setDone(false); setChosen(null); setReason(""); setSeverity("soft"); }, 900);
         }
       }
     } finally {
@@ -911,10 +926,29 @@ function FlagButton({ leadId, onSkipped }: { leadId: string; onSkipped: () => vo
             ) : (
               <>
                 <div style={{ fontSize: 11.5, color: "var(--dx-text-3)", lineHeight: 1.5 }}>{chosen.hint}</div>
+
+                {/* Severity selector — always visible so sales sees what hard does */}
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <SeverityChoice
+                    value="soft" current={severity} setSeverity={setSeverity}
+                    title="Note only"
+                    body="Just record this signal — admin reviews later."
+                    enabled
+                  />
+                  <SeverityChoice
+                    value="hard" current={severity} setSeverity={setSeverity}
+                    title="🚫 Don't send to this person"
+                    body={canHardFlag
+                      ? "Adds them to the blocklist permanently + skips this lead. Use for: wrong identity / opted out / portfolio company / legal."
+                      : "Senior or admin role required for blocklist. Ask Xingze to promote you if you need this."}
+                    enabled={canHardFlag}
+                  />
+                </div>
+
                 <textarea
                   value={reason}
                   onChange={(e) => setReason(e.target.value)}
-                  placeholder="Optional: more detail (≤500 chars)"
+                  placeholder={severity === "hard" ? "Required for hard flag: WHY block this person?" : "Optional: more detail (≤500 chars)"}
                   rows={3}
                   style={{
                     width: "100%",
@@ -932,12 +966,17 @@ function FlagButton({ leadId, onSkipped }: { leadId: string; onSkipped: () => vo
                   </button>
                   <button
                     onClick={submit}
-                    disabled={submitting}
+                    disabled={submitting || (severity === "hard" && !reason.trim())}
                     className="dx-primary"
-                    style={{ fontSize: 12, padding: "6px 14px", display: "inline-flex", alignItems: "center", gap: 6 }}
+                    style={{
+                      fontSize: 12, padding: "6px 14px",
+                      display: "inline-flex", alignItems: "center", gap: 6,
+                      background: severity === "hard" ? "#dc2626" : undefined,
+                      borderColor: severity === "hard" ? "#dc2626" : undefined,
+                    }}
                   >
                     {submitting ? <Loader2 style={{ width: 13, height: 13 }} className="spin" /> : <Flag style={{ width: 13, height: 13 }} />}
-                    {submitting ? "Saving…" : chosen.skipsLead ? "Save & skip" : "Save"}
+                    {submitting ? "Saving…" : severity === "hard" ? "Block & skip" : chosen.skipsLead ? "Save & skip" : "Save"}
                   </button>
                 </div>
               </>
@@ -946,5 +985,37 @@ function FlagButton({ leadId, onSkipped }: { leadId: string; onSkipped: () => vo
         </div>
       )}
     </>
+  );
+}
+
+function SeverityChoice({
+  value, current, setSeverity, title, body, enabled,
+}: {
+  value: "soft" | "hard";
+  current: "soft" | "hard";
+  setSeverity: (v: "soft" | "hard") => void;
+  title: string;
+  body: string;
+  enabled: boolean;
+}) {
+  const active = value === current;
+  return (
+    <button
+      onClick={() => enabled && setSeverity(value)}
+      disabled={!enabled}
+      style={{
+        textAlign: "left",
+        padding: "8px 10px",
+        fontSize: 12,
+        border: "1px solid " + (active && enabled ? (value === "hard" ? "#dc2626" : "var(--dx-blue)") : "var(--dx-border-soft)"),
+        borderRadius: 6,
+        background: active && enabled ? (value === "hard" ? "rgba(220,38,38,0.06)" : "var(--dx-blue-bg)") : "transparent",
+        cursor: enabled ? "pointer" : "not-allowed",
+        opacity: enabled ? 1 : 0.55,
+      }}
+    >
+      <div style={{ fontWeight: 500, color: value === "hard" && active ? "#dc2626" : "var(--dx-text-1)" }}>{title}</div>
+      <div style={{ fontSize: 11, color: "var(--dx-text-3)", marginTop: 2, lineHeight: 1.4 }}>{body}</div>
+    </button>
   );
 }

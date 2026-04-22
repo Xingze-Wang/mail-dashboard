@@ -37,7 +37,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid username or password" }, { status: 401 });
   }
 
-  const role = rep.role === "admin" ? "admin" : "sales";
+  const role: "admin" | "senior" | "sales" =
+    rep.role === "admin" ? "admin" :
+    rep.role === "senior" ? "senior" : "sales";
   const token = await signSession({
     repId: rep.id,
     repName: rep.name,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Loader2,
@@ -333,9 +333,12 @@ export default function SettingsPage() {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 28 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 14 }}>
           <h1 className="page-title">Settings</h1>
-          <span className="lead-count">Reps & assignment</span>
+          <span className="lead-count">Reps, activity, blocklist & assignment</span>
         </div>
       </div>
+
+      <TeamActivitySection />
+      <BlocklistSection />
 
       {/* ═══ Assignment Rules ═══ */}
       <div id="assignment" className="section-card" style={{ marginBottom: 24, scrollMarginTop: 24 }}>
@@ -749,6 +752,220 @@ export default function SettingsPage() {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ═══ Team activity (admin) ═══════════════════════════════════════════ */
+
+interface RepActivity {
+  id: number;
+  name: string;
+  role: string;
+  active: boolean;
+  sender_email: string | null;
+  activity30d: { assigned: number; sent: number; flagsSoft: number; flagsHard: number };
+}
+
+function TeamActivitySection() {
+  const [reps, setReps] = useState<RepActivity[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [savingId, setSavingId] = useState<number | null>(null);
+
+  const reload = useCallback(() => {
+    setLoading(true);
+    fetch("/api/admin/reps", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => setReps(d.reps ?? []))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { reload(); }, [reload]);
+
+  async function setRole(id: number, role: string) {
+    setSavingId(id);
+    try {
+      const r = await fetch("/api/admin/reps", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, role }),
+      });
+      if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error ?? "Failed"); return; }
+      reload();
+    } finally {
+      setSavingId(null);
+    }
+  }
+
+  return (
+    <div className="section-card" style={{ marginBottom: 24 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+        <h3 style={{ margin: 0, fontSize: 16 }}>Team activity (last 30 days)</h3>
+        <button onClick={reload} className="btn" style={{ fontSize: 11, padding: "4px 10px" }}>Refresh</button>
+      </div>
+      {loading ? (
+        <div className="skeleton" style={{ height: 120 }} />
+      ) : reps.length === 0 ? (
+        <p style={{ fontSize: 12, color: "var(--text-tertiary)" }}>No reps yet.</p>
+      ) : (
+        <table style={{ width: "100%", fontSize: 12.5 }}>
+          <thead>
+            <tr style={{ color: "var(--text-tertiary)", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+              <th style={{ textAlign: "left", padding: "6px 8px" }}>Rep</th>
+              <th style={{ textAlign: "left" }}>Role</th>
+              <th style={{ textAlign: "right" }}>Assigned</th>
+              <th style={{ textAlign: "right" }}>Sent</th>
+              <th style={{ textAlign: "right" }}>Soft flags</th>
+              <th style={{ textAlign: "right" }}>Hard flags</th>
+              <th style={{ textAlign: "right" }}>Promote</th>
+            </tr>
+          </thead>
+          <tbody>
+            {reps.map((r) => (
+              <tr key={r.id} style={{ borderTop: "1px solid var(--border-light)", opacity: r.active ? 1 : 0.5 }}>
+                <td style={{ padding: "8px" }}>
+                  <div style={{ fontWeight: 500 }}>{r.name}</div>
+                  <div style={{ fontSize: 10.5, color: "var(--text-tertiary)" }}>{r.sender_email}</div>
+                </td>
+                <td><RoleBadge role={r.role} /></td>
+                <td style={{ textAlign: "right", fontFamily: "ui-monospace, monospace" }}>{r.activity30d.assigned}</td>
+                <td style={{ textAlign: "right", fontFamily: "ui-monospace, monospace" }}>{r.activity30d.sent}</td>
+                <td style={{ textAlign: "right", fontFamily: "ui-monospace, monospace" }}>{r.activity30d.flagsSoft}</td>
+                <td style={{ textAlign: "right", fontFamily: "ui-monospace, monospace", color: r.activity30d.flagsHard > 0 ? "#dc2626" : "var(--text)" }}>
+                  {r.activity30d.flagsHard}
+                </td>
+                <td style={{ textAlign: "right" }}>
+                  <select
+                    value={r.role}
+                    onChange={(e) => setRole(r.id, e.target.value)}
+                    disabled={savingId === r.id}
+                    style={{ fontSize: 11, padding: "2px 6px", borderRadius: 4, border: "1px solid var(--border)" }}
+                  >
+                    <option value="sales">sales</option>
+                    <option value="senior">senior</option>
+                    <option value="admin">admin</option>
+                  </select>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+function RoleBadge({ role }: { role: string }) {
+  const meta = role === "admin"
+    ? { bg: "#FEF3C7", color: "#B45309", label: "Admin" }
+    : role === "senior"
+    ? { bg: "#DBEAFE", color: "#1E40AF", label: "Senior" }
+    : { bg: "var(--bg)", color: "var(--text-tertiary)", label: "Sales" };
+  return (
+    <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, background: meta.bg, color: meta.color, fontSize: 11, fontWeight: 600 }}>
+      {meta.label}
+    </span>
+  );
+}
+
+/* ═══ Blocklist (admin/senior) ═════════════════════════════════════════ */
+
+interface BlockEntry { id: string; email: string | null; domain: string | null; reason: string; blocked_by: string; blocked_at: string }
+
+function BlocklistSection() {
+  const [blocks, setBlocks] = useState<BlockEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [adding, setAdding] = useState(false);
+  const [newType, setNewType] = useState<"email" | "domain">("email");
+  const [newValue, setNewValue] = useState("");
+  const [newReason, setNewReason] = useState("");
+
+  const reload = useCallback(() => {
+    setLoading(true);
+    fetch("/api/blocklist", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => setBlocks(d.blocks ?? []))
+      .finally(() => setLoading(false));
+  }, []);
+  useEffect(() => { reload(); }, [reload]);
+
+  async function add() {
+    if (!newValue.trim() || !newReason.trim()) return;
+    setAdding(true);
+    try {
+      const body = newType === "email"
+        ? { email: newValue.trim(), reason: newReason.trim() }
+        : { domain: newValue.trim(), reason: newReason.trim() };
+      const r = await fetch("/api/blocklist", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error ?? "Failed"); return; }
+      setNewValue(""); setNewReason("");
+      reload();
+    } finally { setAdding(false); }
+  }
+
+  async function remove(id: string) {
+    if (!confirm("Remove from blocklist?")) return;
+    const r = await fetch(`/api/blocklist?id=${id}`, { method: "DELETE" });
+    if (r.ok) reload();
+  }
+
+  return (
+    <div className="section-card" style={{ marginBottom: 24 }}>
+      <h3 style={{ margin: "0 0 6px", fontSize: 16 }}>Blocklist</h3>
+      <p style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 12 }}>
+        These emails / domains are never sent to and never imported. Senior + admin only. Hard-flagging a lead in the pipeline auto-adds it here.
+      </p>
+
+      {/* Add form */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
+        <select value={newType} onChange={(e) => setNewType(e.target.value as "email" | "domain")} style={{ fontSize: 12, padding: "5px 8px", borderRadius: 6, border: "1px solid var(--border)" }}>
+          <option value="email">Email</option>
+          <option value="domain">Domain</option>
+        </select>
+        <input value={newValue} onChange={(e) => setNewValue(e.target.value)} placeholder={newType === "email" ? "person@school.edu" : "school.edu"} style={{ flex: "0 0 220px", fontSize: 12, padding: "5px 8px", borderRadius: 6, border: "1px solid var(--border)" }} />
+        <input value={newReason} onChange={(e) => setNewReason(e.target.value)} placeholder="Reason (required)" style={{ flex: 1, minWidth: 200, fontSize: 12, padding: "5px 8px", borderRadius: 6, border: "1px solid var(--border)" }} />
+        <button onClick={add} disabled={adding || !newValue.trim() || !newReason.trim()} className="btn btn-primary" style={{ fontSize: 12, padding: "5px 14px" }}>
+          {adding ? "Adding…" : "Block"}
+        </button>
+      </div>
+
+      {/* List */}
+      {loading ? (
+        <div className="skeleton" style={{ height: 80 }} />
+      ) : blocks.length === 0 ? (
+        <p style={{ fontSize: 12, color: "var(--text-tertiary)" }}>Nothing blocked yet.</p>
+      ) : (
+        <table style={{ width: "100%", fontSize: 12 }}>
+          <thead>
+            <tr style={{ color: "var(--text-tertiary)", fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+              <th style={{ textAlign: "left", padding: "4px 8px" }}>Target</th>
+              <th style={{ textAlign: "left" }}>Reason</th>
+              <th style={{ textAlign: "left" }}>Added by</th>
+              <th style={{ textAlign: "right" }}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {blocks.map((b) => (
+              <tr key={b.id} style={{ borderTop: "1px solid var(--border-light)" }}>
+                <td style={{ padding: "6px 8px", fontFamily: "ui-monospace, monospace" }}>
+                  {b.email && <span style={{ color: "#dc2626" }}>{b.email}</span>}
+                  {b.domain && <span style={{ color: "#dc2626" }}>@{b.domain}</span>}
+                </td>
+                <td style={{ color: "var(--text-secondary)" }}>{b.reason}</td>
+                <td style={{ color: "var(--text-tertiary)", fontSize: 11 }}>
+                  {b.blocked_by}
+                  <div style={{ fontSize: 10 }}>{new Date(b.blocked_at).toLocaleDateString()}</div>
+                </td>
+                <td style={{ textAlign: "right" }}>
+                  <button onClick={() => remove(b.id)} style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: 4, padding: "2px 8px", fontSize: 11, color: "var(--text-tertiary)", cursor: "pointer" }}>
+                    Unblock
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }

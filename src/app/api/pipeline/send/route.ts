@@ -6,6 +6,7 @@ import { getRep } from "@/lib/assignment";
 import { checkSendAllowed, SEND_MIN_AGE_DAYS, CONTACT_DEDUP_DAYS } from "@/lib/contact-guard";
 import { MIN_AGE_DAYS, leadAgeDays } from "@/lib/policy";
 import { canonicalizeEmail } from "@/lib/email-id";
+import { checkBlocked } from "@/lib/blocklist";
 
 export async function POST(req: NextRequest) {
   try {
@@ -55,6 +56,21 @@ export async function POST(req: NextRequest) {
           { status: 422 },
         );
       }
+    }
+
+    // Hard blocklist check — overrides everything except missing-id (above).
+    // Block reason is surfaced so sales sees WHY a send was rejected.
+    const blockHit = await checkBlocked((lead.author_email as string) ?? "");
+    if (blockHit) {
+      return NextResponse.json(
+        {
+          error: `Recipient is on the blocklist: ${blockHit.reason}`,
+          code: "blocked",
+          blockedBy: blockHit.blocked_by,
+          blockedAt: blockHit.blocked_at,
+        },
+        { status: 409 },
+      );
     }
 
     const guard = await checkSendAllowed(lead);
