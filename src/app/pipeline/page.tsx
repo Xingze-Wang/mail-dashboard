@@ -744,7 +744,12 @@ export default function PipelinePage() {
     const totalLeads = (ch?.totalLeads ?? leads.length) + (discoveryBySource.hf + discoveryBySource.github + discoveryBySource.ph);
     const thisWeek = ch?.leadsThisWeek ?? 0;
     const sent = ch?.sentLeads ?? 0;
-    const ready = leads.filter((l) => l.status === "ready").length;
+    // Two distinct counts: ready+sendable (passed cooldown) vs total ready
+    // (includes papers <7d old that aren't yet eligible to send). The stat
+    // strip should headline what sales can actually act on.
+    const readyAll = leads.filter((l) => l.status === "ready").length;
+    const ripening = leads.filter((l) => isRipening(l)).length;
+    const ready = readyAll - ripening;
     const conv = ch?.conversionRate ?? 0;
     const sparkPoints = dailyToSparkline(ch?.daily);
     return [
@@ -765,8 +770,15 @@ export default function PipelinePage() {
       {
         label: "Ready to send",
         value: String(ready),
-        unit: leads.length > 0 ? `/${leads.length}` : undefined,
-        trend: ready > 0 ? { kind: "up", text: `+${ready}` } : { kind: "flat", text: "±0" },
+        // /readyAll surfaces the cooldown wait — "12/200" means 12 sendable,
+        // 188 in cooldown waiting for the 7d age gate. Far more useful than
+        // /leads.length which just told you "Ready out of total pipeline".
+        unit: readyAll > ready ? `/${readyAll}` : undefined,
+        trend: ready > 0
+          ? { kind: "up", text: `+${ready} sendable` }
+          : ripening > 0
+          ? { kind: "flat", text: `${ripening} cooling down` }
+          : { kind: "flat", text: "±0" },
         spark: { color: "#B45309", points: sparkPoints },
       },
       {
