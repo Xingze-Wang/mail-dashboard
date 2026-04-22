@@ -253,6 +253,35 @@ function LeadRowInner({
         >
           {lead.authorEmail || "resolving email…"}
         </span>
+        {lead.industryOrgs && lead.industryOrgs.length > 0 && (
+          <>
+            {lead.industryOrgs.slice(0, 3).map((org) => (
+              <span
+                key={org}
+                title="Industry affiliation (intern / current / past)"
+                style={{
+                  marginLeft: 6,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 3,
+                  padding: "1px 7px",
+                  fontSize: 10.5,
+                  fontWeight: 600,
+                  background: "linear-gradient(135deg, #FEF3C7 0%, #FDE68A 100%)",
+                  color: "#92400E",
+                  border: "1px solid #FCD34D",
+                  borderRadius: 999,
+                  letterSpacing: "0.01em",
+                }}
+              >
+                🏢 {org}
+              </span>
+            ))}
+            {lead.industryOrgs.length > 3 && (
+              <span style={{ marginLeft: 4, fontSize: 10.5, color: "var(--dx-text-3)" }}>+{lead.industryOrgs.length - 3}</span>
+            )}
+          </>
+        )}
       </div>
 
       {/* Draft snippet (only if we have a draft and not currently editing) */}

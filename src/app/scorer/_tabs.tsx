@@ -1119,3 +1119,113 @@ export function CitationBackfillCard() {
     </div>
   );
 }
+
+/* ── Industry backfill — fills industry_orgs from S2 + ack mining ─────── */
+
+interface IndustryBackfillResult {
+  processed: number;
+  updated: number;
+  viaS2: number;
+  viaAck: number;
+  remaining: number;
+  samples: { id: string; author: string; orgs: string[]; source: string }[];
+}
+
+export function IndustryBackfillCard() {
+  const [running, setRunning] = useState(false);
+  const [auto, setAuto] = useState(false);
+  const [last, setLast] = useState<IndustryBackfillResult | null>(null);
+  const [log, setLog] = useState<string[]>([]);
+  const stopRef = useRef(false);
+
+  async function runOnce(batchSize: number): Promise<IndustryBackfillResult | null> {
+    const r = await fetch("/api/scorer/backfill-industry", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ batchSize }),
+    });
+    const d = await r.json();
+    if (!r.ok) {
+      setLog((p) => [`❌ ${d.error ?? "Failed"}`, ...p].slice(0, 8));
+      return null;
+    }
+    setLast(d);
+    setLog((p) => [
+      `✓ batch: +${d.updated} found (S2: ${d.viaS2}, ack: ${d.viaAck}) — ${d.remaining} remaining`,
+      ...p,
+    ].slice(0, 8));
+    return d;
+  }
+
+  async function runOne() { setRunning(true); try { await runOnce(15); } finally { setRunning(false); } }
+
+  async function runUntilDone() {
+    setRunning(true); setAuto(true); stopRef.current = false;
+    try {
+      let safety = 30;
+      while (safety-- > 0 && !stopRef.current) {
+        const r = await runOnce(20);
+        if (!r) break;
+        if (r.remaining === 0) break;
+        if (r.processed === 0) break;
+        await new Promise((res) => setTimeout(res, 1500));
+      }
+    } finally {
+      setRunning(false); setAuto(false);
+    }
+  }
+
+  function stopAuto() { stopRef.current = true; }
+
+  return (
+    <div className="tech-card" style={{ marginTop: 20 }}>
+      <div className="tech-header">
+        <div className="tech-title">
+          <Cpu style={{ width: 13, height: 13 }} /> Industry affiliation backfill
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={runOne} disabled={running} className="btn" style={{ fontSize: 12, display: "inline-flex", alignItems: "center", gap: 6 }}>
+            {running && !auto ? <Loader2 style={{ width: 13, height: 13 }} className="spin" /> : <Play style={{ width: 13, height: 13 }} />}
+            One batch (15)
+          </button>
+          {auto ? (
+            <button onClick={stopAuto} className="btn" style={{ fontSize: 12, color: "#dc2626" }}>Stop</button>
+          ) : (
+            <button onClick={runUntilDone} disabled={running} className="btn btn-primary" style={{ fontSize: 12, display: "inline-flex", alignItems: "center", gap: 6 }}>
+              {running ? <Loader2 style={{ width: 13, height: 13 }} className="spin" /> : <Zap style={{ width: 13, height: 13 }} />}
+              Backfill all
+            </button>
+          )}
+        </div>
+      </div>
+      <p style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 10 }}>
+        Detects industry orgs (OpenAI, Anthropic, Anyscale, Databricks, etc) from Semantic Scholar affiliations + paper acknowledgment mining (ar5iv HTML). An OpenAI intern with low cites is much stronger than the same person without that signal — these get +2500 to effective_citations in the strength scorer.
+      </p>
+      {last && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginBottom: 10, fontSize: 12 }}>
+          <Stat label="Last batch found" value={String(last.updated)} />
+          <Stat label="Via S2" value={String(last.viaS2)} />
+          <Stat label="Via ack mining" value={String(last.viaAck)} />
+          <Stat label="Remaining" value={String(last.remaining)} emphasis={last.remaining === 0} />
+        </div>
+      )}
+      {log.length > 0 && (
+        <div style={{ fontSize: 11, fontFamily: "ui-monospace, monospace", color: "var(--text-secondary)", lineHeight: 1.6, maxHeight: 140, overflowY: "auto", padding: 8, background: "var(--bg)", borderRadius: 6 }}>
+          {log.map((line, i) => <div key={i}>{line}</div>)}
+        </div>
+      )}
+      {last && last.samples.length > 0 && (
+        <details style={{ marginTop: 10, fontSize: 11.5, color: "var(--text-secondary)" }}>
+          <summary style={{ cursor: "pointer", color: "var(--text-tertiary)" }}>last batch samples</summary>
+          <ul style={{ marginTop: 6, paddingLeft: 18 }}>
+            {last.samples.map((s) => (
+              <li key={s.id}>
+                <b>{s.author}</b>: 🏢 {s.orgs.join(", ")} <span style={{ color: "var(--text-tertiary)" }}>({s.source})</span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
+}

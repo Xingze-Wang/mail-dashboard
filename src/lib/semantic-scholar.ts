@@ -10,6 +10,10 @@ export interface S2AuthorInfo {
   hIndex: number | null;
   citationCount: number | null;
   paperCount: number | null;
+  /** Free-text affiliation strings as S2 has them. Multiple if the author
+   *  bounced between orgs. Used by industry-orgs detector to flag OpenAI/
+   *  Anyscale/etc. */
+  affiliations: string[];
 }
 
 /** Check if all parts of name A appear in name B (handles name order differences) */
@@ -22,7 +26,7 @@ function namesMatch(target: string, candidate: string): boolean {
 /** Fetch author details by S2 author ID */
 async function fetchAuthorDetails(authorId: string): Promise<S2AuthorInfo | null> {
   const res = await fetch(
-    `${S2_BASE}/author/${authorId}?fields=hIndex,citationCount,paperCount`,
+    `${S2_BASE}/author/${authorId}?fields=hIndex,citationCount,paperCount,affiliations`,
     { signal: AbortSignal.timeout(10_000) },
   );
   if (!res.ok) return null;
@@ -32,6 +36,9 @@ async function fetchAuthorDetails(authorId: string): Promise<S2AuthorInfo | null
     hIndex: data.hIndex ?? null,
     citationCount: data.citationCount ?? null,
     paperCount: data.paperCount ?? null,
+    affiliations: Array.isArray(data.affiliations)
+      ? data.affiliations.map((s: unknown) => String(s)).filter(Boolean)
+      : [],
   };
 }
 
@@ -75,7 +82,7 @@ async function lookupViaAuthor(
 ): Promise<S2AuthorInfo | null> {
   const query = encodeURIComponent(authorName);
   const res = await fetch(
-    `${S2_BASE}/author/search?query=${query}&limit=5&fields=name,hIndex,citationCount,paperCount`,
+    `${S2_BASE}/author/search?query=${query}&limit=5&fields=name,hIndex,citationCount,paperCount,affiliations`,
     { signal: AbortSignal.timeout(10_000) },
   );
 
@@ -95,6 +102,9 @@ async function lookupViaAuthor(
       hIndex: author.hIndex ?? null,
       citationCount: author.citationCount ?? null,
       paperCount: author.paperCount ?? null,
+      affiliations: Array.isArray(author.affiliations)
+        ? author.affiliations.map((s: unknown) => String(s)).filter(Boolean)
+        : [],
     };
     // Pick the profile with the highest h-index (most likely the right person
     // for well-published researchers; for unknowns, any match is better than none)

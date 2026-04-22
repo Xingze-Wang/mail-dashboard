@@ -277,6 +277,12 @@ function isOverseas(email: string | null | undefined): boolean {
  */
 const TIER_CITATION_BONUS: Record<number, number> = { 1: 2000, 2: 1000, 3: 0 };
 const HIGH_SCORE_BONUS = 500;
+// Industry affiliation is an even stronger signal than tier-1 school —
+// an OpenAI/Anthropic intern at any school is "strong" almost regardless
+// of citations. We give it 2500 (slightly more than tier-1 school) so
+// that a Stanford grad with no cites and an OpenAI internship clears
+// the 5000 bar (2000 school + 2500 industry + 500 score = 5000+).
+const INDUSTRY_BONUS = 2500;
 
 export function classifyLead(
   config: AssignmentConfig,
@@ -287,30 +293,26 @@ export function classifyLead(
     schoolTier: number | null;
     authorEmail?: string;
     localScore?: number | null;
+    /** Canonical org names from industry-orgs.ts; non-empty => big bonus. */
+    industryOrgs?: string[] | null;
   },
 ): "strong" | "normal" {
   const { min_citation, min_citation_unverified, max_school_tier, min_local_score } = config.strong_criteria;
   const tier = lead.schoolTier;
   const cite = lead.citationCount ?? 0;
   const score = lead.localScore ?? 0;
+  const hasIndustry = Array.isArray(lead.industryOrgs) && lead.industryOrgs.length > 0;
 
-  // School bonus only applies up to max_school_tier (configurable cap so
-  // admin can disable tier-2 bonus by setting max_school_tier=1).
   let schoolBonus = 0;
   if (tier !== null && tier !== undefined && tier <= max_school_tier) {
     schoolBonus = TIER_CITATION_BONUS[tier] ?? 0;
   }
-
-  // Score bonus — only fires when sufficiently high. Doesn't lift a zero-cite
-  // unknown-school person to strong by itself.
   const scoreBonus = score >= min_local_score ? HIGH_SCORE_BONUS : 0;
+  const industryBonus = hasIndustry ? INDUSTRY_BONUS : 0;
 
-  const effective = cite + schoolBonus + scoreBonus;
+  const effective = cite + schoolBonus + scoreBonus + industryBonus;
   if (effective > min_citation) return "strong";
 
-  // Legacy fallback: pure-citations path for the no-school-info case
-  // (kept so changing the bonus model doesn't accidentally drop a known-
-  // famous unknown-school researcher).
   if ((tier === null || tier === undefined) && cite > min_citation_unverified) return "strong";
 
   return "normal";

@@ -28,6 +28,7 @@ export interface Lead {
   assignedRepId: number | null;
   s2AuthorId: string | null;
   threadId: string | null;
+  industryOrgs?: string[] | null;
 }
 
 export interface Rep {

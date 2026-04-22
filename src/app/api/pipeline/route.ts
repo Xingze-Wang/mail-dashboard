@@ -61,6 +61,7 @@ function mapLead(l: Record<string, unknown>) {
     localScore: l.local_score ?? null,
     assignedRepId: l.assigned_rep_id,
     threadId: (l.thread_id as string | null) ?? null,
+    industryOrgs: Array.isArray(l.industry_orgs) ? (l.industry_orgs as string[]) : null,
   };
 }
 

@@ -7,6 +7,8 @@ import { canonicalizeArxivId } from "@/lib/arxiv-id";
 import { fillRepPlaceholders } from "@/lib/rep-template";
 import { scoreWithGemini } from "@/lib/gemini-scorer";
 import { lookupAuthor } from "@/lib/semantic-scholar";
+import { detectOrgs } from "@/lib/industry-orgs";
+import { mineAckIndustry } from "@/lib/ack-mining";
 import {
   getAssignmentConfig,
   classifyLead,
@@ -162,6 +164,8 @@ export async function POST(req: NextRequest) {
       let pyS2AuthorId = (lead.s2AuthorId as string | null) ?? null;
       let pyPaperCount = typeof lead.paperCount === "number" ? lead.paperCount : null;
       const pyLocalScore = typeof lead.localScore === "number" ? lead.localScore : null;
+      let industryOrgs: string[] = [];
+      let industrySource: string | null = null;
       if (pyCitation === null && authorName) {
         try {
           const s2 = await lookupAuthor(title, authorName);
@@ -170,10 +174,28 @@ export async function POST(req: NextRequest) {
             pyHIndex = s2.hIndex;
             pyS2AuthorId = s2.authorId;
             pyPaperCount = s2.paperCount;
+            // Detect industry orgs from S2 affiliations (most reliable signal)
+            const fromS2 = detectOrgs(s2.affiliations.join(" | "));
+            if (fromS2.length > 0) {
+              industryOrgs = fromS2;
+              industrySource = "s2";
+            }
           }
         } catch {
-          // S2 timeout / rate limit — leave nulls, backfill route can
-          // pick this up later.
+          // S2 timeout / rate limit — leave nulls, backfill route picks up later.
+        }
+      }
+      // Ack mining: only if we don't already have an industry signal from S2.
+      // Best-effort, won't block import on failure.
+      if (industryOrgs.length === 0 && arxivIdCanonical) {
+        try {
+          const ack = await mineAckIndustry(arxivIdCanonical);
+          if (ack.orgs.length > 0) {
+            industryOrgs = ack.orgs;
+            industrySource = ack.source;
+          }
+        } catch {
+          // best-effort
         }
       }
       const leadTier = classifyLead(config, {
@@ -182,6 +204,7 @@ export async function POST(req: NextRequest) {
         schoolTier,
         authorEmail: email,
         localScore: pyLocalScore,
+        industryOrgs,
       });
       const assignedRepId = assignRep(
         config,
@@ -264,6 +287,10 @@ export async function POST(req: NextRequest) {
         paper_count: pyPaperCount,
         lead_tier: leadTier,
         assigned_rep_id: assignedRepId,
+        // industry_orgs may be a no-op insert if the column doesn't exist
+        // (older DB) — Supabase will silently ignore unknown keys.
+        industry_orgs: industryOrgs.length > 0 ? industryOrgs : null,
+        industry_source: industrySource,
       });
 
       if (error) {
