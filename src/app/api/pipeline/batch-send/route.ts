@@ -134,18 +134,35 @@ export async function POST(req: NextRequest) {
       }
 
       const toEmail = canonicalizeEmail(lead.author_email as string);
-      // Send via Resend
-      const result = await resend.emails.send({
-        from: senderFrom,
-        to: [toEmail],
-        cc: ["williamxwang03@gmail.com"],
-        subject: lead.draft_subject,
-        html: lead.draft_html,
-      });
+      // Send via Resend — wrap in try/catch so a thrown error (network,
+      // DNS, rate-limit bomb) rolls this lead back to 'ready' and lets
+      // the loop continue to the NEXT lead. Without this the old code
+      // would jump to the outer catch, return 500, and abandon every
+      // remaining lead in the batch at whatever status they were in —
+      // sales would see "1 sent, 2 skipped" with the remaining 100
+      // silently dropped.
+      let result;
+      try {
+        result = await resend.emails.send({
+          from: senderFrom,
+          to: [toEmail],
+          cc: ["williamxwang03@gmail.com"],
+          subject: lead.draft_subject,
+          html: lead.draft_html,
+        });
+      } catch (e) {
+        await supabase.from("pipeline_leads").update({ status: "ready" }).eq("id", id);
+        const msg = e instanceof Error ? e.message : String(e);
+        errors.push(`${toEmail}: ${msg}`);
+        blocks["resend_threw"] = (blocks["resend_threw"] || 0) + 1;
+        skipped++;
+        continue;
+      }
 
       if (result.error) {
         await supabase.from("pipeline_leads").update({ status: "ready" }).eq("id", id);
         errors.push(`${toEmail}: ${result.error.message}`);
+        blocks["resend_error"] = (blocks["resend_error"] || 0) + 1;
         skipped++;
         continue;
       }

@@ -310,7 +310,10 @@ export function BulkPane({ leads, onDone, onError }: Props) {
                 <div className="dx-bulk-snippet">{snippetFor(lead)}</div>
               </div>
               <span className={`dx-bulk-age${gated ? " gated" : ""}`}>
-                {ageLabel(lead.createdAt)}
+                {/* Prefer paper age — that's what sales cares about when
+                    deciding whether a lead is too fresh to email. Falls
+                    back to ingest age when publishedAt is missing. */}
+                {ageLabel(lead.publishedAt ?? lead.createdAt)}
                 {gated ? ` — needs override` : ""}
               </span>
               <div style={{ display: "flex", justifyContent: "flex-end" }}>

@@ -656,13 +656,25 @@ export default function PipelinePage() {
   }, [fetchLeads]);
 
   const handleSaveEdit = useCallback(async (id: string, draftSubject: string, draftHtml: string) => {
-    await fetch(`/api/pipeline/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ draftSubject, draftHtml }),
-    });
-    toast({ variant: "success", title: "Draft saved" });
-    fetchLeads();
+    // Surface the actual outcome — the old version showed "Draft saved"
+    // on every click regardless of server response, which silently lost
+    // edits when the PATCH failed.
+    try {
+      const res = await fetch(`/api/pipeline/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ draftSubject, draftHtml }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast({ variant: "error", title: "Draft save failed", description: data.error ?? `HTTP ${res.status}` });
+        return;
+      }
+      toast({ variant: "success", title: "Draft saved" });
+      fetchLeads();
+    } catch (e) {
+      toast({ variant: "error", title: "Draft save failed", description: e instanceof Error ? e.message : "Network error" });
+    }
   }, [fetchLeads, toast]);
 
   const handleReassignAll = async () => {

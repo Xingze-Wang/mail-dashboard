@@ -1,11 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
+import { requireSession } from "@/lib/auth-helpers";
+import { getRep } from "@/lib/assignment";
 
 /**
  * PATCH /api/inbound/:id
  *
  * Update a single inbound email — currently used to flip `is_read`.
  * Body: { isRead?: boolean }
+ *
+ * Per-rep scoping: sales can only update inbounds in threads they
+ * originated. Admin + senior unrestricted. We resolve the row's
+ * thread_id, find the original outbound sender, and check ownership.
  */
 export async function PATCH(
   req: NextRequest,
@@ -22,6 +28,33 @@ export async function PATCH(
 
     if (Object.keys(updates).length === 0) {
       return NextResponse.json({ error: "No fields to update" }, { status: 400 });
+    }
+
+    // Ownership check (only for sales role).
+    const session = await requireSession(req);
+    const isPrivileged = session?.role === "admin" || session?.role === "senior";
+    if (!isPrivileged && session?.repId) {
+      const rep = await getRep(session.repId);
+      if (!rep?.sender_email) {
+        return NextResponse.json({ error: "Not found" }, { status: 404 });
+      }
+      const { data: inbound } = await supabase
+        .from("inbound_emails")
+        .select("thread_id")
+        .eq("id", id)
+        .maybeSingle();
+      if (!inbound?.thread_id) {
+        return NextResponse.json({ error: "Not found" }, { status: 404 });
+      }
+      const { data: outbound } = await supabase
+        .from("emails")
+        .select("from")
+        .eq("thread_id", inbound.thread_id)
+        .ilike("from", `%${rep.sender_email}%`)
+        .limit(1);
+      if (!outbound || outbound.length === 0) {
+        return NextResponse.json({ error: "Not found" }, { status: 404 });
+      }
     }
 
     const { data, error } = await supabase

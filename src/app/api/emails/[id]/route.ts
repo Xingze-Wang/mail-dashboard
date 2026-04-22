@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { resend } from "@/lib/resend";
+import { requireSession } from "@/lib/auth-helpers";
+import { getRep } from "@/lib/assignment";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -13,6 +15,25 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
   if (!email) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  // Per-rep scoping: a sales user can only see emails they themselves
+  // sent. Admin + senior see everything (they triage across the team).
+  // We compare the row's `from` string against the acting rep's
+  // sender_email — that's the same contract used by /api/emails list
+  // scoping, so both endpoints agree on what "yours" means.
+  const session = await requireSession(req);
+  const isPrivileged = session?.role === "admin" || session?.role === "senior";
+  if (!isPrivileged && session?.repId) {
+    const rep = await getRep(session.repId);
+    const fromStr = typeof email.from === "string" ? email.from.toLowerCase() : "";
+    const mine = rep?.sender_email
+      ? fromStr.includes(rep.sender_email.toLowerCase())
+      : false;
+    if (!mine) {
+      // Return 404 (not 403) so we don't leak which IDs exist in the DB.
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
   }
 
   // If we have no content but have a resend_id, fetch from Resend
