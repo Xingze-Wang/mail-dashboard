@@ -30,6 +30,8 @@ export async function GET() {
     { data: wechatConversions },
     { data: dailyLeads },
     discoveryCountsBySource,
+    deliveredRecipients,
+    repBySenderEmail,
   ] = await Promise.all([
     supabase
       .from("pipeline_leads")
@@ -44,10 +46,17 @@ export async function GET() {
       .select("created_at, lead_tier")
       .gte("created_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()),
     fetchDiscoveryCounts(),
+    fetchDeliveredRecipients(),
+    fetchRepRecipientCounts(),
   ]);
 
   const leads = allLeads ?? [];
   const wechat = wechatConversions ?? [];
+  // Lower-cased set of every email address we've successfully delivered to.
+  // This is the right denominator for ANY conversion-rate calc — using
+  // pipeline_leads.status='sent' (~30 rows) instead would report rates 30×
+  // too high because most historical sends never went through pipeline_leads.
+  const sentEmails: Set<string> = deliveredRecipients;
 
   // ── Channel stats ──
   const totalLeads = leads.length;
@@ -58,7 +67,12 @@ export async function GET() {
     ? Math.round((hIndexValues.reduce((a, b) => a + b, 0) / hIndexValues.length) * 10) / 10
     : 0;
   const wechatCount = wechat.length;
-  const conversionRate = sentLeads > 0 ? Math.round((wechatCount / sentLeads) * 1000) / 10 : 0;
+  // Real denominator: unique people we delivered email to (from `emails`).
+  // Pipeline-only `sentLeads` would be a 30-row subset → 146% nonsense.
+  const totalRecipients = sentEmails.size;
+  const conversionRate = totalRecipients > 0
+    ? Math.round((wechatCount / totalRecipients) * 1000) / 10
+    : 0;
 
   const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const leadsThisWeek = leads.filter((l) => l.created_at >= oneWeekAgo).length;
@@ -86,25 +100,49 @@ export async function GET() {
   });
 
   // ── Per-rep stats ──
+  // `assigned` still comes from pipeline_leads (only place rep assignment
+  // exists). `sent` and `wechat` use the real email log so historical sends
+  // count properly — that's why the 146% bug existed before.
+  const wechatEmailSet = new Set(
+    wechat.map((w) => (w.query as string | null)?.toLowerCase().trim()).filter(Boolean) as string[],
+  );
+
   const repStats = (reps ?? []).map((rep) => {
     const repLeads = leads.filter((l) => l.assigned_rep_id === rep.id);
     const assigned = repLeads.length;
-    const sent = repLeads.filter((l) => l.status === "sent" || l.status === "replied").length;
+
+    // Real `sent` for THIS rep: the unique recipients we delivered to from
+    // the rep's sender_email. Comes from emails.from join, not pipeline.
+    const senderEmail = (rep.sender_email as string | undefined)?.toLowerCase().trim() ?? "";
+    const repRecipients = repBySenderEmail.get(senderEmail) ?? new Set<string>();
+    const sent = repRecipients.size;
+
+    // `replied` is still pipeline-scoped (replied status only set there).
     const replied = repLeads.filter((l) => l.status === "replied").length;
 
-    const repEmails = new Set(repLeads.map((l) => (l.author_email as string)?.toLowerCase()));
-    const repWechat = wechat.filter((w) =>
-      repEmails.has((w.query as string)?.toLowerCase()),
-    ).length;
-
+    // WeChat conversions attributable to this rep = WeChat emails ∩ repRecipients.
+    let repWechat = 0;
+    for (const em of repRecipients) if (wechatEmailSet.has(em)) repWechat++;
     const repConvRate = sent > 0 ? Math.round((repWechat / sent) * 1000) / 10 : 0;
 
+    // Per-tier within this rep: pipeline lead's tier × whether that lead's
+    // recipient was actually delivered to (via repRecipients ∩).
     const tiers = ["strong", "normal"].map((tier) => {
       const tierLeads = repLeads.filter((l) => l.lead_tier === tier);
-      const tierSent = tierLeads.filter((l) => l.status === "sent" || l.status === "replied").length;
+      const tierEmails = new Set(
+        tierLeads
+          .map((l) => (l.author_email as string | null)?.toLowerCase().trim())
+          .filter(Boolean) as string[],
+      );
+      let tierSent = 0;
+      let tierWechat = 0;
+      for (const em of tierEmails) {
+        if (repRecipients.has(em)) {
+          tierSent++;
+          if (wechatEmailSet.has(em)) tierWechat++;
+        }
+      }
       const tierReplied = tierLeads.filter((l) => l.status === "replied").length;
-      const tierEmails = new Set(tierLeads.map((l) => (l.author_email as string)?.toLowerCase()));
-      const tierWechat = wechat.filter((w) => tierEmails.has((w.query as string)?.toLowerCase())).length;
       return {
         tier,
         assigned: tierLeads.length,
@@ -115,17 +153,18 @@ export async function GET() {
       };
     });
 
-    // Rep × category breakdown — groups matched_directions up to the parent
-    // category so admin can see "Leo wins at 具身 but does poorly on Agent".
+    // Per-category. Same intersection rule.
     const byCat = new Map<string, { assigned: number; sent: number; wechat: number }>();
     for (const lead of repLeads) {
       const category = resolveCategoryFromLead(lead.matched_directions);
       const key = category ?? "(unmatched)";
       const entry = byCat.get(key) ?? { assigned: 0, sent: 0, wechat: 0 };
       entry.assigned++;
-      if (lead.status === "sent" || lead.status === "replied") entry.sent++;
-      const em = (lead.author_email as string | null)?.toLowerCase() ?? "";
-      if (em && wechat.some((w) => (w.query as string | null)?.toLowerCase() === em)) entry.wechat++;
+      const em = (lead.author_email as string | null)?.toLowerCase().trim() ?? "";
+      if (em && repRecipients.has(em)) {
+        entry.sent++;
+        if (wechatEmailSet.has(em)) entry.wechat++;
+      }
       byCat.set(key, entry);
     }
     const categories = Array.from(byCat.entries())
@@ -161,7 +200,7 @@ export async function GET() {
       conversionRate,
       daily,
       hIndexDist,
-      sources: buildSourceBreakdown(leads, reps ?? [], wechat, discoveryCountsBySource),
+      sources: buildSourceBreakdown(leads, reps ?? [], wechat, discoveryCountsBySource, sentEmails),
     },
     sales: { reps: repStats },
   });
@@ -186,6 +225,72 @@ interface RawRep {
 
 interface RawWechat {
   query: string | null;
+}
+
+/**
+ * All unique email addresses we've ACTUALLY delivered to. This is the
+ * authoritative "we sent this person an email" set — pipeline_leads
+ * only covers ~30 of 1100+ historical sends.
+ */
+async function fetchDeliveredRecipients(): Promise<Set<string>> {
+  const emails = new Set<string>();
+  let cursor = 0;
+  const pageSize = 1000;
+  while (true) {
+    const { data, error } = await supabase
+      .from("emails")
+      .select("to")
+      .in("status", ["delivered", "clicked", "sent", "replied"])
+      .range(cursor, cursor + pageSize - 1);
+    if (error || !data || data.length === 0) break;
+    for (const r of data) {
+      const em = (r.to as string | null)?.toLowerCase().trim();
+      if (em) emails.add(em);
+    }
+    if (data.length < pageSize) break;
+    cursor += pageSize;
+    if (cursor > 20_000) break; // safety
+  }
+  return emails;
+}
+
+/**
+ * For each rep (keyed by their sender_email), the set of unique recipients
+ * they've actually delivered email to. Powers per-rep conversion rates that
+ * use the right denominator.
+ */
+async function fetchRepRecipientCounts(): Promise<Map<string, Set<string>>> {
+  const m = new Map<string, Set<string>>();
+  let cursor = 0;
+  const pageSize = 1000;
+  while (true) {
+    const { data, error } = await supabase
+      .from("emails")
+      .select("from, to")
+      .in("status", ["delivered", "clicked", "sent", "replied"])
+      .range(cursor, cursor + pageSize - 1);
+    if (error || !data || data.length === 0) break;
+    for (const r of data) {
+      const fromAddr = extractEmailAddr(r.from as string | null);
+      const toAddr = (r.to as string | null)?.toLowerCase().trim();
+      if (!fromAddr || !toAddr) continue;
+      const set = m.get(fromAddr) ?? new Set<string>();
+      set.add(toAddr);
+      m.set(fromAddr, set);
+    }
+    if (data.length < pageSize) break;
+    cursor += pageSize;
+    if (cursor > 20_000) break;
+  }
+  return m;
+}
+
+/** Pulls the bare email out of "Name <addr@x>". */
+function extractEmailAddr(raw: string | null): string | null {
+  if (!raw) return null;
+  const match = raw.match(/<([^>]+)>/);
+  const addr = (match ? match[1] : raw).toLowerCase().trim();
+  return addr.includes("@") ? addr : null;
 }
 
 /**
@@ -215,9 +320,10 @@ function buildSourceBreakdown(
   reps: RawRep[],
   wechat: RawWechat[],
   discoveryCounts: Record<SourceCode, number>,
+  sentEmails: Set<string>,
 ) {
   const wechatEmails = new Set(
-    wechat.map((w) => (w.query ?? "").toLowerCase()).filter(Boolean),
+    wechat.map((w) => (w.query ?? "").toLowerCase().trim()).filter(Boolean),
   );
 
   const grouped = new Map<string, RawLead[]>();
@@ -234,11 +340,22 @@ function buildSourceBreakdown(
     const total = channelLeads.length;
     const strong = channelLeads.filter((l) => l.lead_tier === "strong").length;
     const normal = total - strong;
-    const sent = channelLeads.filter((l) => l.status === "sent" || l.status === "replied").length;
+    // `sent` = unique recipients in this channel that we actually delivered
+    // an email to (intersect with sentEmails). `replied` stays pipeline-scoped.
     const replied = channelLeads.filter((l) => l.status === "replied").length;
-    const channelWechat = channelLeads.filter((l) =>
-      wechatEmails.has((l.author_email ?? "").toLowerCase()),
-    ).length;
+    const channelEmails = new Set(
+      channelLeads
+        .map((l) => (l.author_email ?? "").toLowerCase().trim())
+        .filter(Boolean),
+    );
+    let sent = 0;
+    let channelWechat = 0;
+    for (const em of channelEmails) {
+      if (sentEmails.has(em)) {
+        sent++;
+        if (wechatEmails.has(em)) channelWechat++;
+      }
+    }
     const convRate = sent > 0 ? Math.round((channelWechat / sent) * 1000) / 10 : 0;
 
     // arXiv has no discovery row — it lands directly in pipeline_leads.
