@@ -42,6 +42,9 @@ export function BulkPane({ leads, onDone, onError }: Props) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [overrides, setOverrides] = useState<Set<string>>(new Set());
   const [sending, setSending] = useState(false);
+  // Progress for large batches — server caps each POST at 200, so anything
+  // bigger auto-chunks. Null when not in-flight.
+  const [progress, setProgress] = useState<{ done: number; total: number; sent: number; skipped: number } | null>(null);
 
   // Preselect non-gated rows ONCE on mount. Previously this effect fired
   // on every `ready` reference change — and every fetchLeads() produces a
@@ -100,44 +103,88 @@ export function BulkPane({ leads, onDone, onError }: Props) {
     [ids, overrides],
   );
 
+  // Chunked send: the server caps each POST at 200 (Vercel function
+  // timeout constraint). When the user picks more than that we auto-split
+  // into sequential batches so "Select all" works on a 167-lead queue
+  // without the user having to manually tick 50 at a time. Batches run
+  // serially to respect per-rep override quota and avoid Resend rate
+  // spikes; a single failing batch doesn't kill later ones.
+  const CHUNK_SIZE = 200;
+
   const handleSend = async () => {
     if (ids.length === 0) return;
-    // Server caps each batch at 200 (Vercel function timeout constraint).
-    // Check client-side so sales gets a clear message instead of a 400.
-    if (ids.length > 200) {
-      onError(`一次最多发 200 封 (现在选了 ${ids.length})。先取消一些，发完这批再回来继续。`);
-      return;
-    }
     const ok = window.confirm(`About to send ${ids.length} email${ids.length === 1 ? "" : "s"}. Continue?`);
     if (!ok) return;
     setSending(true);
+    setProgress({ done: 0, total: ids.length, sent: 0, skipped: 0 });
+
+    const chunks: string[][] = [];
+    for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+      chunks.push(ids.slice(i, i + CHUNK_SIZE));
+    }
+    const overrideSet = new Set(overrideList);
+
+    let totalSent = 0;
+    let totalSkipped = 0;
+    const allBlocks: Record<string, number> = {};
+    const allErrors: string[] = [];
+
     try {
-      const res = await fetch("/api/pipeline/batch-send", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids, overrides: overrideList }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        onError(data.error || "Batch send failed");
-        return;
+      for (let i = 0; i < chunks.length; i++) {
+        const chunkIds = chunks[i];
+        const chunkOverrides = chunkIds.filter((id) => overrideSet.has(id));
+        try {
+          const res = await fetch("/api/pipeline/batch-send", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ids: chunkIds, overrides: chunkOverrides }),
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            // Record the batch-level failure but keep going — losing one
+            // chunk of 200 shouldn't abort the remaining 500.
+            allErrors.push(`Batch ${i + 1}: ${data.error ?? "failed"}`);
+            totalSkipped += chunkIds.length;
+          } else {
+            totalSent += data.sent || 0;
+            totalSkipped += data.skipped || 0;
+            if (data.blocks && typeof data.blocks === "object") {
+              for (const [code, n] of Object.entries(data.blocks as Record<string, number>)) {
+                allBlocks[code] = (allBlocks[code] ?? 0) + n;
+              }
+            }
+            if (Array.isArray(data.errors)) {
+              for (const e of data.errors) allErrors.push(String(e));
+            }
+          }
+        } catch (e) {
+          allErrors.push(`Batch ${i + 1}: ${e instanceof Error ? e.message : String(e)}`);
+          totalSkipped += chunkIds.length;
+        }
+        setProgress({
+          done: Math.min((i + 1) * CHUNK_SIZE, ids.length),
+          total: ids.length,
+          sent: totalSent,
+          skipped: totalSkipped,
+        });
       }
-      // Surface the reason breakdown when some/all sends were skipped —
-      // previously the user saw "Sent 0 · 4 skipped" with no hint why.
-      // Example: "Sent 0 · 4 skipped (age_gate: 4)".
-      if ((data.skipped || 0) > 0 && data.blocks && typeof data.blocks === "object") {
-        const parts = Object.entries(data.blocks as Record<string, number>)
+
+      // Single toast summarizes the whole multi-batch send, so the user
+      // doesn't see 4 toasts stack for a 4-batch send.
+      if (totalSkipped > 0) {
+        const parts = Object.entries(allBlocks)
           .map(([code, n]) => `${code}: ${n}`)
           .join(", ");
         if (parts) {
-          onError(`Sent ${data.sent || 0}, skipped ${data.skipped} — ${parts}`);
+          onError(`Sent ${totalSent}, skipped ${totalSkipped} — ${parts}`);
+        } else if (allErrors.length > 0) {
+          onError(`Sent ${totalSent}, skipped ${totalSkipped} — ${allErrors[0]}`);
         }
       }
-      onDone(data.sent || 0, data.skipped || 0);
-    } catch (e) {
-      onError(e instanceof Error ? e.message : "Network error");
+      onDone(totalSent, totalSkipped);
     } finally {
       setSending(false);
+      setProgress(null);
     }
   };
 
@@ -207,10 +254,36 @@ export function BulkPane({ leads, onDone, onError }: Props) {
           disabled={sending || ids.length === 0}
         >
           {sending ? <Loader2 className="animate-spin" /> : <Send />}
-          Send {ids.length > 0 ? `${ids.length} ` : ""}
-          {ids.length === 1 ? "email" : "emails"}
+          {progress
+            ? `Sending ${progress.done}/${progress.total}…`
+            : `Send ${ids.length > 0 ? `${ids.length} ` : ""}${ids.length === 1 ? "email" : "emails"}`}
         </button>
       </div>
+
+      {/* Per-batch progress bar — only renders while a multi-chunk send
+          is in flight. Counters update after each chunk completes. */}
+      {progress && (
+        <div style={{ margin: "12px 0", padding: "8px 12px", background: "var(--card)", border: "1px solid var(--border)", borderRadius: 8 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+            <span>
+              Sending… {progress.done} / {progress.total}
+            </span>
+            <span style={{ color: "var(--muted)" }}>
+              sent {progress.sent} · skipped {progress.skipped}
+            </span>
+          </div>
+          <div style={{ height: 4, background: "var(--border)", borderRadius: 2, overflow: "hidden" }}>
+            <div
+              style={{
+                width: `${(progress.done / progress.total) * 100}%`,
+                height: "100%",
+                background: "#111",
+                transition: "width 200ms",
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       <div className="dx-bulk-list">
         {ready.map((lead) => {
