@@ -367,7 +367,7 @@ export function Sidebar() {
               {me?.repName ?? "Signed out"}
             </span>
             <span style={{ fontSize: 11.5, color: me?.role === "admin" ? "#B45309" : "var(--text-tertiary)", fontWeight: me?.role === "admin" ? 600 : 400 }}>
-              {me?.role === "admin" ? "Admin" : me ? "Sales" : ""}
+              {me?.role === "admin" ? "Admin" : me ? "Growth" : ""}
             </span>
           </div>
           <svg
@@ -418,7 +418,7 @@ export function Sidebar() {
                     )}
                   </div>
                   <div style={{ fontSize: 10.5, color: a.role === "admin" ? "#B45309" : "var(--text-tertiary)", fontWeight: a.role === "admin" ? 600 : 400 }}>
-                    {a.role === "admin" ? "Admin" : "Sales"}
+                    {a.role === "admin" ? "Admin" : "Growth"}
                     {switching === a.repId && <span style={{ marginLeft: 6 }}>switching…</span>}
                   </div>
                 </div>

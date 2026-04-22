@@ -32,13 +32,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  // Also update the pipeline_lead status if we have a lead_id
-  if (lead_id) {
-    await supabase
-      .from("pipeline_leads")
-      .update({ status: "replied" })
-      .eq("id", lead_id);
-  }
+  // Do NOT touch pipeline_leads.status here. "Added on WeChat" is a
+  // separate conversion event tracked entirely in brief_lookups. We used to
+  // set status='replied' which inflated the per-rep "Replies" stat — Chenyu
+  // showed 1 reply when the recipient had only added on WeChat, never
+  // emailed back. The Replies metric should reflect actual inbound email
+  // replies, not WeChat conversions.
 
   return NextResponse.json({ ok: true, id: data.id });
 }
