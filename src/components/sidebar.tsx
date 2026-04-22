@@ -110,9 +110,9 @@ function initialsOf(name: string | null | undefined): string {
 
 const mainNav = [
   { href: "/",         label: "Overview", Icon: OverviewIcon },
-  { href: "/emails",   label: "Emails",   Icon: EmailsIcon, badgeKey: "ready"  as const },
-  { href: "/inbox",    label: "Inbox",    Icon: InboxIcon,  badgeKey: "unread" as const },
-  { href: "/pipeline", label: "Pipeline", Icon: PipelineIcon },
+  { href: "/pipeline", label: "Pipeline", Icon: PipelineIcon, badgeKey: "ready"  as const },
+  { href: "/inbox",    label: "Inbox",    Icon: InboxIcon,    badgeKey: "unread" as const },
+  { href: "/emails",   label: "Emails",   Icon: EmailsIcon },
 ];
 
 const toolsNav = [
