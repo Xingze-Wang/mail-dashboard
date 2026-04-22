@@ -102,6 +102,12 @@ export function BulkPane({ leads, onDone, onError }: Props) {
 
   const handleSend = async () => {
     if (ids.length === 0) return;
+    // Server caps each batch at 200 (Vercel function timeout constraint).
+    // Check client-side so sales gets a clear message instead of a 400.
+    if (ids.length > 200) {
+      onError(`一次最多发 200 封 (现在选了 ${ids.length})。先取消一些，发完这批再回来继续。`);
+      return;
+    }
     const ok = window.confirm(`About to send ${ids.length} email${ids.length === 1 ? "" : "s"}. Continue?`);
     if (!ok) return;
     setSending(true);

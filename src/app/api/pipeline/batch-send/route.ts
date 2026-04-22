@@ -9,6 +9,19 @@ import { canonicalizeEmail } from "@/lib/email-id";
 import { requireSession } from "@/lib/auth-helpers";
 import { DAILY_OVERRIDE_CAP, countOverridesTodayByRep } from "@/lib/override-quota";
 
+// Vercel Pro allows up to 300s per function. At ~1.2s per send (Resend
+// round-trip + 100ms inter-send throttle + DB writes) this comfortably
+// handles a full 200-lead batch. If you downgrade to Hobby (60s cap)
+// this MUST come back down to ~50 or the function will timeout mid-loop
+// and leave leads stuck at 'sending'.
+export const maxDuration = 300;
+
+const BATCH_MAX = 200;
+// Resend's default rate limit is 10 req/s. 100ms gap = 10 req/s on the
+// nose; the per-send work (DB update + Resend call) adds another ~400ms
+// so actual throughput stays ~2 req/s. Safe margin.
+const INTER_SEND_DELAY_MS = 100;
+
 /**
  * POST /api/pipeline/batch-send
  * Send multiple leads at once.
@@ -28,8 +41,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing ids array" }, { status: 400 });
     }
 
-    if (ids.length > 50) {
-      return NextResponse.json({ error: "Max 50 at a time" }, { status: 400 });
+    if (ids.length > BATCH_MAX) {
+      return NextResponse.json(
+        { error: `Max ${BATCH_MAX} at a time. Split into multiple batches.` },
+        { status: 400 },
+      );
     }
 
     const overrideSet = new Set(Array.isArray(overrides) ? overrides : []);
@@ -187,8 +203,8 @@ export async function POST(req: NextRequest) {
 
       sent++;
 
-      // Rate limit: 2 per second
-      await new Promise((r) => setTimeout(r, 500));
+      // Throttle between sends to respect Resend's 10 req/s limit.
+      await new Promise((r) => setTimeout(r, INTER_SEND_DELAY_MS));
     }
 
     return NextResponse.json({ sent, skipped, errors, blocks, overridesUsed: overridesUsedThisBatch });
