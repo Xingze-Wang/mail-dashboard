@@ -771,13 +771,18 @@ function AuthorSwitcher({
  * this lead with one of 6 categories. Posts to /api/lead/correct.
  * ======================================================================== */
 
+// Sales is reliable on: did we get the RIGHT person, did the email READ
+// well, is the direction tag CORRECT. Sales is NOT reliable on: will this
+// person need compute, will they convert — those need real outcome data.
+// Hints below set sales expectations honestly so they don't think
+// "bad_compute" is gospel.
 const FLAG_OPTIONS: { type: string; label: string; hint: string; skipsLead: boolean }[] = [
-  { type: "bad_compute",            label: "不该需要算力",        hint: "对比/综述/纯理论 — 把这种学到 scorer 里",       skipsLead: true  },
-  { type: "wrong_author",           label: "作者搞错了",          hint: "应该发给一作（直接用上面的 Switch 更快）",     skipsLead: false },
-  { type: "wrong_direction",        label: "方向标错了",          hint: "我们的方向分类不对",                          skipsLead: false },
-  { type: "low_quality_email",      label: "Email 写得不好",      hint: "草稿质量不够，feed 给 email scorer",           skipsLead: false },
-  { type: "right_lead_wrong_pitch", label: "Lead 对，话术不对",   hint: "Persuasion angle 错了，需要换方式",            skipsLead: false },
-  { type: "good_lead",              label: "👍 这是好 lead",       hint: "正样本；强化 scorer",                          skipsLead: false },
+  { type: "low_quality_email",      label: "Email 写得不好",      hint: "草稿不像人话 / 错别字 / AI 味重 — 训练 email-quality scorer",   skipsLead: false },
+  { type: "wrong_author",           label: "作者搞错了",          hint: "应该发给一作不是教授（用上面 Switch 更直接）",                  skipsLead: false },
+  { type: "wrong_direction",        label: "方向标错了",          hint: "我们的方向分类不对，会修正",                                   skipsLead: false },
+  { type: "right_lead_wrong_pitch", label: "Lead 对，话术不对",   hint: "Persuasion angle 错了 — 训练 angle picker",                    skipsLead: false },
+  { type: "bad_compute",            label: "不该需要算力（直觉）", hint: "你的判断会被记录给 admin 看，但不直接喂训练（因为 sales 看 abstract 不一定准）", skipsLead: true  },
+  { type: "good_lead",              label: "👍 直觉是好 lead",    hint: "你的判断会被记录，但 lead 好坏最终看实际转化数据",              skipsLead: false },
 ];
 
 function FlagButton({ leadId, onSkipped }: { leadId: string; onSkipped: () => void }) {

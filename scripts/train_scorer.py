@@ -2,11 +2,16 @@
 Compute Interest Scorer — trains a sentence-transformer classifier
 to predict whether a paper's author will be interested in compute support.
 
-Training signals (strongest to weakest):
-  1. WeChat adds (from brief_lookups table) -> label = 1.0
-  2. Email clicked (from emails table, status=clicked) -> label = 0.8
-  3. Email delivered, not clicked (7+ days) -> label = 0.2
-  4. Gemini label=0 from training_data.jsonl -> label = 0.0
+Training labels are OUTCOME-based only (sales priors are NOT used as labels):
+  - WeChat added OR email clicked -> label = 1
+  - everything else                -> label = 0
+
+Sales corrections (lead_corrections table) inform other things:
+  - low_quality_email -> email-quality scorer training
+  - wrong_author / wrong_direction -> we re-target the lead, no label impact
+  - bad_compute / good_lead -> tracked for admin monitoring (sales calibration),
+    NOT used as training labels — sales seeing an abstract isn't reliable
+    ground truth for "will need compute" or "will convert".
 
 Input: title + abstract
 Output: score 0-1 (probability of interest)
@@ -172,30 +177,43 @@ def load_lead_emails():
 
 def assign_labels(jsonl_data, click_signals, wechat_ids, lead_emails, corrections=None):
     """
-    Assign training labels via WEIGHTED VOTE across multi-source signals.
-    No single source is ground truth — sales saying "bad_compute" doesn't
-    override an actual WeChat add, and Gemini's prior is the weakest signal.
+    Lead-quality labels come from OUTCOME signals only — not sales priors.
 
-    Weights (signed):
-      WeChat added             +3   (strongest positive — actual conversion)
-      Email clicked            +1
-      Sales 'good_lead'        +1   (sales explicitly endorsed)
-      Gemini said needs compute +0.5 (model prior, weakest +)
-      Gemini said no compute   -0.5
-      Sales 'bad_compute'      -2   (strong sales negative)
+    Why: sales sees a paper's abstract and makes a guess about whether that
+    person needs compute. Sales is good at judging some things (whether the
+    email writeup sounds human, whether we got the right author) but NOT
+    great at guessing whether a stranger needs compute or will convert.
+    Treating their bad_compute / good_lead flags as labels would overfit to
+    their priors instead of learning from real outcomes.
 
-    Final label = 1 if weighted sum > 0 else 0.
-    Conflicts (e.g. sales said bad but WeChat converted) keep the lead as
-    a "hard example" — interesting precisely because it disagrees.
+    Outcome signals (binary label = 1 if any positive, else 0):
+      WeChat added           positive  (strongest — actual conversion)
+      Email clicked          positive  (mild interest)
+      Email replied          positive  (planned for future hookup)
 
-    corrections: optional {arxiv_id: {type: count}} from load_corrections().
+    Negative implicit:
+      Email sent + bounced   negative  (handled at sample-filter time)
+      Email sent, none of above → 0
+
+    Sales corrections are NOT used here. They're surfaced separately:
+      - low_quality_email → email-quality scorer training
+      - wrong_author / wrong_direction → labeling fixes (we re-target)
+      - bad_compute / good_lead → admin monitoring only, NOT training labels
+        (these would bias the model toward sales's prior)
+
+    The `corrections` dict is still passed in so we can print stats about
+    sales activity per training run, but it does not influence labels.
     """
     samples = []
     stats = {
-        "label_1": 0, "label_0": 0,
-        "wechat_signal": 0, "click_signal": 0,
-        "sales_good": 0, "sales_bad": 0,
-        "conflict_sales_bad_but_wechat": 0,
+        "label_1": 0,
+        "label_0": 0,
+        "wechat_signal": 0,
+        "click_signal": 0,
+        "sales_bad_compute_for_info": 0,
+        "sales_good_lead_for_info": 0,
+        "sales_bad_but_actually_converted": 0,  # interesting — sales was wrong
+        "sales_good_but_no_conversion": 0,      # also interesting — sales was wrong
     }
     corrections = corrections or {}
 
@@ -204,42 +222,41 @@ def assign_labels(jsonl_data, click_signals, wechat_ids, lead_emails, correction
         title = d.get("title", "")
         abstract = d.get("abstract", "")
         text = f"{title} [SEP] {abstract}"
-        gemini_label = d.get("label", 0)
 
-        score = 0.0
         wechat_hit = arxiv_id in wechat_ids
-        if wechat_hit:
-            score += 3.0
-            stats["wechat_signal"] += 1
-
+        click_hit = False
         if arxiv_id in lead_emails:
-            email_status = click_signals.get(lead_emails[arxiv_id])
-            if email_status == "clicked":
-                score += 1.0
-                stats["click_signal"] += 1
+            click_hit = click_signals.get(lead_emails[arxiv_id]) == "clicked"
 
-        corr = corrections.get(arxiv_id, {})
-        if corr.get("good_lead", 0) > 0:
-            score += 1.0
-            stats["sales_good"] += 1
-        if corr.get("bad_compute", 0) > 0:
-            score -= 2.0
-            stats["sales_bad"] += 1
-            if wechat_hit:
-                stats["conflict_sales_bad_but_wechat"] += 1
+        if wechat_hit: stats["wechat_signal"] += 1
+        if click_hit:  stats["click_signal"] += 1
 
-        # Gemini prior — weakest signal, so we add it last
-        score += (0.5 if gemini_label == 1 else -0.5)
-
-        label = 1 if score > 0 else 0
+        # Binary outcome label
+        label = 1 if (wechat_hit or click_hit) else 0
         stats["label_1" if label == 1 else "label_0"] += 1
+
+        # Track where sales diverges from outcome (not used for training, just monitoring)
+        corr = corrections.get(arxiv_id, {})
+        if corr.get("bad_compute", 0) > 0:
+            stats["sales_bad_compute_for_info"] += 1
+            if wechat_hit:
+                stats["sales_bad_but_actually_converted"] += 1
+        if corr.get("good_lead", 0) > 0:
+            stats["sales_good_lead_for_info"] += 1
+            if not (wechat_hit or click_hit):
+                stats["sales_good_but_no_conversion"] += 1
+
         samples.append((text, float(label)))
 
-    print(f"\n  Weighted-vote label stats:")
+    print(f"\n  Outcome-based label stats:")
     for k, v in stats.items():
         print(f"     {k}: {v}")
-    if stats["conflict_sales_bad_but_wechat"] > 0:
-        print(f"  ⚠️  {stats['conflict_sales_bad_but_wechat']} conflicts: sales said bad_compute but recipient added on WeChat")
+    if stats["sales_bad_but_actually_converted"] > 0 or stats["sales_good_but_no_conversion"] > 0:
+        print(f"\n  ℹ️  Sales-vs-outcome disagreement (not used for training, just monitoring):")
+        print(f"     sales said bad_compute but converted: {stats['sales_bad_but_actually_converted']}")
+        print(f"     sales said good_lead but no conversion: {stats['sales_good_but_no_conversion']}")
+        print(f"     → these are good calibration data for admin to review.")
+
     return samples
 
 
