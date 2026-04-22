@@ -19,6 +19,13 @@ export async function checkBlocked(email: string): Promise<BlockEntry | null> {
   if (!em.includes("@")) return null;
   const domain = em.split("@")[1];
 
+  // PostgREST `.or()` takes a FILTER STRING, not a parameterized query —
+  // so a value containing a comma or parenthesis would break the filter
+  // and potentially expose rows that weren't intended. Reject any
+  // input that contains PostgREST filter metacharacters. Legitimate
+  // emails never include these, so false rejections are a non-issue.
+  if (/[,()]/.test(em) || /[,()]/.test(domain)) return null;
+
   const { data } = await supabase
     .from("blocked_contacts")
     .select("*")

@@ -25,14 +25,17 @@ function resolveCategoryFromLead(md: unknown): string | null {
 }
 
 export async function GET(req: NextRequest) {
-  // Per-rep scoping: admins/seniors see the whole team roll-up;
-  // regular sales see only their own numbers. This is enforced by
-  // filtering the main leads array in-memory before any downstream
-  // aggregation — the downstream counters all fan out from this one
-  // array, so one filter point is enough.
+  // Auth required. Prior logic ran without a session and simply
+  // skipped the scope filter, returning the entire team's roll-up to
+  // unauthenticated callers. Now every analytics query must be
+  // associated with a real session.
   const session = await requireSession(req);
-  const isPrivileged = session?.role === "admin" || session?.role === "senior";
-  const scopeRepId = !isPrivileged && session?.repId ? session.repId : null;
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const isPrivileged = session.role === "admin" || session.role === "senior";
+  // Non-privileged users are hard-scoped to their own repId.
+  const scopeRepId = isPrivileged ? null : session.repId;
 
   const [
     { data: allLeads },

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
+import { requireSession } from "@/lib/auth-helpers";
 
 /**
  * GET /api/brief?name=jiahao     — search by name (WeChat scenario)
@@ -61,6 +62,14 @@ interface BriefResult {
 }
 
 export async function GET(req: NextRequest) {
+  // Auth required — the response surfaces full lead data (author
+  // emails, drafts, outreach history) which was previously publicly
+  // queryable. Note: brief search is deliberately cross-rep (any rep
+  // can look up any person for WeChat follow-up), but must still
+  // require a valid session.
+  const session = await requireSession(req);
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const { searchParams } = new URL(req.url);
   const name = searchParams.get("name")?.trim();
   const email = searchParams.get("email")?.trim();

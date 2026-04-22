@@ -4,17 +4,18 @@ import { requireSession } from "@/lib/auth-helpers";
 import { getRep } from "@/lib/assignment";
 
 export async function GET(req: NextRequest) {
-  // Per-sales scoping: count only unread replies in threads where this
-  // rep was the original sender. The two-step lookup is necessary
-  // because `inbound_emails` has no direct rep_id — we find the rep's
-  // threads via the `emails` (outbound) table, then count inbounds that
-  // belong to those threads.
+  // Auth required + per-sales scoping. Fail-closed: no session → 0;
+  // non-privileged with no rep → 0. Previously unauthenticated callers
+  // got the global unread count.
   const session = await requireSession(req);
-  const isPrivileged = session?.role === "admin" || session?.role === "senior";
+  if (!session) {
+    return NextResponse.json({ count: 0 });
+  }
+  const isPrivileged = session.role === "admin" || session.role === "senior";
 
-  if (!isPrivileged && session?.repId) {
+  if (!isPrivileged) {
     const rep = await getRep(session.repId);
-    if (!rep) return NextResponse.json({ count: 0 });
+    if (!rep?.sender_email) return NextResponse.json({ count: 0 });
     // Thread ids this rep owns.
     const { data: outbound } = await supabase
       .from("emails")

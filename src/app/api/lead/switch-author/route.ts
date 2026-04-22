@@ -34,6 +34,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "leadId + newAuthorName required" }, { status: 400 });
   }
 
+  // Ownership — non-privileged users can only switch-author their own leads.
+  const isPrivileged = session.role === "admin" || session.role === "senior";
+  const { data: ownerCheck } = await supabase
+    .from("pipeline_leads")
+    .select("assigned_rep_id")
+    .eq("id", leadId)
+    .maybeSingle();
+  if (!ownerCheck) return NextResponse.json({ error: "Lead not found" }, { status: 404 });
+  if (!isPrivileged && ownerCheck.assigned_rep_id !== session.repId) {
+    return NextResponse.json({ error: "Lead not found" }, { status: 404 });
+  }
+
   const { data: lead, error: fetchErr } = await supabase
     .from("pipeline_leads")
     .select("id, author_name, author_email, first_name")

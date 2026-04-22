@@ -79,19 +79,21 @@ export async function GET(req: NextRequest) {
   const dateRange = searchParams.get("date"); // "today" | "week" | "all"
   const offset = (page - 1) * limit;
 
-  // Auto-scope non-admin sessions to their own leads. Admin + senior keep
-  // the full view (they coordinate across the team); junior sales only
-  // see rows assigned to them. A non-admin can still pass ?rep_id= to
-  // narrow further, but CANNOT widen beyond their own id.
+  // Auth required. Previously this route returned data to unauthenticated
+  // callers (session=null skipped the scope, no filter applied → all
+  // leads). Now every pipeline list query MUST have a valid session.
   const session = await requireSession(req);
-  const isPrivileged = session?.role === "admin" || session?.role === "senior";
-  let effectiveRepId: number | null = null;
-  if (repIdParam) {
-    effectiveRepId = parseInt(repIdParam);
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if (!isPrivileged && session?.repId) {
-    // Hard-override: ignore whatever rep_id the client sent; sales can
-    // only see their own.
+  const isPrivileged = session.role === "admin" || session.role === "senior";
+  // Non-privileged users are HARD-SCOPED to their own repId. Any
+  // rep_id= param they pass is ignored. Privileged users may pass
+  // rep_id to narrow the view, but default to seeing everything.
+  let effectiveRepId: number | null = null;
+  if (isPrivileged) {
+    if (repIdParam) effectiveRepId = parseInt(repIdParam);
+  } else {
     effectiveRepId = session.repId;
   }
 

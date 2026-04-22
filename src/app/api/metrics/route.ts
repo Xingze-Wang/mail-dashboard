@@ -11,17 +11,23 @@ export async function GET(req: NextRequest) {
   const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
   const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
-  // Per-sales scoping on all funnel counts. A regular rep sees only the
-  // emails they sent (filtered by `from` ilike their sender address);
-  // admin + senior still see the whole team. Inbound counts similarly
-  // scope to threads that rep originated.
+  // Auth required. Fail-closed: no session → 401. A non-privileged user
+  // with no resolvable rep row gets empty results (not the global
+  // funnel, which used to leak when getRep returned null).
   const session = await requireSession(req);
-  const isPrivileged = session?.role === "admin" || session?.role === "senior";
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const isPrivileged = session.role === "admin" || session.role === "senior";
   let repFromPattern: string | null = null;
   let threadIdScope: string[] | null = null;
-  if (!isPrivileged && session?.repId) {
+  if (!isPrivileged) {
     const rep = await getRep(session.repId);
-    if (rep) {
+    if (!rep?.sender_email) {
+      // Force empty-threads scope so none of the queries match.
+      threadIdScope = [];
+      repFromPattern = "%__NO_REP__%";
+    } else {
       repFromPattern = `%${rep.sender_email}%`;
       const { data: myOutbound } = await supabase
         .from("emails")

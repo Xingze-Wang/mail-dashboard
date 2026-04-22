@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { llmChat } from "@/lib/llm-proxy";
+import { requireSession } from "@/lib/auth-helpers";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -45,6 +46,9 @@ const SYSTEM = `你是一位帮销售理解 AI 论文的研究助手 (Research T
 你只做一件事：把这篇 paper 讲清楚。`;
 
 export async function POST(req: NextRequest) {
+  const session = await requireSession(req);
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const body = await req.json().catch(() => ({}));
   const leadId = String(body.leadId ?? "").trim();
   const question = String(body.question ?? "").trim();

@@ -11,14 +11,18 @@ import { requireSession } from "@/lib/auth-helpers";
  * on the page — mismatch looks like a broken feature).
  */
 export async function GET(req: NextRequest) {
+  // Fail-closed. Unauthenticated callers used to get the global count.
   const session = await requireSession(req);
-  const isPrivileged = session?.role === "admin" || session?.role === "senior";
+  if (!session) {
+    return NextResponse.json({ count: 0 });
+  }
+  const isPrivileged = session.role === "admin" || session.role === "senior";
 
   let q = supabase
     .from("pipeline_leads")
     .select("*", { count: "exact", head: true })
     .eq("status", "ready");
-  if (!isPrivileged && session?.repId) {
+  if (!isPrivileged) {
     q = q.eq("assigned_rep_id", session.repId);
   }
   const { count, error } = await q;

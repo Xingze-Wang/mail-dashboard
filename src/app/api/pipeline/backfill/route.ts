@@ -3,20 +3,18 @@ import { supabase } from "@/lib/db";
 import { lookupAuthor } from "@/lib/semantic-scholar";
 import { getAssignmentConfig, classifyLead, assignRep } from "@/lib/assignment";
 import { getSchoolInfo } from "@/lib/email-generator";
+import { requireAdmin } from "@/lib/auth-helpers";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export const maxDuration = 300; // 5 min for Vercel
 
 export async function POST(req: NextRequest) {
-  // Auth check (same pattern as scan route)
-  const referer = req.headers.get("referer") || "";
-  const host = req.headers.get("host") || "__none__";
-  const isInternal = referer.includes(host);
-
-  if (process.env.CRON_SECRET && !isInternal) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  // Admin-only. Previously this checked `referer.includes(host)` which
+  // was trivially bypassable by any authenticated browser tab — and
+  // returned the full lead list on completion.
+  const gate = await requireAdmin(req);
+  if ("response" in gate) return gate.response;
 
   // Fetch all leads missing h_index OR with h_index=0 (possibly stale)
   // Also re-process leads that had no S2 match before (s2_author_id is null)

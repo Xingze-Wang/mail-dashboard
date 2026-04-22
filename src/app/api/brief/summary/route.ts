@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { llmChat } from "@/lib/llm-proxy";
+import { requireSession } from "@/lib/auth-helpers";
+
+export const dynamic = "force-dynamic";
 
 /**
  * GET /api/brief/summary?id=xxx
@@ -32,6 +35,9 @@ interface StructuredBrief {
 }
 
 export async function GET(req: NextRequest) {
+  const session = await requireSession(req);
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const id = new URL(req.url).searchParams.get("id");
   if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
 

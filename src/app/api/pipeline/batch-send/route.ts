@@ -32,10 +32,18 @@ const INTER_SEND_DELAY_MS = 100;
  */
 export async function POST(req: NextRequest) {
   try {
-    const { ids, overrides } = (await req.json()) as {
-      ids?: string[];
-      overrides?: string[];
-    };
+    // Auth FIRST — every send must be attributable to a session, so we
+    // can enforce per-rep ownership + quota. Prior logic only looked
+    // up the session when `overrides` was non-empty, letting unauthed
+    // requests skate through for non-override sends.
+    const session = await requireSession(req);
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    let body: Record<string, unknown>;
+    try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 }); }
+    const { ids, overrides } = body as { ids?: string[]; overrides?: string[] };
 
     if (!ids || !Array.isArray(ids) || ids.length === 0) {
       return NextResponse.json({ error: "Missing ids array" }, { status: 400 });
@@ -48,21 +56,19 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const isPrivileged = session.role === "admin" || session.role === "senior";
+    const actingRepId = session.repId;
+
     const overrideSet = new Set(Array.isArray(overrides) ? overrides : []);
 
-    // Quota: fetch today's count once, up front. We'll decrement the
-    // remaining budget in-memory as the loop consumes overrides — avoiding
-    // a DB round-trip per lead. If the whole batch doesn't use any
-    // overrides (overrideSet is empty), we skip the session+count entirely.
-    let overrideBudget = Infinity;
+    // Fetch today's override count once up front. We'll decrement the
+    // remaining budget in-memory as the loop consumes overrides —
+    // avoiding a DB round-trip per lead.
+    let overrideBudget = DAILY_OVERRIDE_CAP;
     let overridesUsedThisBatch = 0;
     if (overrideSet.size > 0) {
-      const session = await requireSession(req);
-      const actingRepId = session?.repId ?? null;
-      if (actingRepId) {
-        const used = (await countOverridesTodayByRep(actingRepId)) ?? 0;
-        overrideBudget = Math.max(0, DAILY_OVERRIDE_CAP - used);
-      }
+      const used = (await countOverridesTodayByRep(actingRepId)) ?? 0;
+      overrideBudget = Math.max(0, DAILY_OVERRIDE_CAP - used);
     }
 
     let sent = 0;
@@ -71,6 +77,7 @@ export async function POST(req: NextRequest) {
     const blocks: Record<string, number> = {};
 
     for (const id of ids) {
+      try {
       const { data: lead } = await supabase
         .from("pipeline_leads")
         .select("*")
@@ -79,6 +86,32 @@ export async function POST(req: NextRequest) {
 
       if (!lead) {
         errors.push(`${id}: not found`);
+        blocks["not_found"] = (blocks["not_found"] || 0) + 1;
+        skipped++;
+        continue;
+      }
+
+      // Ownership check — non-privileged users can only batch-send their
+      // own leads. Silently skip others' leads; don't count them as
+      // errors because the client probably sent the full selected set.
+      if (!isPrivileged && lead.assigned_rep_id !== actingRepId) {
+        blocks["not_owned"] = (blocks["not_owned"] || 0) + 1;
+        skipped++;
+        continue;
+      }
+
+      // Null-email / null-draft guards. Prevents sending to "" or
+      // with a "null" subject.
+      const rawAuthorEmail = lead.author_email as string | null | undefined;
+      if (!rawAuthorEmail || !rawAuthorEmail.includes("@")) {
+        blocks["no_recipient"] = (blocks["no_recipient"] || 0) + 1;
+        skipped++;
+        continue;
+      }
+      const hasDraftSubject = typeof lead.draft_subject === "string" && lead.draft_subject.trim().length > 0;
+      const hasDraftHtml = typeof lead.draft_html === "string" && lead.draft_html.trim().length > 0;
+      if (!hasDraftSubject || !hasDraftHtml) {
+        blocks["no_draft"] = (blocks["no_draft"] || 0) + 1;
         skipped++;
         continue;
       }
@@ -222,6 +255,17 @@ export async function POST(req: NextRequest) {
 
       // Throttle between sends to respect Resend's 10 req/s limit.
       await new Promise((r) => setTimeout(r, INTER_SEND_DELAY_MS));
+      } catch (iterErr) {
+        // A thrown error anywhere in this iteration (getRep DB blip,
+        // supabase network glitch, unexpected lead shape) previously
+        // jumped to the outer catch and abandoned every remaining lead.
+        // Now we log, try to roll the current lead back to 'ready' if we
+        // claimed it, and continue.
+        console.error("batch iteration threw", { id, err: iterErr });
+        await supabase.from("pipeline_leads").update({ status: "ready" }).eq("id", id).eq("status", "sending").then(() => {}, () => {});
+        blocks["iteration_error"] = (blocks["iteration_error"] || 0) + 1;
+        skipped++;
+      }
     }
 
     return NextResponse.json({ sent, skipped, errors, blocks, overridesUsed: overridesUsedThisBatch });

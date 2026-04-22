@@ -11,15 +11,24 @@ export async function GET(req: NextRequest) {
   const search = searchParams.get("search")?.trim();
   const offset = (page - 1) * limit;
 
-  // Per-sales scoping: regular sales only see emails where they are the
-  // sender. Admin + senior see everything. We match on the `from` column
-  // (which we store as "Name <email>") via ilike to tolerate casing.
+  // Auth required + per-sales scoping. Prior logic returned every email
+  // when the session was missing or the rep row lookup failed — an
+  // unauthenticated browser/curl would receive the entire team's
+  // outbound history. Now we require a session AND a resolvable rep
+  // row for non-privileged users; if either is missing the list is
+  // empty (fail-closed).
   const session = await requireSession(req);
-  const isPrivileged = session?.role === "admin" || session?.role === "senior";
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const isPrivileged = session.role === "admin" || session.role === "senior";
   let senderEmail: string | null = null;
-  if (!isPrivileged && session?.repId) {
+  if (!isPrivileged) {
     const rep = await getRep(session.repId);
-    if (rep) senderEmail = rep.sender_email;
+    if (!rep?.sender_email) {
+      return NextResponse.json({ emails: [], total: 0, page, limit });
+    }
+    senderEmail = rep.sender_email;
   }
 
   function buildQuery(countOnly: boolean) {

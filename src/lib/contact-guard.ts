@@ -44,6 +44,20 @@ export async function lastContactedAt(emailRaw: string): Promise<string | null> 
       .limit(1),
   ]);
 
+  // If ANY of the three queries errored, we don't know for sure whether
+  // this recipient was recently contacted. Fail-CLOSED with a synthetic
+  // "now" timestamp so the send is blocked until the DB recovers. Fail-
+  // open (the prior behavior) could double-contact recipients when a
+  // transient DB error hid a prior send.
+  if (emailsHit.error || historyHit.error || personsHit.error) {
+    console.error("lastContactedAt partial failure; failing CLOSED", {
+      emailsErr: emailsHit.error?.message,
+      historyErr: historyHit.error?.message,
+      personsErr: personsHit.error?.message,
+    });
+    return new Date().toISOString();
+  }
+
   const candidates: string[] = [];
   if (emailsHit.data && emailsHit.data.length > 0) candidates.push(emailsHit.data[0].created_at as string);
   if (historyHit.data && historyHit.data.length > 0) candidates.push(historyHit.data[0].contacted_at as string);
@@ -104,7 +118,9 @@ export async function checkSendAllowed(lead: Lead, opts: { override?: boolean } 
 
   // Paper firewall — has any co-author of this paper been contacted? Skips
   // for synthesized arxiv ids (HF/PH/GH promotes don't share papers).
-  if (lead.arxiv_id && /^\d{4}\.\d{4,5}/.test(lead.arxiv_id)) {
+  // Match canonical arxiv ids: YYMM.NNNNN with optional vN suffix.
+  // Previously unanchored, so "2401.12345-v2" and similar slipped through.
+  if (lead.arxiv_id && /^\d{4}\.\d{4,5}(v\d+)?$/.test(lead.arxiv_id)) {
     const paperHit = await paperWasRecentlyContacted(lead.arxiv_id);
     if (paperHit.contacted) {
       return { ok: false, code: "paper_already_contacted", lastContactedAt: paperHit.lastAt! };

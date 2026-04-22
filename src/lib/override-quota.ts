@@ -45,11 +45,13 @@ export async function countOverridesTodayByRep(repId: number | null | undefined)
     .eq("override_used", true)
     .gte("sent_at", dayStart);
   if (error) {
-    // Fail-open on count errors — better to let a send through than to
-    // block all overrides because of a transient DB hiccup. The cap is a
-    // guardrail, not a security boundary.
-    console.error("countOverridesTodayByRep failed; failing open", error);
-    return 0;
+    // Fail-CLOSED: if we can't read the count, assume the cap is already
+    // burned. Better to bounce a few legitimate sends than let a rep
+    // blow through thousands during a transient DB outage. The send
+    // route surfaces this as a 429, which sales will retry — if the DB
+    // recovers the next call succeeds; if not, admin notices fast.
+    console.error("countOverridesTodayByRep failed; failing CLOSED", error);
+    return DAILY_OVERRIDE_CAP;
   }
   return count ?? 0;
 }

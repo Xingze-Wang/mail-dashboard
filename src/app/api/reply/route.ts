@@ -6,6 +6,13 @@ import { getRep } from "@/lib/assignment";
 
 export async function POST(req: NextRequest) {
   try {
+    // Auth required. Non-privileged users can only reply to threads
+    // they originated. Without this, any sales could reply to any
+    // inbound under the thread's ORIGINAL sender — effectively
+    // impersonating another rep.
+    const session = await requireSession(req);
+    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
     const body = await req.json();
     const { inboundEmailId, html, text } = body;
 
@@ -21,6 +28,24 @@ export async function POST(req: NextRequest) {
 
     if (!inbound) {
       return NextResponse.json({ error: "Inbound email not found" }, { status: 404 });
+    }
+
+    // Ownership: non-privileged users must own the thread.
+    const isPrivileged = session.role === "admin" || session.role === "senior";
+    if (!isPrivileged && inbound.thread_id) {
+      const rep = await getRep(session.repId);
+      if (!rep?.sender_email) {
+        return NextResponse.json({ error: "Inbound email not found" }, { status: 404 });
+      }
+      const { data: owned } = await supabase
+        .from("emails")
+        .select("id")
+        .eq("thread_id", inbound.thread_id)
+        .ilike("from", `%${rep.sender_email}%`)
+        .limit(1);
+      if (!owned || owned.length === 0) {
+        return NextResponse.json({ error: "Inbound email not found" }, { status: 404 });
+      }
     }
 
     const replySubject = (inbound.subject.startsWith("Re:") || inbound.subject.startsWith("回复"))

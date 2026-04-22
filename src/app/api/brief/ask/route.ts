@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { llmChat } from "@/lib/llm-proxy";
 import { QIJI_PROGRAM_FACTS } from "@/lib/qiji-facts";
+import { requireSession } from "@/lib/auth-helpers";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -30,6 +31,9 @@ const SYSTEM = `你是销售助手 (Sales Copilot)。
 - 不要 markdown 标题，纯文字`;
 
 export async function POST(req: NextRequest) {
+  const session = await requireSession(req);
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const body = await req.json().catch(() => ({}));
   const leadId = String(body.leadId ?? "").trim();
   const question = String(body.question ?? "").trim();

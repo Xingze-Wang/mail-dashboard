@@ -362,6 +362,14 @@ export function ReviewPane({ leads, onExit, onSent, onSkipped, initialLeadId }: 
       const isTyping =
         target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
 
+      // If any modal is open, don't fire send/exit shortcuts — the
+      // user might be typing a reason/note and the keystroke would
+      // bypass the modal's validation. Let the modal own the
+      // keyboard when it's up.
+      if (showEditModal) {
+        return;
+      }
+
       if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
         e.preventDefault();
         doSend();
@@ -383,7 +391,7 @@ export function ReviewPane({ leads, onExit, onSent, onSkipped, initialLeadId }: 
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [doSend, onExit, advance, back]);
+  }, [doSend, onExit, advance, back, showEditModal]);
 
   // Empty / done state
   if (ready.length === 0 || idx >= ready.length || !lead) {

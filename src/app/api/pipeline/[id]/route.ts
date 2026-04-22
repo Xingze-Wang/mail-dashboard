@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
-import { requireAdmin } from "@/lib/auth-helpers";
+import { requireAdmin, requireSession } from "@/lib/auth-helpers";
 
 function mapLead(l: Record<string, unknown>) {
   return {
@@ -38,6 +38,9 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const session = await requireSession(req);
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const { id } = await params;
 
   const { data: lead } = await supabase
@@ -50,6 +53,13 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
+  // Ownership — non-privileged reps only see their own leads. 404 to
+  // avoid leaking which ids exist.
+  const isPrivileged = session.role === "admin" || session.role === "senior";
+  if (!isPrivileged && lead.assigned_rep_id !== session.repId) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
   return NextResponse.json(mapLead(lead));
 }
 
@@ -57,7 +67,22 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const session = await requireSession(req);
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const { id } = await params;
+
+  // Ownership lookup.
+  const { data: existing } = await supabase
+    .from("pipeline_leads")
+    .select("assigned_rep_id")
+    .eq("id", id)
+    .single();
+  if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const isPrivileged = session.role === "admin" || session.role === "senior";
+  if (!isPrivileged && existing.assigned_rep_id !== session.repId) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
 
   try {
     const body = await req.json();
@@ -67,8 +92,11 @@ export async function PATCH(
     if (status !== undefined) updates.status = status;
     if (draftSubject !== undefined) updates.draft_subject = draftSubject;
     if (draftHtml !== undefined) updates.draft_html = draftHtml;
-    if (assignedRepId !== undefined) updates.assigned_rep_id = assignedRepId;
-    if (leadTier !== undefined) updates.lead_tier = leadTier;
+    // Only admin/senior can change assignment. A sales rep could
+    // otherwise re-assign a lead to themselves. Silently drop the field.
+    if (assignedRepId !== undefined && isPrivileged) updates.assigned_rep_id = assignedRepId;
+    // Only admin/senior can change tier (strong vs normal affects assignment).
+    if (leadTier !== undefined && isPrivileged) updates.lead_tier = leadTier;
 
     if (Object.keys(updates).length === 0) {
       return NextResponse.json({ error: "No fields to update" }, { status: 400 });

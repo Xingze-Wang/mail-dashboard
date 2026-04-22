@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
+import { requireSession } from "@/lib/auth-helpers";
+
+export const dynamic = "force-dynamic";
 
 /**
  * POST /api/brief/wechat
@@ -8,6 +11,9 @@ import { supabase } from "@/lib/db";
  * Body: { query, arxiv_id?, lead_id?, notes? }
  */
 export async function POST(req: NextRequest) {
+  const session = await requireSession(req);
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const body = await req.json();
   const { query, arxiv_id, lead_id, notes } = body;
 
@@ -48,6 +54,9 @@ export async function POST(req: NextRequest) {
  * Check if someone already marked this as "added on WeChat"
  */
 export async function GET(req: NextRequest) {
+  const session = await requireSession(req);
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const { searchParams } = new URL(req.url);
   const arxiv_id = searchParams.get("arxiv_id");
   const lead_id = searchParams.get("lead_id");

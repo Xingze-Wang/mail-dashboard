@@ -89,16 +89,21 @@ export async function GET(req: NextRequest) {
   const limit = parseInt(searchParams.get("limit") || "50");
   const offset = (page - 1) * limit;
 
-  // Per-sales scoping: regular sales only see inbounds in threads they
-  // originated. Admin + senior see everything (they triage across the
-  // team). Same two-step resolve as unread-count: find this rep's
-  // thread ids via the outbound `emails` table, then filter.
+  // Auth required + per-sales scoping. Prior logic let unauthenticated
+  // callers through to the whole team inbox. Fail-closed now: no
+  // session → 401; non-privileged user with no resolvable rep row →
+  // empty.
   const session = await requireSession(req);
-  const isPrivileged = session?.role === "admin" || session?.role === "senior";
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const isPrivileged = session.role === "admin" || session.role === "senior";
   let threadIds: string[] | null = null;
-  if (!isPrivileged && session?.repId) {
+  if (!isPrivileged) {
     const rep = await getRep(session.repId);
-    if (!rep) return NextResponse.json({ emails: [], total: 0, page, limit });
+    if (!rep?.sender_email) {
+      return NextResponse.json({ emails: [], total: 0, page, limit });
+    }
     const { data: outbound } = await supabase
       .from("emails")
       .select("thread_id")

@@ -12,7 +12,22 @@ import { buildQuotaCheck, countOverridesTodayByRep } from "@/lib/override-quota"
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
+    // Auth FIRST — previously this handler parsed the body, looked up the
+    // lead, and only consulted the session mid-way through. A missing/
+    // expired cookie silently made `actingRepId` null, which disabled the
+    // quota cap. Now unauthenticated requests are rejected up front.
+    const session = await requireSession(req);
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    let body: Record<string, unknown>;
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
+
     const {
       id, override,
       // Edit-capture fields (sent from Review-mode textarea):
@@ -41,11 +56,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Lead not found" }, { status: 404 });
     }
 
-    // Resolve the acting rep from the session. The daily override cap is
-    // keyed on the authenticated user (not the lead's assigned_rep_id),
-    // because the person clicking Send is who's spending the quota.
-    const session = await requireSession(req);
-    const actingRepId = session?.repId ?? null;
+    // Ownership check — non-admin/senior users can only send THEIR OWN
+    // leads. Previously any sales could POST another rep's lead id and
+    // the send would go out under that rep's sender. 404 (not 403) to
+    // avoid leaking which lead ids exist outside the caller's scope.
+    const isPrivileged = session.role === "admin" || session.role === "senior";
+    if (!isPrivileged && lead.assigned_rep_id !== session.repId) {
+      return NextResponse.json({ error: "Lead not found" }, { status: 404 });
+    }
+
+    const actingRepId = session.repId;
 
     // `override` at this point is just the intent from the client. We only
     // count it as a real override (and consume quota) if the lead actually
@@ -89,9 +109,36 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Defensive: the scanner can produce rows with null author_email (PDF
+    // parse miss). Without this guard `canonicalizeEmail(null)` returns
+    // "" and we'd send to Resend with `to: [""]` — either silent failure
+    // or a cryptic 500. Reject at the UI layer with a clear reason.
+    const rawAuthorEmail = lead.author_email as string | null | undefined;
+    if (!rawAuthorEmail || !rawAuthorEmail.includes("@")) {
+      return NextResponse.json(
+        {
+          error: "这条 lead 没有有效的 email 地址 — scanner 没抓到。Skip 或 flag 让 admin 补。",
+          code: "no_recipient",
+        },
+        { status: 400 },
+      );
+    }
+    // Defensive: refuse to send a draft that's empty/null. The server
+    // shouldn't treat the string "null" as a valid subject.
+    const hasDraftSubject = typeof lead.draft_subject === "string" && lead.draft_subject.trim().length > 0;
+    const hasDraftHtml = typeof lead.draft_html === "string" && lead.draft_html.trim().length > 0;
+    const hasEditedSubject = typeof editedSubject === "string" && editedSubject.trim().length > 0;
+    const hasEditedHtml = typeof editedHtml === "string" && editedHtml.trim().length > 0;
+    if (!(hasEditedSubject || hasDraftSubject) || !(hasEditedHtml || hasDraftHtml)) {
+      return NextResponse.json(
+        { error: "这条 lead 没有草稿（subject 或 body 空）。等 enrichment 跑完再试。", code: "no_draft" },
+        { status: 400 },
+      );
+    }
+
     // Hard blocklist check — overrides everything except missing-id (above).
     // Block reason is surfaced so sales sees WHY a send was rejected.
-    const blockHit = await checkBlocked((lead.author_email as string) ?? "");
+    const blockHit = await checkBlocked(rawAuthorEmail);
     if (blockHit) {
       return NextResponse.json(
         {
@@ -139,22 +186,46 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Look up assigned rep (fall back to env vars)
-    let senderFrom = `${process.env.SENDER_NAME} <${process.env.SENDER_EMAIL}>`;
+    // Resolve the sender identity. Priority: the lead's assigned rep →
+    // the acting session's rep → env default. The old code fell straight
+    // through to env on any getRep() miss, which produced
+    // `"undefined <undefined>"` when the env vars weren't set.
+    let senderFrom: string | null = null;
     if (lead.assigned_rep_id) {
-      const rep = await getRep(lead.assigned_rep_id);
-      if (rep) {
+      const rep = await getRep(lead.assigned_rep_id).catch(() => null);
+      if (rep?.sender_name && rep?.sender_email) {
         senderFrom = `${rep.sender_name} <${rep.sender_email}>`;
       }
+    }
+    if (!senderFrom) {
+      const rep = await getRep(actingRepId).catch(() => null);
+      if (rep?.sender_name && rep?.sender_email) {
+        senderFrom = `${rep.sender_name} <${rep.sender_email}>`;
+      }
+    }
+    if (!senderFrom) {
+      const envName = process.env.SENDER_NAME;
+      const envEmail = process.env.SENDER_EMAIL;
+      if (envName && envEmail) {
+        senderFrom = `${envName} <${envEmail}>`;
+      }
+    }
+    if (!senderFrom) {
+      await supabase.from("pipeline_leads").update({ status: "ready" }).eq("id", id);
+      return NextResponse.json(
+        { error: "Cannot resolve sender identity — no rep row and no env default." },
+        { status: 500 },
+      );
     }
 
     // Canonicalize at send time too — older rows pre-date the import-side
     // canonicalization, so we still catch Gmail aliases / +tags / mixed case.
-    const toEmail = canonicalizeEmail(lead.author_email as string);
+    const toEmail = canonicalizeEmail(rawAuthorEmail);
     // Use the edited content if the client supplied it (Review-mode textarea).
-    // Falls back to whatever's in the DB (Browse-mode quick send).
-    const finalSubject = (editedSubject ?? lead.draft_subject) as string;
-    const finalHtml = (editedHtml ?? lead.draft_html) as string;
+    // Falls back to whatever's in the DB (Browse-mode quick send). We
+    // already verified both values are non-empty strings above.
+    const finalSubject: string = hasEditedSubject ? (editedSubject as string) : (lead.draft_subject as string);
+    const finalHtml: string = hasEditedHtml ? (editedHtml as string) : (lead.draft_html as string);
     // Wrap Resend in try/catch — on a thrown error (network reset, DNS,
     // lib exception), the old code fell through to the outer catch and
     // left the lead stuck at status='sending' forever. Roll back
@@ -215,6 +286,16 @@ export async function POST(req: NextRequest) {
       .eq("id", id);
     if (leadUpdateErr) {
       console.error("pipeline_leads update failed after send", { id, err: leadUpdateErr });
+      // Retry once more with just the status flip — this is critical so
+      // the lead doesn't stay stuck at 'sending' forever. We're best-
+      // effort here because the email already went out.
+      const retry = await supabase
+        .from("pipeline_leads")
+        .update({ status: "sent", sent_at: new Date().toISOString(), thread_id: threadId })
+        .eq("id", id);
+      if (retry.error) {
+        console.error("pipeline_leads retry-update ALSO failed — lead may be stuck", { id, err: retry.error });
+      }
     }
 
     const { data: email, error: emailError } = await supabase
@@ -237,10 +318,17 @@ export async function POST(req: NextRequest) {
     }
 
     // Contact history bookkeeping — fire-and-forget so the response doesn't
-    // wait on the persons table upsert (which is the slow hop).
-    recordContact(toEmail, lead.title, finalSubject, lead.arxiv_id ?? null).catch((e) => {
-      console.error("recordContact failed (non-blocking)", e);
-    });
+    // wait on the persons table upsert (which is the slow hop). Wrap in a
+    // sync try/catch too: if recordContact throws synchronously (bad arg
+    // / import-time error) it'd bubble to the outer catch and return 500
+    // *after* the email already went out.
+    try {
+      recordContact(toEmail, lead.title, finalSubject, lead.arxiv_id ?? null).catch((e) => {
+        console.error("recordContact failed (non-blocking)", e);
+      });
+    } catch (e) {
+      console.error("recordContact sync throw (non-blocking)", e);
+    }
 
     return NextResponse.json({
       success: true,
