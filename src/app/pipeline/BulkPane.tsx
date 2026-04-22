@@ -9,7 +9,7 @@
  * with `{ids: [...], overrides: [...]}` after a confirm dialog.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Send } from "lucide-react";
 import { Lead } from "./types";
 import { isAgeGated, leadAgeDays, MIN_AGE_DAYS } from "@/lib/policy";
@@ -43,13 +43,23 @@ export function BulkPane({ leads, onDone, onError }: Props) {
   const [overrides, setOverrides] = useState<Set<string>>(new Set());
   const [sending, setSending] = useState(false);
 
+  // Preselect non-gated rows ONCE on mount. Previously this effect fired
+  // on every `ready` reference change — and every fetchLeads() produces a
+  // new reference — which silently wiped the user's per-row checkboxes
+  // whenever a background refresh happened. Now we initialize once and
+  // let `toggleSelect` own the state from there. New leads that arrive
+  // later stay unselected until the user explicitly ticks them, which is
+  // the correct default for bulk workflows.
+  const didInitRef = useRef(false);
   useEffect(() => {
+    if (didInitRef.current) return;
+    if (ready.length === 0) return;
     const next = new Set<string>();
     for (const l of ready) {
       if (!isAgeGated(l.createdAt)) next.add(l.id);
     }
     setSelected(next);
-    setOverrides(new Set());
+    didInitRef.current = true;
   }, [ready]);
 
   const toggleSelect = (id: string) => {
@@ -105,6 +115,17 @@ export function BulkPane({ leads, onDone, onError }: Props) {
       if (!res.ok) {
         onError(data.error || "Batch send failed");
         return;
+      }
+      // Surface the reason breakdown when some/all sends were skipped —
+      // previously the user saw "Sent 0 · 4 skipped" with no hint why.
+      // Example: "Sent 0 · 4 skipped (age_gate: 4)".
+      if ((data.skipped || 0) > 0 && data.blocks && typeof data.blocks === "object") {
+        const parts = Object.entries(data.blocks as Record<string, number>)
+          .map(([code, n]) => `${code}: ${n}`)
+          .join(", ");
+        if (parts) {
+          onError(`Sent ${data.sent || 0}, skipped ${data.skipped} — ${parts}`);
+        }
       }
       onDone(data.sent || 0, data.skipped || 0);
     } catch (e) {

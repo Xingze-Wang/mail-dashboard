@@ -73,11 +73,18 @@ interface Lead {
   arxiv_id?: string | null;
 }
 
-export async function checkSendAllowed(lead: Lead): Promise<SendBlock> {
+export async function checkSendAllowed(lead: Lead, opts: { override?: boolean } = {}): Promise<SendBlock> {
   if (lead.status !== "ready") return { ok: false, code: "bad_status", status: lead.status };
   if (!lead.draft_subject || !lead.draft_html) return { ok: false, code: "no_draft" };
 
-  if (lead.published_at) {
+  // Paper-age check anchored on published_at — a separate, older guardrail
+  // from the pipeline-age gate in policy.ts. The pipeline-age gate already
+  // ran upstream of this call; when the caller signals `override: true`,
+  // we respect that decision here too (previously this path silently
+  // rejected with code:"too_new" even when the user had ticked the
+  // override toggle — the warning looked identical to the overridable
+  // age-gate message, so sales couldn't tell the two rules apart).
+  if (lead.published_at && !opts.override) {
     const published = new Date(lead.published_at).getTime();
     const threshold = Date.now() - SEND_MIN_AGE_MS;
     if (published > threshold) {

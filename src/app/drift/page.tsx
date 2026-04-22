@@ -2,9 +2,9 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Activity, Play, Check, X, AlertTriangle, Scale, RefreshCw } from "lucide-react";
+import { Activity, Play, Check, X, AlertTriangle, Scale, RefreshCw, MessageSquare, Zap, Loader2 } from "lucide-react";
 
-type Tab = "patterns" | "disagreement";
+type Tab = "patterns" | "disagreement" | "human";
 
 interface Pattern {
   id: string;
@@ -176,9 +176,13 @@ export default function DriftPage() {
         <TabButton active={tab === "disagreement"} onClick={() => setTab("disagreement")}>
           <Scale className="h-4 w-4" /> Judge vs Human
         </TabButton>
+        <TabButton active={tab === "human"} onClick={() => setTab("human")}>
+          <MessageSquare className="h-4 w-4" /> Human Signals
+        </TabButton>
       </div>
 
       {tab === "disagreement" && <DisagreementView />}
+      {tab === "human" && <HumanSignalsView />}
       {tab === "patterns" && <PatternsView
         mineNote={mineNote}
         counts={counts}
@@ -758,6 +762,378 @@ function DiffCol({ label, body, bg, border }: { label: string; body: string; bg:
       <div style={{ fontSize: 13, color: "#1A1A1A", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
         {body}
       </div>
+    </div>
+  );
+}
+
+/* ===========================================================================
+ * Human Signals — raw edit notes + lead correction flags, newest first.
+ * This is the qualitative stuff sales writes in their own words that the
+ * auto-miner reduces to patterns. Admin reads it directly to sanity-check
+ * what the miner claims.
+ *
+ * Honest empty-state: we explicitly warn when the sample is too thin for
+ * any pattern to mean anything — better than implying trends that aren't
+ * there.
+ * ======================================================================== */
+
+interface HumanSignalsEdit {
+  id: string;
+  title: string | null;
+  edit_reasons: string[] | null;
+  edit_note: string | null;
+  draft_edit_distance: number | null;
+  sent_at: string | null;
+  assigned_rep_id: number | null;
+}
+
+interface HumanSignalsCorrection {
+  id: string;
+  lead_id: string;
+  rep_id: number | null;
+  type: string;
+  reason: string | null;
+  severity: string | null;
+  skip: boolean | null;
+  created_at: string;
+}
+
+interface HumanSignalsPayload {
+  edits: HumanSignalsEdit[];
+  corrections: HumanSignalsCorrection[];
+  stats: {
+    editsShown: number;
+    editsWithNote: number;
+    reasonCount: Record<string, number>;
+    correctionsShown: number;
+    correctionTypeCount: Record<string, number>;
+  };
+}
+
+// Chinese labels for correction types — kept local so this view doesn't
+// reach into FLAG_OPTIONS in ReviewPane (that file's the UI for creating
+// flags; this is the reporting view). Duplicate string map is fine at 6 keys.
+const CORRECTION_LABEL: Record<string, string> = {
+  bad_compute: "不该需要算力",
+  wrong_author: "作者搞错",
+  wrong_direction: "方向标错",
+  low_quality_email: "Email 写得不好",
+  right_lead_wrong_pitch: "Lead 对, 话术不对",
+  good_lead: "👍 直觉好 lead",
+};
+
+// Minimum sample size before any aggregate proportion is worth trusting.
+// Below this we show the raw list only, no percentages — a "3 of 4 are
+// too_verbose" chart is noise, not signal.
+const HONEST_SAMPLE_THRESHOLD = 10;
+
+function HumanSignalsView() {
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+  const [data, setData] = useState<HumanSignalsPayload | null>(null);
+  // Training state — distinct from loading so the Refresh button stays
+  // responsive even if the GitHub dispatch is in flight.
+  const [training, setTraining] = useState(false);
+  const [trainNote, setTrainNote] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setErr(null);
+    try {
+      const r = await fetch("/api/drift/human-signals");
+      const d = await r.json();
+      if (!r.ok) {
+        setErr(d.error ?? "Failed to load");
+      } else {
+        setData(d);
+      }
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  const kickoffTraining = useCallback(async () => {
+    setTraining(true);
+    setTrainNote(null);
+    try {
+      const r = await fetch("/api/scorer/train", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ autoPromote: false }),
+      });
+      const d = await r.json();
+      if (!r.ok) {
+        setTrainNote(`❌ ${d.error ?? "failed"}`);
+      } else {
+        setTrainNote(`✅ ${d.message ?? "training started"} — ${d.workflowUrl ?? ""}`);
+      }
+    } catch (e) {
+      setTrainNote(`❌ ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setTraining(false);
+    }
+  }, []);
+
+  if (loading) return <div className="skeleton" style={{ height: 300 }} />;
+  if (err) {
+    return (
+      <div style={{ padding: 16, border: "1px solid #FECACA", background: "#FEF2F2", borderRadius: 8, color: "#991B1B", fontSize: 13 }}>
+        {err}
+      </div>
+    );
+  }
+  if (!data) return null;
+
+  const { edits, corrections, stats } = data;
+  const totalSignals = stats.editsShown + stats.correctionsShown;
+  const tooThin = totalSignals < HONEST_SAMPLE_THRESHOLD;
+
+  return (
+    <div>
+      {/* Counters */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 20 }}>
+        <StatCard label="Edits w/ reason tags" value={stats.editsShown} />
+        <StatCard label="Edits w/ free-text note" value={stats.editsWithNote} emphasis />
+        <StatCard label="Lead corrections" value={stats.correctionsShown} />
+        <StatCard label="Total human signals" value={totalSignals} />
+      </div>
+
+      {tooThin && (
+        <div
+          style={{
+            padding: "12px 14px",
+            border: "1px solid #FDE68A",
+            background: "#FFFBEB",
+            borderRadius: 8,
+            fontSize: 12.5,
+            color: "#92400E",
+            marginBottom: 20,
+            lineHeight: 1.55,
+          }}
+        >
+          <strong>样本还太少 ({totalSignals}&nbsp;条)</strong>
+          &nbsp;—&nbsp; 低于 {HONEST_SAMPLE_THRESHOLD} 条没法得出稳定结论。下面的列表可以当原始信号看，但不要据此给 prompt 打补丁。累计到 {HONEST_SAMPLE_THRESHOLD}+ 条之后再跑 miner。
+        </div>
+      )}
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, gap: 12, flexWrap: "wrap" }}>
+        {/* Training status note — shown inline so admin sees the workflow URL
+            without chasing a toast. Empty string rendered as nothing. */}
+        <div style={{ fontSize: 11.5, color: "var(--muted)", flex: 1, minWidth: 0, wordBreak: "break-word" }}>
+          {trainNote}
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button
+            onClick={() => refresh()}
+            style={{ fontSize: 12, padding: "6px 10px", border: "1px solid var(--border)", borderRadius: 6, background: "var(--card)", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}
+          >
+            <RefreshCw style={{ width: 12, height: 12 }} /> Refresh
+          </button>
+          {/* Gated on sample size — training on <10 signals overfits and
+              blows budget on the GH runner. Tooltip explains the block. */}
+          <button
+            onClick={kickoffTraining}
+            disabled={tooThin || training}
+            title={tooThin
+              ? `样本太少 (${totalSignals}/${HONEST_SAMPLE_THRESHOLD}) — 再等 ${HONEST_SAMPLE_THRESHOLD - totalSignals} 条人类信号再 train。`
+              : "Dispatch a new scorer training run on GitHub Actions. 3-8 min."}
+            style={{
+              fontSize: 12,
+              padding: "6px 12px",
+              border: "1px solid " + (tooThin ? "var(--border)" : "#6366F1"),
+              borderRadius: 6,
+              background: tooThin || training ? "var(--card)" : "#6366F1",
+              color: tooThin || training ? "var(--muted)" : "white",
+              cursor: tooThin || training ? "not-allowed" : "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+              opacity: tooThin ? 0.6 : 1,
+            }}
+          >
+            {training ? <Loader2 style={{ width: 12, height: 12 }} className="spin" /> : <Zap style={{ width: 12, height: 12 }} />}
+            {training ? "Dispatching…" : "Train new model"}
+          </button>
+        </div>
+      </div>
+
+      {/* Reason-tag frequencies — only shown when sample is large enough. */}
+      {!tooThin && Object.keys(stats.reasonCount).length > 0 && (
+        <Section title="Edit reasons (checkbox tags)">
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {Object.entries(stats.reasonCount)
+              .sort((a, b) => b[1] - a[1])
+              .map(([reason, n]) => (
+                <span
+                  key={reason}
+                  style={{
+                    padding: "4px 10px",
+                    fontSize: 12,
+                    border: "1px solid var(--border)",
+                    borderRadius: 999,
+                    background: "var(--card)",
+                    color: CATEGORY_COLOR[reason] ?? "var(--fg)",
+                  }}
+                >
+                  {CATEGORY_LABEL[reason] ?? reason} · {n}
+                </span>
+              ))}
+          </div>
+        </Section>
+      )}
+
+      {!tooThin && Object.keys(stats.correctionTypeCount).length > 0 && (
+        <Section title="Correction flags (by type)">
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {Object.entries(stats.correctionTypeCount)
+              .sort((a, b) => b[1] - a[1])
+              .map(([type, n]) => (
+                <span
+                  key={type}
+                  style={{
+                    padding: "4px 10px",
+                    fontSize: 12,
+                    border: "1px solid var(--border)",
+                    borderRadius: 999,
+                    background: "var(--card)",
+                  }}
+                >
+                  {CORRECTION_LABEL[type] ?? type} · {n}
+                </span>
+              ))}
+          </div>
+        </Section>
+      )}
+
+      {/* Raw edit notes — the highest-signal qualitative stuff. Always
+          rendered (even below the threshold) because a single good note
+          is worth reading, even if we can't aggregate it. */}
+      <Section title={`Edit notes (${edits.length})`}>
+        {edits.length === 0 ? (
+          <EmptyHint text="还没有 sales 改过草稿。当 sales 在 Review 里编辑 subject/body 再按 Send, 这里会出现带 reasons + 可选 note 的行。" />
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {edits.map((e) => (
+              <EditRow key={e.id} edit={e} />
+            ))}
+          </div>
+        )}
+      </Section>
+
+      <Section title={`Correction flags (${corrections.length})`}>
+        {corrections.length === 0 ? (
+          <EmptyHint text="还没有 sales 在 Review 里点过 🚩 Flag。当 sales 觉得 lead 有问题 (作者错/方向错/话术不对/etc.) 按那个按钮, 这里会出现记录。" />
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {corrections.map((c) => (
+              <CorrectionRow key={c.id} correction={c} />
+            ))}
+          </div>
+        )}
+      </Section>
+    </div>
+  );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div style={{ marginBottom: 24 }}>
+      <h3 style={{ fontSize: 13, fontWeight: 600, marginBottom: 10, color: "var(--fg)" }}>{title}</h3>
+      {children}
+    </div>
+  );
+}
+
+function EmptyHint({ text }: { text: string }) {
+  return (
+    <div style={{ padding: "16px 14px", border: "1px dashed var(--border)", borderRadius: 8, color: "var(--muted)", fontSize: 12.5, lineHeight: 1.6 }}>
+      {text}
+    </div>
+  );
+}
+
+function EditRow({ edit }: { edit: HumanSignalsEdit }) {
+  const sentAt = edit.sent_at ? new Date(edit.sent_at).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
+  return (
+    <div style={{ padding: 12, border: "1px solid var(--border)", borderRadius: 8, background: "var(--card)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 11, color: "var(--muted)" }}>{sentAt}</span>
+        {edit.assigned_rep_id !== null && (
+          <span style={{ fontSize: 11, color: "var(--muted)" }}>· rep #{edit.assigned_rep_id}</span>
+        )}
+        {edit.draft_edit_distance !== null && (
+          <span style={{ fontSize: 11, color: "var(--muted)" }}>· {edit.draft_edit_distance}字 edit distance</span>
+        )}
+        {(edit.edit_reasons ?? []).map((r) => (
+          <span
+            key={r}
+            style={{
+              fontSize: 10,
+              padding: "2px 7px",
+              borderRadius: 999,
+              background: (CATEGORY_COLOR[r] ?? "#6b7280") + "1a",
+              color: CATEGORY_COLOR[r] ?? "#6b7280",
+              fontWeight: 600,
+            }}
+          >
+            {CATEGORY_LABEL[r] ?? r}
+          </span>
+        ))}
+      </div>
+      {edit.title && (
+        <div style={{ fontSize: 12.5, fontWeight: 500, color: "var(--fg)", marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={edit.title}>
+          {edit.title}
+        </div>
+      )}
+      {edit.edit_note ? (
+        <div style={{ fontSize: 13, color: "var(--fg)", whiteSpace: "pre-wrap", wordBreak: "break-word", padding: "6px 10px", background: "var(--bg, #F9FAFB)", borderRadius: 6, borderLeft: "3px solid #6366F1" }}>
+          &ldquo;{edit.edit_note}&rdquo;
+        </div>
+      ) : (
+        <div style={{ fontSize: 11, color: "var(--muted)", fontStyle: "italic" }}>(no free-text note)</div>
+      )}
+    </div>
+  );
+}
+
+function CorrectionRow({ correction }: { correction: HumanSignalsCorrection }) {
+  const createdAt = new Date(correction.created_at).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  const isHard = correction.severity === "hard";
+  return (
+    <div style={{
+      padding: 12,
+      border: "1px solid " + (isHard ? "#FCA5A5" : "var(--border)"),
+      borderRadius: 8,
+      background: isHard ? "#FEF2F2" : "var(--card)",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 11, color: "var(--muted)" }}>{createdAt}</span>
+        {correction.rep_id !== null && (
+          <span style={{ fontSize: 11, color: "var(--muted)" }}>· rep #{correction.rep_id}</span>
+        )}
+        <span style={{
+          fontSize: 10, padding: "2px 7px", borderRadius: 999,
+          background: isHard ? "#DC2626" : "var(--border)",
+          color: isHard ? "white" : "var(--fg)",
+          fontWeight: 600,
+        }}>
+          {CORRECTION_LABEL[correction.type] ?? correction.type}
+        </span>
+        {isHard && <span style={{ fontSize: 10, color: "#DC2626", fontWeight: 600 }}>HARD · 已拉黑</span>}
+        {correction.skip && <span style={{ fontSize: 10, color: "var(--muted)" }}>· 同时 skip</span>}
+      </div>
+      <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 4 }}>lead {correction.lead_id.slice(0, 8)}</div>
+      {correction.reason ? (
+        <div style={{ fontSize: 13, color: "var(--fg)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+          {correction.reason}
+        </div>
+      ) : (
+        <div style={{ fontSize: 11, color: "var(--muted)", fontStyle: "italic" }}>(no reason provided)</div>
+      )}
     </div>
   );
 }

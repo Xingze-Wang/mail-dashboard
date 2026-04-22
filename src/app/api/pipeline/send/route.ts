@@ -7,6 +7,8 @@ import { checkSendAllowed, SEND_MIN_AGE_DAYS, CONTACT_DEDUP_DAYS } from "@/lib/c
 import { MIN_AGE_DAYS, leadAgeDays } from "@/lib/policy";
 import { canonicalizeEmail } from "@/lib/email-id";
 import { checkBlocked } from "@/lib/blocklist";
+import { requireSession } from "@/lib/auth-helpers";
+import { buildQuotaCheck, countOverridesTodayByRep } from "@/lib/override-quota";
 
 export async function POST(req: NextRequest) {
   try {
@@ -39,21 +41,50 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Lead not found" }, { status: 404 });
     }
 
+    // Resolve the acting rep from the session. The daily override cap is
+    // keyed on the authenticated user (not the lead's assigned_rep_id),
+    // because the person clicking Send is who's spending the quota.
+    const session = await requireSession(req);
+    const actingRepId = session?.repId ?? null;
+
+    // `override` at this point is just the intent from the client. We only
+    // count it as a real override (and consume quota) if the lead actually
+    // needs one — i.e. it's inside the 7-day window. An "override=true"
+    // click on an already-old lead is a no-op, shouldn't eat quota.
+    const ageDays = leadAgeDays(lead.created_at);
+    const needsOverride = ageDays < MIN_AGE_DAYS;
+    const overrideWillBeUsed = needsOverride && !!override;
+
     // 7-day age gate (hard enforcement). Anchored on lead.created_at so
     // newly-imported leads cool off in the queue before going out, even if
     // the underlying paper is older. Operators can pass {override: true}
     // per-lead from the UI to bypass.
-    if (!override) {
-      const ageDays = leadAgeDays(lead.created_at);
-      if (ageDays < MIN_AGE_DAYS) {
+    if (needsOverride && !override) {
+      return NextResponse.json(
+        {
+          error: `Lead is ${ageDays.toFixed(1)} days old, minimum is ${MIN_AGE_DAYS}. Pass {override: true} per lead to send anyway.`,
+          code: "age_gate",
+          leadId: id,
+          ageDays,
+        },
+        { status: 422 },
+      );
+    }
+
+    // Daily override cap — per rep, Beijing-day boundary. Only enforced
+    // when the send would actually consume an override; normal sends pass
+    // straight through.
+    if (overrideWillBeUsed && actingRepId) {
+      const used = (await countOverridesTodayByRep(actingRepId)) ?? 0;
+      const quota = buildQuotaCheck(used);
+      if (!quota.ok) {
         return NextResponse.json(
           {
-            error: `Lead is ${ageDays.toFixed(1)} days old, minimum is ${MIN_AGE_DAYS}. Pass {override: true} per lead to send anyway.`,
-            code: "age_gate",
-            leadId: id,
-            ageDays,
+            error: `今日 7-day override 额度已用完 (${quota.used}/${quota.cap})。明天 Beijing 00:00 重置 — 或让这条 lead 自然等到 7 天以上再发。`,
+            code: "daily_override_limit",
+            quota,
           },
-          { status: 422 },
+          { status: 429 },
         );
       }
     }
@@ -64,7 +95,7 @@ export async function POST(req: NextRequest) {
     if (blockHit) {
       return NextResponse.json(
         {
-          error: `Recipient is on the blocklist: ${blockHit.reason}`,
+          error: `这位收件人在 blocklist 里 — 原因: ${blockHit.reason || "（未填写）"}。如果你觉得是误判，找 senior/admin review。`,
           code: "blocked",
           blockedBy: blockHit.blocked_by,
           blockedAt: blockHit.blocked_at,
@@ -73,21 +104,21 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const guard = await checkSendAllowed(lead);
+    const guard = await checkSendAllowed(lead, { override: overrideWillBeUsed });
     if (!guard.ok) {
+      // Actionable error messages — each one tells sales WHAT blocked them
+      // and WHAT to do next. Generic "paper not ready" used to leave them
+      // clicking Send in a loop with no understanding of why.
       const messages: Record<string, string> = {
-        bad_status: `Lead status is '${"status" in guard ? guard.status : ""}', must be 'ready'`,
-        no_draft: "Lead has no draft",
-        too_new: `Paper must be at least ${SEND_MIN_AGE_DAYS} days old`,
-        already_contacted: `Recipient was contacted within the last ${CONTACT_DEDUP_DAYS} days`,
-        paper_already_contacted: `A co-author of this paper was contacted within the last ${CONTACT_DEDUP_DAYS} days`,
+        bad_status: `这条 lead 已经不是 'ready' 状态（可能已经被发过或 skip 了）。刷新一下就行。`,
+        no_draft: "这条 lead 没有草稿 — 等 enrichment 跑完再试。",
+        too_new: `Paper 发表时间太近（<${SEND_MIN_AGE_DAYS}天）。勾上 Override 7-day rule 就能发。`,
+        already_contacted: `这位收件人在过去 ${CONTACT_DEDUP_DAYS} 天内已经被联系过了（可能是另一位 rep）。跳过这条，不要重复联系。`,
+        paper_already_contacted: `这篇 paper 的合作者在过去 ${CONTACT_DEDUP_DAYS} 天内已经被联系过（可能是另一位 rep）。跳过这条。`,
       };
-      // bad_status = lead already moved past 'ready' (likely sent). Use 409 to
-      // signal conflict (REST convention for "resource state prevents the op").
-      // no_draft = client should not have called us yet — 400.
       const httpStatus = guard.code === "no_draft" ? 400 : 409;
       return NextResponse.json(
-        { ...guard, error: messages[guard.code] },
+        { ...guard, error: messages[guard.code] ?? `Send blocked: ${guard.code}` },
         { status: httpStatus },
       );
     }
@@ -124,13 +155,24 @@ export async function POST(req: NextRequest) {
     // Falls back to whatever's in the DB (Browse-mode quick send).
     const finalSubject = (editedSubject ?? lead.draft_subject) as string;
     const finalHtml = (editedHtml ?? lead.draft_html) as string;
-    const result = await resend.emails.send({
-      from: senderFrom,
-      to: [toEmail],
-      cc: ["williamxwang03@gmail.com"],
-      subject: finalSubject,
-      html: finalHtml,
-    });
+    // Wrap Resend in try/catch — on a thrown error (network reset, DNS,
+    // lib exception), the old code fell through to the outer catch and
+    // left the lead stuck at status='sending' forever. Roll back
+    // explicitly on both `result.error` and thrown cases.
+    let result;
+    try {
+      result = await resend.emails.send({
+        from: senderFrom,
+        to: [toEmail],
+        cc: ["williamxwang03@gmail.com"],
+        subject: finalSubject,
+        html: finalHtml,
+      });
+    } catch (e) {
+      await supabase.from("pipeline_leads").update({ status: "ready" }).eq("id", id);
+      const msg = e instanceof Error ? e.message : String(e);
+      return NextResponse.json({ error: `Resend threw: ${msg}. Lead returned to 'ready'.` }, { status: 500 });
+    }
 
     if (result.error) {
       await supabase.from("pipeline_leads").update({ status: "ready" }).eq("id", id);
@@ -166,6 +208,9 @@ export async function POST(req: NextRequest) {
         draft_edit_distance: editDistance,
         edit_reasons: Array.isArray(editReasons) ? editReasons : null,
         edit_note: typeof editNote === "string" ? editNote.slice(0, 500) : null,
+        // Persisted so the daily-quota query can COUNT today's overrides
+        // without a separate counter table.
+        override_used: overrideWillBeUsed,
       })
       .eq("id", id);
     if (leadUpdateErr) {

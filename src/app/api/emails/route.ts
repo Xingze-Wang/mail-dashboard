@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
+import { requireSession } from "@/lib/auth-helpers";
+import { getRep } from "@/lib/assignment";
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -8,6 +10,17 @@ export async function GET(req: NextRequest) {
   const status = searchParams.get("status");
   const search = searchParams.get("search")?.trim();
   const offset = (page - 1) * limit;
+
+  // Per-sales scoping: regular sales only see emails where they are the
+  // sender. Admin + senior see everything. We match on the `from` column
+  // (which we store as "Name <email>") via ilike to tolerate casing.
+  const session = await requireSession(req);
+  const isPrivileged = session?.role === "admin" || session?.role === "senior";
+  let senderEmail: string | null = null;
+  if (!isPrivileged && session?.repId) {
+    const rep = await getRep(session.repId);
+    if (rep) senderEmail = rep.sender_email;
+  }
 
   function buildQuery(countOnly: boolean) {
     let q = countOnly
@@ -19,6 +32,7 @@ export async function GET(req: NextRequest) {
           .range(offset, offset + limit - 1);
 
     if (status) q = q.eq("status", status);
+    if (senderEmail) q = q.ilike("from", `%${senderEmail}%`);
     return q;
   }
 

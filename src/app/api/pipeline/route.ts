@@ -10,6 +10,7 @@ import {
   getRep,
   resolveCategory,
 } from "@/lib/assignment";
+import { requireSession } from "@/lib/auth-helpers";
 
 // ─── Shared field mapper ────────────────────────────────────────────────────
 
@@ -73,10 +74,26 @@ export async function GET(req: NextRequest) {
   const limit = parseInt(searchParams.get("limit") || "50");
   const status = searchParams.get("status");
   const tier = searchParams.get("tier");
-  const repId = searchParams.get("rep_id");
+  const repIdParam = searchParams.get("rep_id");
   const category = searchParams.get("category");
   const dateRange = searchParams.get("date"); // "today" | "week" | "all"
   const offset = (page - 1) * limit;
+
+  // Auto-scope non-admin sessions to their own leads. Admin + senior keep
+  // the full view (they coordinate across the team); junior sales only
+  // see rows assigned to them. A non-admin can still pass ?rep_id= to
+  // narrow further, but CANNOT widen beyond their own id.
+  const session = await requireSession(req);
+  const isPrivileged = session?.role === "admin" || session?.role === "senior";
+  let effectiveRepId: number | null = null;
+  if (repIdParam) {
+    effectiveRepId = parseInt(repIdParam);
+  }
+  if (!isPrivileged && session?.repId) {
+    // Hard-override: ignore whatever rep_id the client sent; sales can
+    // only see their own.
+    effectiveRepId = session.repId;
+  }
 
   let query = supabase
     .from("pipeline_leads")
@@ -96,9 +113,9 @@ export async function GET(req: NextRequest) {
     query = query.eq("lead_tier", tier);
     countQuery = countQuery.eq("lead_tier", tier);
   }
-  if (repId) {
-    query = query.eq("assigned_rep_id", parseInt(repId));
-    countQuery = countQuery.eq("assigned_rep_id", parseInt(repId));
+  if (effectiveRepId !== null) {
+    query = query.eq("assigned_rep_id", effectiveRepId);
+    countQuery = countQuery.eq("assigned_rep_id", effectiveRepId);
   }
   if (dateRange === "today") {
     const todayStart = new Date();

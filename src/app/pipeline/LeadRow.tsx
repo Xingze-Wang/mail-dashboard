@@ -147,7 +147,12 @@ function LeadRowInner({
   // 7-day age-gate (UX hint — server is the final word). Anchored on
   // created_at, distinct from canSend()'s published_at check.
   const ageGated = isAgeGated(lead.createdAt);
-  const ageDaysFloor = Math.floor(leadAgeDays(lead.createdAt));
+  // Display prefers PAPER age (published_at) because that's the number
+  // sales actually cares about — "how old is this paper" not "how long
+  // has it been sitting in our queue." Falls back to ingest age when
+  // published_at is missing.
+  const paperAnchor = lead.publishedAt ?? lead.createdAt;
+  const ageDaysFloor = Math.floor(leadAgeDays(paperAnchor));
 
   const startEdit = () => {
     setEditSubject(lead.draftSubject || "");

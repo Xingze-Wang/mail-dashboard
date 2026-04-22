@@ -1,5 +1,6 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
+import { requireSession } from "@/lib/auth-helpers";
 
 // Analytics must always reflect the live DB — "This week" is time-sensitive
 // and drifts by a full day if cached. Force a fresh query on every hit.
@@ -23,12 +24,21 @@ function resolveCategoryFromLead(md: unknown): string | null {
   return null;
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  // Per-rep scoping: admins/seniors see the whole team roll-up;
+  // regular sales see only their own numbers. This is enforced by
+  // filtering the main leads array in-memory before any downstream
+  // aggregation — the downstream counters all fan out from this one
+  // array, so one filter point is enough.
+  const session = await requireSession(req);
+  const isPrivileged = session?.role === "admin" || session?.role === "senior";
+  const scopeRepId = !isPrivileged && session?.repId ? session.repId : null;
+
   const [
     { data: allLeads },
     { data: reps },
     { data: wechatConversions },
-    { data: dailyLeads },
+    { data: dailyLeadsRaw },
     discoveryCountsBySource,
     deliveredRecipients,
     repBySenderEmail,
@@ -43,14 +53,22 @@ export async function GET() {
       .eq("added_wechat", true),
     supabase
       .from("pipeline_leads")
-      .select("created_at, lead_tier")
+      .select("created_at, lead_tier, assigned_rep_id")
       .gte("created_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()),
     fetchDiscoveryCounts(),
     fetchDeliveredRecipients(),
     fetchRepRecipientCounts(),
   ]);
 
-  const leads = allLeads ?? [];
+  // Scope the arrays to the current rep BEFORE any aggregation. The
+  // downstream code treats these as ground truth.
+  const leadsAll = allLeads ?? [];
+  const leads = scopeRepId !== null
+    ? leadsAll.filter((l) => l.assigned_rep_id === scopeRepId)
+    : leadsAll;
+  const dailyLeads = scopeRepId !== null
+    ? (dailyLeadsRaw ?? []).filter((l) => (l as { assigned_rep_id?: number }).assigned_rep_id === scopeRepId)
+    : (dailyLeadsRaw ?? []);
   const wechat = wechatConversions ?? [];
   // Lower-cased set of every email address we've successfully delivered to.
   // This is the right denominator for ANY conversion-rate calc — using

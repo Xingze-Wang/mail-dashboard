@@ -6,6 +6,8 @@ import { getRep } from "@/lib/assignment";
 import { checkSendAllowed } from "@/lib/contact-guard";
 import { MIN_AGE_DAYS, leadAgeDays } from "@/lib/policy";
 import { canonicalizeEmail } from "@/lib/email-id";
+import { requireSession } from "@/lib/auth-helpers";
+import { DAILY_OVERRIDE_CAP, countOverridesTodayByRep } from "@/lib/override-quota";
 
 /**
  * POST /api/pipeline/batch-send
@@ -32,6 +34,21 @@ export async function POST(req: NextRequest) {
 
     const overrideSet = new Set(Array.isArray(overrides) ? overrides : []);
 
+    // Quota: fetch today's count once, up front. We'll decrement the
+    // remaining budget in-memory as the loop consumes overrides — avoiding
+    // a DB round-trip per lead. If the whole batch doesn't use any
+    // overrides (overrideSet is empty), we skip the session+count entirely.
+    let overrideBudget = Infinity;
+    let overridesUsedThisBatch = 0;
+    if (overrideSet.size > 0) {
+      const session = await requireSession(req);
+      const actingRepId = session?.repId ?? null;
+      if (actingRepId) {
+        const used = (await countOverridesTodayByRep(actingRepId)) ?? 0;
+        overrideBudget = Math.max(0, DAILY_OVERRIDE_CAP - used);
+      }
+    }
+
     let sent = 0;
     let skipped = 0;
     const errors: string[] = [];
@@ -51,16 +68,26 @@ export async function POST(req: NextRequest) {
       }
 
       // 7-day age gate (per-lead override allowed). Anchored on created_at.
-      if (!overrideSet.has(id)) {
-        const ageDays = leadAgeDays(lead.created_at);
-        if (ageDays < MIN_AGE_DAYS) {
-          skipped++;
-          blocks["age_gate"] = (blocks["age_gate"] || 0) + 1;
-          continue;
-        }
+      const ageDays = leadAgeDays(lead.created_at);
+      const needsOverride = ageDays < MIN_AGE_DAYS;
+      const clientAskedOverride = overrideSet.has(id);
+      if (needsOverride && !clientAskedOverride) {
+        skipped++;
+        blocks["age_gate"] = (blocks["age_gate"] || 0) + 1;
+        continue;
+      }
+      // Quota: every gated lead that the client wants to override consumes
+      // a budget unit. When budget hits 0 we start skipping them with a
+      // dedicated reason so the caller can surface "X leads blocked by
+      // daily override cap."
+      const willUseOverride = needsOverride && clientAskedOverride;
+      if (willUseOverride && overrideBudget <= 0) {
+        skipped++;
+        blocks["daily_override_limit"] = (blocks["daily_override_limit"] || 0) + 1;
+        continue;
       }
 
-      const guard = await checkSendAllowed(lead);
+      const guard = await checkSendAllowed(lead, { override: clientAskedOverride });
       if (!guard.ok) {
         skipped++;
         blocks[guard.code] = (blocks[guard.code] || 0) + 1;
@@ -113,10 +140,26 @@ export async function POST(req: NextRequest) {
       const threadId = `thread_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
       const { error: leadUpdateErr } = await supabase
         .from("pipeline_leads")
-        .update({ status: "sent", sent_at: new Date().toISOString(), thread_id: threadId })
+        .update({
+          status: "sent",
+          sent_at: new Date().toISOString(),
+          thread_id: threadId,
+          override_used: willUseOverride,
+        })
         .eq("id", id);
       if (leadUpdateErr) {
         console.error("batch pipeline_leads update failed", { id, err: leadUpdateErr });
+      }
+      // Only decrement the in-memory budget if override_used actually
+      // landed in the DB. If the update failed, the row still has
+      // override_used=false — tomorrow's COUNT query wouldn't count this
+      // send, so we shouldn't pretend to have spent a slot either.
+      // The email already went out regardless; worst case is one extra
+      // override fits into the cap, which is better than losing count
+      // integrity for future batches.
+      if (willUseOverride && !leadUpdateErr) {
+        overrideBudget--;
+        overridesUsedThisBatch++;
       }
 
       // Audit log (best-effort).
@@ -148,7 +191,7 @@ export async function POST(req: NextRequest) {
       await new Promise((r) => setTimeout(r, 500));
     }
 
-    return NextResponse.json({ sent, skipped, errors, blocks });
+    return NextResponse.json({ sent, skipped, errors, blocks, overridesUsed: overridesUsedThisBatch });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Batch send failed";
     return NextResponse.json({ error: message }, { status: 500 });

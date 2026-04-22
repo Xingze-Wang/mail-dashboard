@@ -27,7 +27,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Send, SkipForward, ArrowLeft, Flag, UserCheck, X } from "lucide-react";
 import { sanitizeHtml } from "@/lib/sanitize";
-import { Lead } from "./types";
+import { Lead, shortDate } from "./types";
 import { isAgeGated, leadAgeDays, MIN_AGE_DAYS } from "@/lib/policy";
 
 /** Extracts a stable arxiv id from any of arxiv.org/abs/..., /pdf/..., with
@@ -98,22 +98,49 @@ function htmlToPlainText(html: string): string {
     .trim();
 }
 
+// Kept in sync with email-generator.ts — if the apply URL changes there,
+// edited sends would silently fall back to plain text "申请" without a link.
+// Duplication is deliberate: the client can't import a server-only module
+// just for a string constant.
+const APPLY_URL_CTA = "https://apply.miracleplus.com/?p=gpu&c=ib&r=4Xq0R&utm_source=em";
+
 function plainToHtml(text: string): string {
   // wrap each non-empty paragraph in <p>, preserve single newlines as <br />
   const escaped = text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
-  return escaped
+  // Re-link the word 申请 (if it appears and isn't already in an href) so
+  // edited sends don't lose the CTA the generator originally put there.
+  // Only the first occurrence is linked — sales rarely writes "申请" twice
+  // and we don't want to paint the whole email blue if they do.
+  const withApplyLink = escaped.replace(
+    /申请/,
+    `<a href="${APPLY_URL_CTA}">申请</a>`,
+  );
+  // Wrap in a <body> with the same inline style as the generator's
+  // template so the signature (and body) render at #333 in Gmail even
+  // after the user's edits pass through the textarea.
+  const paragraphs = withApplyLink
     .split(/\n{2,}/)
     .map((para) => `<p>${para.replace(/\n/g, "<br />")}</p>`)
     .join("");
+  return `<html><head><meta charset="utf-8"></head><body style="font-family: sans-serif; font-size: 14px; line-height: 1.8; color: #333;">${paragraphs}</body></html>`;
 }
 
 function ageLabel(createdAt: string): string {
   const days = leadAgeDays(createdAt);
   if (days < 1) return `${Math.max(0, Math.floor(days * 24))}h old`;
   return `${Math.floor(days)}d old`;
+}
+
+/** Age of the *paper itself* (time since arXiv publish), distinct from
+ *  ingest age. Used in the review-pane meta row — sales cares "how old is
+ *  this paper" (driver of emailing timeliness), not "how long has it been
+ *  sitting in our queue." Falls back to ingest age when publishedAt is
+ *  missing so we never render an empty label. */
+function paperAgeLabel(publishedAt: string | null, createdAt: string): string {
+  return publishedAt ? ageLabel(publishedAt) : ageLabel(createdAt);
 }
 
 export function ReviewPane({ leads, onExit, onSent, onSkipped, initialLeadId }: Props) {
@@ -126,24 +153,73 @@ export function ReviewPane({ leads, onExit, onSent, onSkipped, initialLeadId }: 
   const [skipping, setSkipping] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Daily 7-day-override quota for the current rep. Fetched on mount and
+  // after every successful send so the counter stays honest without
+  // needing a realtime channel. Null = quota not yet loaded; {cap:0} =
+  // no quota to enforce (no rep session).
+  const [quota, setQuota] = useState<{ used: number; cap: number; remaining: number } | null>(null);
+  const refreshQuota = useCallback(async () => {
+    try {
+      const r = await fetch("/api/metrics/override-usage");
+      if (!r.ok) return;
+      const d = await r.json();
+      setQuota({ used: d.used, cap: d.cap, remaining: d.remaining });
+    } catch { /* non-fatal */ }
+  }, []);
+  useEffect(() => { void refreshQuota(); }, [refreshQuota]);
+
   const lead = ready[idx];
   const gated = lead ? isAgeGated(lead.createdAt) : false;
   const canEmail = !!(lead && lead.authorEmail && lead.draftHtml);
+
+  // Publish the current lead on the window so the app-shell HelpBot can
+  // read it when the user opens the assistant — this is how Paper Tutor
+  // mode gets scoped to whichever paper sales is reviewing. We use a
+  // window global (not context) because: (1) only one writer, (2) HelpBot
+  // reads on-demand when its modal opens, so no subscribe-to-changes
+  // needed, (3) avoids threading a context provider through the app shell
+  // for one ephemeral piece of UI state.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (lead) {
+      (window as unknown as { __currentReviewLead?: { id: string; title: string } }).__currentReviewLead = {
+        id: lead.id,
+        title: lead.title,
+      };
+    } else {
+      delete (window as unknown as { __currentReviewLead?: unknown }).__currentReviewLead;
+    }
+    return () => {
+      if (typeof window !== "undefined") {
+        delete (window as unknown as { __currentReviewLead?: unknown }).__currentReviewLead;
+      }
+    };
+  }, [lead]);
 
   // Reset idx when the underlying slice shrinks below current cursor
   useEffect(() => {
     if (idx > 0 && idx >= ready.length) setIdx(Math.max(0, ready.length - 1));
   }, [ready.length, idx]);
 
-  // Jump to the requested lead on first load if specified.
+  // Jump to the requested lead whenever the deeplink changes OR the ready
+  // slice first lands. The previous implementation dep-gated on
+  // `[ready.length > 0]` (a boolean that never re-fires), so clicking a
+  // specific lead row while already in Review mode silently dropped you on
+  // idx=0 instead of the lead you clicked. Tracking `initialLeadId`
+  // directly fixes that; a ref guard below prevents re-yanking the cursor
+  // after the user navigates away with J/K.
+  const jumpedToInitialRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!initialLeadId) return;
+    if (!initialLeadId || ready.length === 0) return;
+    // If we already honored this exact deeplink, don't yank the user back
+    // every time `ready` refreshes (fetchLeads on send/skip rebuilds it).
+    if (jumpedToInitialRef.current === initialLeadId) return;
     const target = ready.findIndex((l) => l.id === initialLeadId);
-    if (target >= 0) setIdx(target);
-    // Only run on the first paint with a non-empty ready slice; subsequent
-    // changes shouldn't yank the user away from where they are.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready.length > 0]);
+    if (target >= 0) {
+      setIdx(target);
+      jumpedToInitialRef.current = initialLeadId;
+    }
+  }, [initialLeadId, ready]);
 
   // Sync editor fields when current lead changes
   useEffect(() => {
@@ -199,7 +275,12 @@ export function ReviewPane({ leads, onExit, onSent, onSkipped, initialLeadId }: 
     setError(null);
     setShowEditModal(false);
     try {
-      const editedHtml = plainToHtml(body);
+      // If the user didn't edit the body, send the ORIGINAL draftHtml
+      // untouched — the plain-text round-trip (htmlToPlainText → textarea →
+      // plainToHtml) strips <a> tags and inline styles, which kills the
+      // 申请 CTA link and the signature color. Only pay the round-trip cost
+      // when the body actually changed.
+      const editedHtml = isEdited ? plainToHtml(body) : (lead.draftHtml ?? plainToHtml(body));
       const res = await fetch("/api/pipeline/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -214,17 +295,30 @@ export function ReviewPane({ leads, onExit, onSent, onSkipped, initialLeadId }: 
       });
       const data = await res.json();
       if (!res.ok) {
+        // daily_override_limit comes back as 429 with a quota payload —
+        // surface it distinctly so sales understands it's not a one-off
+        // failure and won't recover on retry.
+        if (data.code === "daily_override_limit" && data.quota) {
+          setQuota({ used: data.quota.used, cap: data.quota.cap, remaining: 0 });
+        }
         setError(data.error || "Send failed");
         return;
       }
+      // Refresh the quota so the counter reflects the override we just
+      // consumed (cheap — ~1 indexed COUNT). Best-effort; the next send
+      // will correct any stale state anyway.
+      if (gated && override) void refreshQuota();
+      // NOTE: don't call advance() here. onSent() triggers a parent refetch
+      // that drops this lead from the ready[] filter — the next ready lead
+      // naturally slides into the current idx. Calling advance() *and*
+      // refetching would skip ahead by 2 (looks like "sent two at once").
       onSent(lead);
-      advance();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Network error");
     } finally {
       setSending(false);
     }
-  }, [lead, gated, override, subject, body, onSent, advance]);
+  }, [lead, gated, override, subject, body, isEdited, onSent, refreshQuota]);
 
   // Old name kept for the keyboard handler — wraps requestSend so Cmd+Enter
   // still triggers the same intercept.
@@ -234,17 +328,27 @@ export function ReviewPane({ leads, onExit, onSent, onSkipped, initialLeadId }: 
     if (!lead || skipping) return;
     setSkipping(true);
     try {
+      // Persist any in-flight edits before skipping — sales could un-skip
+      // this lead later and we don't want their rewrites thrown away. Same
+      // dual-path logic as send: if they didn't touch it, leave draftHtml
+      // untouched to preserve the original <a> + signature styling.
+      const payload: Record<string, unknown> = { status: "skipped" };
+      if (isEdited) {
+        payload.draftSubject = subject;
+        payload.draftHtml = plainToHtml(body);
+      }
       await fetch(`/api/pipeline/${lead.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "skipped" }),
+        body: JSON.stringify(payload),
       });
+      // Same as send: parent refetch drops this lead from ready[], so the
+      // next one slides into the current idx — don't advance() manually.
       onSkipped(lead);
-      advance();
     } finally {
       setSkipping(false);
     }
-  }, [lead, skipping, onSkipped, advance]);
+  }, [lead, skipping, isEdited, subject, body, onSkipped]);
 
   // Keyboard shortcuts. We attach to window so they fire even when focus
   // is in the textarea — but Cmd/Ctrl+Enter is the only "active" shortcut
@@ -314,16 +418,35 @@ export function ReviewPane({ leads, onExit, onSent, onSkipped, initialLeadId }: 
           <span className="dx-kbd">Cmd+Enter</span> send · <span className="dx-kbd">esc</span> exit
         </span>
         <div className="dx-review-spacer" />
-        {gated && (
-          <label className="dx-override-toggle" title={`Lead is ${ageLabel(lead.createdAt)}`}>
-            <input
-              type="checkbox"
-              checked={override}
-              onChange={(e) => setOverride(e.target.checked)}
-            />
-            Override 7-day rule ({ageLabel(lead.createdAt)})
-          </label>
-        )}
+        {gated && (() => {
+          // When the rep has a real quota (cap>0) AND is out, we block the
+          // override at the UI layer too — the server also rejects, but
+          // disabling the checkbox prevents the sales person from staring
+          // at a Send button that always errors.
+          const quotaExhausted = !!quota && quota.cap > 0 && quota.remaining <= 0;
+          const usageLabel = quota && quota.cap > 0
+            ? ` · ${quota.used}/${quota.cap} used today`
+            : "";
+          return (
+            <label
+              className="dx-override-toggle"
+              title={
+                quotaExhausted
+                  ? `今日 override 额度已用完 (${quota!.used}/${quota!.cap})。Beijing 00:00 重置。`
+                  : `Lead is ${ageLabel(lead.createdAt)}${usageLabel ? " · quota" + usageLabel : ""}`
+              }
+              style={quotaExhausted ? { opacity: 0.55, cursor: "not-allowed" } : undefined}
+            >
+              <input
+                type="checkbox"
+                checked={override}
+                disabled={quotaExhausted}
+                onChange={(e) => setOverride(e.target.checked)}
+              />
+              Override 7-day rule ({ageLabel(lead.createdAt)}){usageLabel}
+            </label>
+          );
+        })()}
         <button
           type="button"
           className="dx-secondary"
@@ -371,7 +494,15 @@ export function ReviewPane({ leads, onExit, onSent, onSkipped, initialLeadId }: 
           <div className="dx-review-meta">
             <span>arXiv</span>
             <span className="dx-meta-dot" />
-            <span>{ageLabel(lead.createdAt)}</span>
+            <span
+              title={
+                lead.publishedAt
+                  ? `Paper published ${shortDate(lead.publishedAt)} · ingested ${ageLabel(lead.createdAt)} ago`
+                  : `Ingested ${ageLabel(lead.createdAt)} ago`
+              }
+            >
+              {paperAgeLabel(lead.publishedAt, lead.createdAt)}
+            </span>
             {lead.leadTier && (
               <>
                 <span className="dx-meta-dot" />
@@ -396,6 +527,9 @@ export function ReviewPane({ leads, onExit, onSent, onSkipped, initialLeadId }: 
             <strong style={{ color: "var(--dx-text-2)", fontWeight: 600 }}>
               {lead.authorName || "Unknown"}
             </strong>
+            <span style={{ fontSize: 11, color: "var(--dx-text-3)" }}>
+              (current recipient)
+            </span>
             {lead.schoolName && (
               <>
                 <span className="dx-meta-dot" />
@@ -409,6 +543,7 @@ export function ReviewPane({ leads, onExit, onSent, onSkipped, initialLeadId }: 
               </>
             )}
           </div>
+          <AuthorList authorsRaw={lead.authors} currentAuthor={lead.authorName} />
           <AuthorSwitcher
             leadId={lead.id}
             currentAuthor={lead.authorName}
@@ -609,6 +744,71 @@ function parseAuthorList(raw: string | null): string[] {
     .split(",")
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
+}
+
+/** Read-only display of every author on the paper, with the current
+ *  recipient bolded and a 1st/last tag. Shown above the interactive
+ *  AuthorSwitcher so sales can see co-authors without opening the dropdown. */
+function AuthorList({
+  authorsRaw,
+  currentAuthor,
+}: {
+  authorsRaw: string | null;
+  currentAuthor: string | null;
+}) {
+  const all = useMemo(() => parseAuthorList(authorsRaw), [authorsRaw]);
+  // Single-author case: render a compact hint so sales understands why
+  // there's no "Switch to first author" button. Previously we returned
+  // null and the feature just looked absent — especially confusing when
+  // an admin looking at a different multi-author lead sees the button
+  // and sales on a single-author one doesn't.
+  if (all.length <= 1) {
+    return (
+      <div style={{ marginTop: 8, fontSize: 11, color: "var(--dx-text-3)" }}>
+        Single author — no switch needed.
+      </div>
+    );
+  }
+  const current = (currentAuthor ?? "").toLowerCase();
+  return (
+    <div style={{ marginTop: 8, fontSize: 12, lineHeight: 1.6, color: "var(--dx-text-2)" }}>
+      <span
+        style={{
+          fontSize: 10,
+          fontWeight: 600,
+          textTransform: "uppercase",
+          letterSpacing: "0.06em",
+          color: "var(--dx-text-3)",
+          marginRight: 8,
+        }}
+      >
+        All authors ({all.length})
+      </span>
+      {all.map((name, i) => {
+        const isCurrent = current && name.toLowerCase() === current;
+        const isFirst = i === 0;
+        const isLast = i === all.length - 1 && all.length > 1;
+        return (
+          <span key={name + i}>
+            {i > 0 && <span style={{ color: "var(--dx-text-3)" }}>, </span>}
+            <span
+              style={{
+                fontWeight: isCurrent ? 600 : 400,
+                color: isCurrent ? "var(--dx-text-1)" : "var(--dx-text-2)",
+                background: isCurrent ? "var(--dx-blue-bg)" : "transparent",
+                padding: isCurrent ? "1px 6px" : 0,
+                borderRadius: isCurrent ? 4 : 0,
+              }}
+            >
+              {isFirst && <span style={{ color: "var(--dx-blue)", fontWeight: 600, marginRight: 4 }}>1st</span>}
+              {isLast && !isFirst && <span style={{ color: "var(--dx-text-3)", fontSize: 10, marginRight: 4 }}>last</span>}
+              {name}
+            </span>
+          </span>
+        );
+      })}
+    </div>
+  );
 }
 
 function AuthorSwitcher({
