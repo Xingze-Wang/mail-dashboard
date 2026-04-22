@@ -3,6 +3,17 @@ import { syncFromResend } from "@/lib/sync";
 import { scanArxiv } from "@/lib/scanner";
 import { generateDraft } from "@/lib/email-generator";
 import { supabase } from "@/lib/db";
+import { lookupAuthor } from "@/lib/semantic-scholar";
+import {
+  getAssignmentConfig,
+  classifyLead,
+  assignRep,
+  getRep,
+} from "@/lib/assignment";
+
+// Vercel Pro caps function execution at 300s; Hobby caps at 60s. Cron does
+// sync + scan + draft in one pass and historically takes 3-5 min.
+export const maxDuration = 300;
 
 /**
  * Unified weekday cron endpoint.
@@ -13,12 +24,16 @@ import { supabase } from "@/lib/db";
  * Future: add GitHub startup finder, Jike founder radar, etc.
  */
 export async function GET(req: NextRequest) {
-  const isVercelCron = req.headers.get("authorization") === `Bearer ${process.env.CRON_SECRET}`;
+  const secret = process.env.CRON_SECRET;
+  if (!secret) {
+    return NextResponse.json({ error: "CRON_SECRET not configured" }, { status: 503 });
+  }
+  const isVercelCron = req.headers.get("authorization") === `Bearer ${secret}`;
   const referer = req.headers.get("referer") || "";
   const host = req.headers.get("host") || "__none__";
   const isInternal = referer.includes(host);
 
-  if (process.env.CRON_SECRET && !isVercelCron && !isInternal) {
+  if (!isVercelCron && !isInternal) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -32,12 +47,36 @@ export async function GET(req: NextRequest) {
     results.sync = { error: String(err) };
   }
 
-  // ── Step 2: Scan arxiv for new leads ──
+  // ── Step 2: Scan arxiv for new leads → enrich → classify → assign → draft ──
   try {
     const { leads, stats } = await scanArxiv({ maxPapers: 300, timeBudgetMs: 40_000 });
+    const config = await getAssignmentConfig();
     let leadsCreated = 0;
 
     for (const lead of leads) {
+      // 1. Semantic Scholar enrichment (best-effort)
+      let s2: Awaited<ReturnType<typeof lookupAuthor>> = null;
+      try {
+        s2 = await lookupAuthor(lead.title, lead.authorName);
+      } catch {
+        // S2 enrichment failure is non-blocking
+      }
+
+      // 2. Classify and assign
+      const hIndex = s2?.hIndex ?? null;
+      const citationCount = s2?.citationCount ?? null;
+      const tier = classifyLead(config, {
+        citationCount,
+        hIndex,
+        schoolTier: lead.schoolTier,
+        authorEmail: lead.authorEmail,
+      });
+      const repId = assignRep(config, tier, lead.authorEmail);
+
+      // 3. Get rep info for draft generation
+      const rep = await getRep(repId);
+
+      // 4. Generate draft with rep identity
       let draft: { subject: string; html: string } | null = null;
       try {
         draft = await generateDraft({
@@ -48,11 +87,14 @@ export async function GET(req: NextRequest) {
           schoolName: lead.schoolName,
           schoolTier: lead.schoolTier,
           matchedDirections: lead.matchedDirections,
+          repName: rep?.sender_name,
+          repWechatId: rep?.wechat_id,
         });
-      } catch {
-        // Draft failed — insert with status 'new'
+      } catch (err) {
+        console.error("cron draft generation failed", { arxivId: lead.arxivId, err: String(err) });
       }
 
+      // 5. Insert with enrichment data
       const { error } = await supabase.from("pipeline_leads").insert({
         arxiv_id: lead.arxivId,
         title: lead.title,
@@ -68,10 +110,16 @@ export async function GET(req: NextRequest) {
         compute_level: lead.computeLevel,
         compute_confidence: lead.computeConfidence,
         compute_reason: lead.computeReason,
-        matched_directions: Array.isArray(lead.matchedDirections) ? lead.matchedDirections.join(",") : "",
+        matched_directions: lead.matchedDirections,
         draft_subject: draft?.subject ?? null,
         draft_html: draft?.html ?? null,
         status: draft ? "ready" : "new",
+        s2_author_id: s2?.authorId ?? null,
+        h_index: s2?.hIndex ?? null,
+        citation_count: s2?.citationCount ?? null,
+        paper_count: s2?.paperCount ?? null,
+        lead_tier: tier,
+        assigned_rep_id: repId,
       });
 
       if (!error) leadsCreated++;

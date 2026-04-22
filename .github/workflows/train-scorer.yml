@@ -1,0 +1,71 @@
+name: Train lead-quality scorer
+
+# Triggered by the Scorer page's "Train new" button via repository_dispatch.
+# Runs train_scorer.py on a GH runner (no Vercel 300s limit), uploads the new
+# run to scorer_runs, and optionally marks it active.
+#
+# Security: user-supplied inputs (triggered_by) flow only through env vars,
+# never directly interpolated into run: commands.
+
+on:
+  workflow_dispatch:
+    inputs:
+      triggered_by:
+        description: "Who kicked this off (shown in logs)"
+        required: false
+        default: "manual"
+      auto_promote:
+        description: "Mark the new run as active after training"
+        required: false
+        default: "false"
+        type: choice
+        options: ["false", "true"]
+  repository_dispatch:
+    types: [train-scorer]
+  # Weekly retrain — every Monday 14:00 UTC = 22:00 Beijing.
+  # Auto-promotes when held-out F1 is at least as good as the last run;
+  # otherwise the script uploads the run but doesn't activate it (so a
+  # bad batch of new corrections can't silently regress prod).
+  schedule:
+    - cron: "0 14 * * 1"
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install deps
+        run: |
+          pip install sentence-transformers scikit-learn numpy supabase requests
+
+      - name: Train
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          DASHBOARD_URL: https://qiji-pipeline.vercel.app
+          # User-supplied input flows through env — never inlined in run.
+          TRIGGERED_BY: ${{ github.event.inputs.triggered_by || github.event.client_payload.triggered_by || 'manual' }}
+          AUTO_PROMOTE: ${{ github.event.inputs.auto_promote || github.event.client_payload.auto_promote || 'false' }}
+        run: |
+          cd scripts
+          python train_scorer.py
+
+      - name: Promote (optional)
+        if: >
+          github.event.inputs.auto_promote == 'true' ||
+          github.event.client_payload.auto_promote == true ||
+          github.event_name == 'schedule'
+        env:
+          DASHBOARD_URL: https://qiji-pipeline.vercel.app
+          SCORER_TRAIN_TOKEN: ${{ secrets.SCORER_TRAIN_TOKEN }}
+        run: |
+          curl -sS -X POST "$DASHBOARD_URL/api/scorer/promote-latest" \
+            -H "Authorization: Bearer $SCORER_TRAIN_TOKEN" \
+            -H "Content-Type: application/json" -d '{}'

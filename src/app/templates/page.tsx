@@ -178,99 +178,136 @@ export default function TemplatesPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-semibold text-white tracking-tight">Templates</h1>
-          <p className="text-sm text-neutral-400 mt-1">Email templates and AI prompt templates</p>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 28 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 14 }}>
+          <h1 className="page-title">Templates</h1>
+          <span className="lead-count">Email & AI prompts</span>
         </div>
-        <button
-          onClick={() => openEditor()}
-          className="flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-[13px] font-medium text-black hover:bg-neutral-200 transition-colors"
-        >
-          <Plus className="h-4 w-4" />
+        <button onClick={() => openEditor()} className="btn btn-primary">
+          <Plus />
           New Template
         </button>
       </div>
 
       {/* Editor Modal */}
       {showEditor && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="w-full max-w-3xl rounded-xl border border-neutral-800 bg-neutral-950 shadow-2xl max-h-[90vh] overflow-auto">
-            <div className="flex items-center justify-between border-b border-neutral-800 px-5 py-4">
-              <h2 className="text-[15px] font-semibold text-white">
-                {editing ? "Edit Template" : "New Template"}
-              </h2>
-              <button onClick={closeEditor} className="text-neutral-400 hover:text-white">
-                <X className="h-4 w-4" />
+        <div className="modal-backdrop" onClick={closeEditor}>
+          <div
+            className="modal-card"
+            style={{ width: "100%", maxWidth: 820 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid var(--border-light)", padding: "18px 24px" }}>
+              <div>
+                <h2 style={{ fontFamily: "var(--font-heading)", fontSize: 18, fontWeight: 600, color: "var(--text)", letterSpacing: "-0.01em" }}>
+                  {editing ? "Edit Template" : "New Template"}
+                </h2>
+                <p style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2 }}>
+                  Edit name, description, and {isPromptTemplate(form.name) ? "prompt content" : "HTML body"}.
+                </p>
+              </div>
+              <button onClick={closeEditor} className="btn-ghost" aria-label="Close" style={{ borderRadius: 6 }}>
+                <X style={{ width: 14, height: 14 }} />
               </button>
             </div>
 
-            <div className="p-5 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+            <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 16 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
                 <div>
-                  <label className="block text-[12px] font-medium text-neutral-400 mb-1.5">Name</label>
+                  <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "var(--text-secondary)", marginBottom: 6 }}>
+                    Name
+                  </label>
                   <input
                     value={form.name}
                     onChange={(e) => setForm({ ...form, name: e.target.value })}
                     placeholder="e.g. pipeline_intro_prompt"
-                    className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-[13px] text-white placeholder:text-neutral-600 focus:border-neutral-600 focus:outline-none"
+                    className="search-input"
+                    style={{ width: "100%", paddingLeft: 12, backgroundImage: "none" }}
                   />
                 </div>
                 <div>
-                  <label className="block text-[12px] font-medium text-neutral-400 mb-1.5">Description</label>
+                  <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "var(--text-secondary)", marginBottom: 6 }}>
+                    Description
+                  </label>
                   <input
                     value={form.subject}
                     onChange={(e) => setForm({ ...form, subject: e.target.value })}
                     placeholder="What this template does"
-                    className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-[13px] text-white placeholder:text-neutral-600 focus:border-neutral-600 focus:outline-none"
+                    className="search-input"
+                    style={{ width: "100%", paddingLeft: 12, backgroundImage: "none" }}
                   />
                 </div>
               </div>
 
               {isPromptTemplate(form.name) && (
-                <div className="rounded-lg bg-blue-500/10 border border-blue-500/20 px-3 py-2">
-                  <p className="text-[11px] text-blue-400">
-                    Pipeline prompt template. Use <code className="bg-blue-500/20 px-1 rounded">{"{{title}}"}</code> and <code className="bg-blue-500/20 px-1 rounded">{"{{abstract}}"}</code> as placeholders.
+                <div style={{ borderRadius: 8, background: "var(--blue-bg)", border: "1px solid #BFDBFE", padding: "8px 12px" }}>
+                  <p style={{ fontSize: 11, color: "var(--blue)" }}>
+                    Pipeline prompt template. Use{" "}
+                    <code style={{ background: "rgba(37,99,235,0.12)", padding: "1px 4px", borderRadius: 4 }}>
+                      {"{{title}}"}
+                    </code>{" "}
+                    and{" "}
+                    <code style={{ background: "rgba(37,99,235,0.12)", padding: "1px 4px", borderRadius: 4 }}>
+                      {"{{abstract}}"}
+                    </code>{" "}
+                    as placeholders.
                   </p>
                 </div>
               )}
 
               <div>
-                <label className="block text-[12px] font-medium text-neutral-400 mb-1.5">
+                <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "var(--text-secondary)", marginBottom: 6 }}>
                   {isPromptTemplate(form.name) ? "Prompt" : "HTML Content"}
                 </label>
                 <textarea
                   value={form.html}
                   onChange={(e) => setForm({ ...form, html: e.target.value })}
                   rows={16}
-                  className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-[13px] text-white placeholder:text-neutral-600 focus:border-neutral-600 focus:outline-none resize-none font-mono leading-relaxed"
+                  style={{
+                    width: "100%",
+                    borderRadius: "var(--radius-sm)",
+                    border: "1px solid var(--border)",
+                    background: "var(--bg)",
+                    padding: "10px 12px",
+                    fontSize: 13,
+                    color: "var(--text)",
+                    outline: "none",
+                    resize: "none",
+                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                    lineHeight: 1.6,
+                  }}
                 />
               </div>
 
               {/* Test Output for prompt templates */}
               {isPromptTemplate(form.name) && (
                 <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="text-[12px] font-medium text-neutral-400">Test Output</label>
-                    <button
-                      onClick={handleTest}
-                      disabled={testing || !form.html}
-                      className="flex items-center gap-1.5 rounded-lg border border-neutral-700 px-3 py-1 text-[11px] text-neutral-300 hover:text-white hover:bg-neutral-800 disabled:opacity-40 transition-colors"
-                    >
-                      {testing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Zap className="h-3 w-3" />}
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                    <label style={{ fontSize: 12, fontWeight: 500, color: "var(--text-secondary)" }}>Test Output</label>
+                    <button onClick={handleTest} disabled={testing || !form.html} className="btn">
+                      {testing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Zap />}
                       {testing ? "Running..." : "Test with sample paper"}
                     </button>
                   </div>
                   {testPaper && (
-                    <p className="text-[11px] text-neutral-500 mb-2">Sample: {testPaper}</p>
+                    <p style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 8 }}>Sample: {testPaper}</p>
                   )}
-                  <div className="rounded-lg border border-neutral-800 bg-neutral-900/50 px-4 py-3 min-h-[60px]">
+                  <div style={{
+                    borderRadius: "var(--radius-sm)",
+                    border: "1px solid var(--border)",
+                    background: "var(--bg)",
+                    padding: "12px 16px",
+                    minHeight: 60,
+                  }}>
                     {testOutput ? (
-                      <p className={`text-[13px] leading-relaxed ${testOutput.startsWith("Error") ? "text-red-400" : "text-neutral-300"}`}>
+                      <p style={{
+                        fontSize: 13, lineHeight: 1.6,
+                        color: testOutput.startsWith("Error") ? "var(--coral)" : "var(--text)",
+                      }}>
                         {testOutput}
                       </p>
                     ) : (
-                      <p className="text-[12px] text-neutral-600 italic">
+                      <p style={{ fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic" }}>
                         Click &quot;Test with sample paper&quot; to preview
                       </p>
                     )}
@@ -279,14 +316,14 @@ export default function TemplatesPage() {
               )}
             </div>
 
-            <div className="flex justify-end gap-3 border-t border-neutral-800 px-5 py-4">
-              <button onClick={closeEditor} className="rounded-lg border border-neutral-700 px-4 py-2 text-[13px] font-medium text-neutral-300 hover:bg-neutral-800">
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, borderTop: "1px solid var(--border-light)", padding: "16px 20px" }}>
+              <button onClick={closeEditor} className="btn">
                 Cancel
               </button>
               <button
                 onClick={handleSave}
                 disabled={!form.name || !form.subject || !form.html}
-                className="rounded-lg bg-white px-4 py-2 text-[13px] font-medium text-black hover:bg-neutral-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                className="btn btn-primary"
               >
                 {editing ? "Update" : "Create"}
               </button>
@@ -297,16 +334,30 @@ export default function TemplatesPage() {
 
       {/* Preview Modal */}
       {previewing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="w-full max-w-2xl rounded-xl border border-neutral-800 bg-neutral-950 shadow-2xl max-h-[90vh] overflow-auto">
-            <div className="flex items-center justify-between border-b border-neutral-800 px-5 py-4">
-              <h2 className="text-[15px] font-semibold text-white">{previewing.name}</h2>
-              <button onClick={() => setPreviewing(null)} className="text-neutral-400 hover:text-white">
-                <X className="h-4 w-4" />
+        <div
+          style={{
+            position: "fixed", inset: 0, zIndex: 50,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            background: "rgba(10,10,10,0.4)", backdropFilter: "blur(6px)",
+          }}
+        >
+          <div
+            style={{
+              width: "100%", maxWidth: 672, maxHeight: "90vh", overflow: "auto",
+              borderRadius: "var(--radius)", border: "1px solid var(--border)",
+              background: "var(--card)", boxShadow: "var(--shadow-md)",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid var(--border-light)", padding: "16px 20px" }}>
+              <h2 style={{ fontFamily: "var(--font-heading)", fontSize: 16, fontWeight: 600, color: "var(--text)", letterSpacing: "-0.01em" }}>
+                {previewing.name}
+              </h2>
+              <button onClick={() => setPreviewing(null)} className="btn" style={{ background: "transparent", border: "none", padding: 4 }}>
+                <X />
               </button>
             </div>
             {isPromptTemplate(previewing.name) ? (
-              <pre className="p-5 text-[12px] text-neutral-300 whitespace-pre-wrap font-mono leading-relaxed">
+              <pre style={{ padding: 20, fontSize: 12, color: "var(--text)", whiteSpace: "pre-wrap", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", lineHeight: 1.6 }}>
                 {previewing.html}
               </pre>
             ) : (
@@ -318,36 +369,61 @@ export default function TemplatesPage() {
 
       {/* Template List */}
       {loading ? (
-        <div className="text-center text-sm text-neutral-500 py-12 animate-pulse">Loading...</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="skeleton" style={{ height: 84 }} />
+          ))}
+        </div>
       ) : templates.length === 0 ? (
-        <div className="rounded-xl border border-neutral-800 bg-neutral-900/50 p-12 text-center">
-          <FileText className="h-10 w-10 mx-auto mb-3 text-neutral-600" />
-          <p className="text-sm text-neutral-500">Loading default templates...</p>
+        <div className="section-card" style={{ padding: 48, textAlign: "center" }}>
+          <FileText style={{ width: 40, height: 40, color: "var(--text-tertiary)", margin: "0 auto 12px" }} />
+          <p style={{ fontSize: 13, color: "var(--text-tertiary)" }}>Loading default templates...</p>
         </div>
       ) : (
-        <div className="space-y-3">
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           {templates.map((template) => (
-            <div key={template.id} className="rounded-xl border border-neutral-800 bg-neutral-900/50 p-5 hover:border-neutral-700 transition-colors">
-              <div className="flex items-center justify-between">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <h3 className="text-[14px] font-semibold text-white">{template.name}</h3>
+            <div key={template.id} className="lead-card" style={{ padding: 20 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                    <h3 style={{ fontFamily: "var(--font-heading)", fontSize: 16, fontWeight: 600, color: "var(--text)", letterSpacing: "-0.01em" }}>
+                      {template.name}
+                    </h3>
                     {isPromptTemplate(template.name) && (
-                      <span className="rounded-full bg-blue-500/20 px-2 py-0.5 text-[10px] font-medium text-blue-400">AI Prompt</span>
+                      <span className="badge-status new" style={{ padding: "2px 10px" }}>
+                        AI Prompt
+                      </span>
                     )}
                   </div>
-                  <p className="text-[12px] text-neutral-500">{template.subject}</p>
-                  <span className="text-[11px] text-neutral-600 mt-1 inline-block">Updated {formatDate(template.updatedAt)}</span>
+                  <p style={{ fontSize: 12.5, color: "var(--text-secondary)" }}>{template.subject}</p>
+                  <span style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 4, display: "inline-block" }}>
+                    Updated {formatDate(template.updatedAt)}
+                  </span>
                 </div>
-                <div className="flex items-center gap-1 flex-shrink-0 ml-4">
-                  <button onClick={() => setPreviewing(template)} className="p-2 rounded-md text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors" title="Preview">
-                    <Eye className="h-4 w-4" />
+                <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0, marginLeft: 16 }}>
+                  <button
+                    onClick={() => setPreviewing(template)}
+                    className="btn"
+                    style={{ background: "transparent", border: "none", padding: 8 }}
+                    title="Preview"
+                  >
+                    <Eye />
                   </button>
-                  <button onClick={() => openEditor(template)} className="p-2 rounded-md text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors" title="Edit">
-                    <Pencil className="h-4 w-4" />
+                  <button
+                    onClick={() => openEditor(template)}
+                    className="btn"
+                    style={{ background: "transparent", border: "none", padding: 8 }}
+                    title="Edit"
+                  >
+                    <Pencil />
                   </button>
-                  <button onClick={() => handleDelete(template.id)} className="p-2 rounded-md text-neutral-400 hover:text-red-400 hover:bg-neutral-800 transition-colors" title="Delete">
-                    <Trash2 className="h-4 w-4" />
+                  <button
+                    onClick={() => handleDelete(template.id)}
+                    className="btn"
+                    style={{ background: "transparent", border: "none", padding: 8, color: "var(--coral)" }}
+                    title="Delete"
+                  >
+                    <Trash2 />
                   </button>
                 </div>
               </div>

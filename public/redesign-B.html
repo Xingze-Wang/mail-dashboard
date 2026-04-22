@@ -1,0 +1,2008 @@
+<!DOCTYPE html>
+<!--
+  DESIGN NOTES — Redesign B: "Kanban / source columns"
+
+  Three key decisions:
+
+  1. SOURCES ARE COLUMNS, STAGES ARE BANDS WITHIN.
+     Most pipeline boards make stage = column. But here the operator's first
+     question is "what's happening on each source?" — sources have different
+     shapes (arXiv has email, HF/GH/PH don't). So sources own the columns,
+     and inside each column, leads are grouped vertically into stage bands
+     (Discovered → Enriching → Ready → Sent → Replied). The bands let you
+     scan one source's funnel top-to-bottom, while the columns let you
+     compare sources left-to-right at a glance.
+
+  2. CARD SHAPE FOLLOWS SOURCE, NOT A SCHEMA.
+     arXiv cards lead with the paper title (the asset). HF/GH cards lead with
+     the @username and a score meter (the signal). PH cards lead with the
+     product name + launch date. A "discovered, no email" card is visibly
+     incomplete — dashed border, ghost email row, prominent "Find email"
+     CTA — so the eye snaps to the bottleneck. Source-brand color stripes
+     on the column header (and a thin stripe on each card top) reinforce
+     where you are without needing to read.
+
+  3. DRAG IS THE METAPHOR, NOT JUST THE INTERACTION.
+     Every card has a grip handle, subtle lift on hover, and a faint shadow
+     so it reads as a physical token. The "Promote to pipeline" action
+     (moving a discovered HF/GH/PH lead into the arXiv-style ready flow once
+     an email is found) is shown as a card in mid-flight between bands.
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pipeline Board — Miracle Mail</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    /* Surfaces */
+    --bg: #0E1014;
+    --bg-elev: #14171D;
+    --board: #16191F;
+    --col: #1B1F26;
+    --col-head: #20242C;
+    --card: #232831;
+    --card-hover: #2A303A;
+    --line: #2D333E;
+    --line-soft: #242932;
+
+    /* Text */
+    --t1: #ECEEF2;
+    --t2: #A8B0BD;
+    --t3: #6B7280;
+    --t4: #4B5260;
+
+    /* Source brand colors */
+    --arxiv: #B31B1B;
+    --arxiv-soft: #3A1818;
+    --hf: #FFD21E;
+    --hf-soft: #3A3413;
+    --gh: #8B95A1;
+    --gh-soft: #2C313B;
+    --ph: #DA552F;
+    --ph-soft: #3A1F15;
+
+    /* Stage colors */
+    --discovered: #6B7280;
+    --enriching:  #A78BFA;
+    --ready:      #38BDF8;
+    --sent:       #F59E0B;
+    --replied:    #34D399;
+
+    /* Tier */
+    --strong: #F59E0B;
+    --normal: #6B7280;
+
+    --r: 8px;
+    --r-sm: 5px;
+    --r-lg: 12px;
+
+    --font: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    --mono: 'JetBrains Mono', ui-monospace, monospace;
+  }
+
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--t1);
+    -webkit-font-smoothing: antialiased;
+    font-size: 13px;
+    line-height: 1.45;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── Top Bar ─────────────────────────────────── */
+  .topbar {
+    height: 52px;
+    background: var(--bg-elev);
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    gap: 16px;
+    position: sticky;
+    top: 0;
+    z-index: 50;
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 700;
+    font-size: 14px;
+    letter-spacing: -0.01em;
+  }
+  .brand-mark {
+    width: 22px; height: 22px;
+    border-radius: 5px;
+    background: linear-gradient(135deg, #38BDF8 0%, #A78BFA 100%);
+    display: grid; place-items: center;
+    font-size: 11px;
+    color: #0E1014;
+    font-weight: 800;
+  }
+  .brand-sep { color: var(--t4); font-weight: 400; }
+  .brand-page { color: var(--t2); font-weight: 500; }
+
+  .topbar-divider {
+    width: 1px; height: 20px; background: var(--line);
+  }
+
+  .search {
+    flex: 1;
+    max-width: 380px;
+    position: relative;
+  }
+  .search input {
+    width: 100%;
+    height: 32px;
+    background: var(--col);
+    border: 1px solid var(--line);
+    color: var(--t1);
+    border-radius: var(--r-sm);
+    padding: 0 12px 0 32px;
+    font-family: inherit;
+    font-size: 12.5px;
+    outline: none;
+  }
+  .search input::placeholder { color: var(--t3); }
+  .search svg {
+    position: absolute;
+    left: 10px; top: 50%; transform: translateY(-50%);
+    width: 14px; height: 14px;
+    color: var(--t3);
+  }
+  .search kbd {
+    position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--t3);
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 1px 5px;
+  }
+
+  .filter-group { display: flex; align-items: center; gap: 6px; }
+
+  .pill {
+    height: 30px;
+    background: var(--col);
+    border: 1px solid var(--line);
+    color: var(--t2);
+    border-radius: var(--r-sm);
+    padding: 0 10px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: 0.15s;
+  }
+  .pill:hover { background: var(--card-hover); color: var(--t1); border-color: #3A4250; }
+  .pill .pill-label { color: var(--t3); }
+  .pill .pill-val { color: var(--t1); font-weight: 600; }
+  .pill svg { width: 12px; height: 12px; opacity: 0.6; }
+
+  .rep-stack {
+    display: flex;
+    align-items: center;
+    background: var(--col);
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    padding: 2px;
+    gap: 2px;
+  }
+  .rep-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 9px;
+    font-size: 11.5px;
+    font-weight: 500;
+    color: var(--t2);
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .rep-chip:hover { background: var(--card); color: var(--t1); }
+  .rep-chip.active { background: var(--card); color: var(--t1); font-weight: 600; }
+  .rep-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+  }
+  .rep-leo { background: #38BDF8; }
+  .rep-ethan { background: #34D399; }
+  .rep-chenyu { background: #F472B6; }
+  .rep-all-dot {
+    background: linear-gradient(135deg, #38BDF8, #34D399 50%, #F472B6);
+  }
+
+  .btn {
+    height: 30px;
+    padding: 0 12px;
+    border-radius: var(--r-sm);
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    border: 1px solid var(--line);
+    background: var(--col);
+    color: var(--t1);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: 0.15s;
+  }
+  .btn:hover { background: var(--card-hover); border-color: #3A4250; }
+  .btn-primary {
+    background: linear-gradient(180deg, #38BDF8 0%, #0EA5E9 100%);
+    color: #0B1722;
+    border-color: #0EA5E9;
+  }
+  .btn-primary:hover { filter: brightness(1.08); }
+  .btn svg { width: 13px; height: 13px; }
+
+  .topbar-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+
+  .me-avatar {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: linear-gradient(135deg, #38BDF8, #A78BFA);
+    display: grid; place-items: center;
+    color: #0E1014;
+    font-weight: 700;
+    font-size: 11px;
+    cursor: pointer;
+  }
+
+  /* ── Board summary strip ─────────────────────── */
+  .summary {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    padding: 14px 20px 0;
+  }
+  .sum-card {
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: var(--r);
+    padding: 12px 14px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    position: relative;
+    overflow: hidden;
+  }
+  .sum-card::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+  }
+  .sum-arxiv::before { background: var(--arxiv); }
+  .sum-hf::before { background: var(--hf); }
+  .sum-gh::before { background: var(--gh); }
+  .sum-ph::before { background: var(--ph); }
+
+  .sum-icon {
+    width: 32px; height: 32px;
+    border-radius: 7px;
+    display: grid; place-items: center;
+    font-weight: 700;
+    font-size: 13px;
+  }
+  .sum-icon.arxiv { background: var(--arxiv-soft); color: #FF6B6B; }
+  .sum-icon.hf { background: var(--hf-soft); color: var(--hf); }
+  .sum-icon.gh { background: var(--gh-soft); color: var(--t1); }
+  .sum-icon.ph { background: var(--ph-soft); color: var(--ph); }
+
+  .sum-meta { flex: 1; min-width: 0; }
+  .sum-label {
+    font-size: 11px;
+    color: var(--t3);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 600;
+  }
+  .sum-value {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--t1);
+    margin-top: 2px;
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+  }
+  .sum-value small {
+    font-size: 11px;
+    color: var(--t3);
+    font-weight: 500;
+  }
+  .sum-bars {
+    display: flex;
+    gap: 2px;
+    margin-top: 6px;
+    height: 4px;
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .sum-bar { height: 100%; }
+  .sum-bar.b-disc { background: var(--discovered); }
+  .sum-bar.b-enr  { background: var(--enriching); }
+  .sum-bar.b-rdy  { background: var(--ready); }
+  .sum-bar.b-snt  { background: var(--sent); }
+  .sum-bar.b-rep  { background: var(--replied); }
+
+  /* ── Board ───────────────────────────────────── */
+  .board {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(280px, 1fr));
+    gap: 12px;
+    padding: 14px 20px 40px;
+    align-items: start;
+  }
+
+  .col {
+    background: var(--col);
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    display: flex;
+    flex-direction: column;
+    min-height: 70vh;
+    position: relative;
+  }
+  .col-head {
+    padding: 14px 14px 12px;
+    border-bottom: 1px solid var(--line-soft);
+    background: var(--col-head);
+    border-radius: var(--r-lg) var(--r-lg) 0 0;
+    position: sticky;
+    top: 52px;
+    z-index: 10;
+  }
+  .col-head-top {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 10px;
+  }
+  .col-icon {
+    width: 26px; height: 26px;
+    border-radius: 6px;
+    display: grid; place-items: center;
+    font-size: 12px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  .col-icon.arxiv { background: var(--arxiv); color: #fff; }
+  .col-icon.hf { background: var(--hf); color: #2C2200; }
+  .col-icon.gh { background: var(--gh); color: #1B1F26; }
+  .col-icon.ph { background: var(--ph); color: #fff; }
+
+  .col-title { font-size: 14px; font-weight: 700; letter-spacing: -0.01em; }
+  .col-count {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--t3);
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 1px 7px;
+    margin-left: auto;
+  }
+  .col-action {
+    width: 26px; height: 26px;
+    background: var(--col);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    display: grid; place-items: center;
+    cursor: pointer;
+    color: var(--t2);
+  }
+  .col-action:hover { color: var(--t1); border-color: #3A4250; }
+  .col-action svg { width: 13px; height: 13px; }
+
+  .col-stages {
+    display: flex;
+    gap: 6px;
+    font-size: 10.5px;
+    font-family: var(--mono);
+  }
+  .col-stage-mini {
+    flex: 1;
+    text-align: center;
+    padding: 4px 0;
+    border-radius: 4px;
+    background: var(--bg);
+    color: var(--t3);
+    cursor: pointer;
+    border: 1px solid transparent;
+  }
+  .col-stage-mini b { color: var(--t1); margin-right: 4px; font-family: var(--font); font-weight: 700; }
+  .col-stage-mini:hover { border-color: var(--line); color: var(--t2); }
+
+  .col-body {
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    flex: 1;
+  }
+
+  /* ── Stage Band ──────────────────────────────── */
+  .band-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 4px 6px;
+    text-transform: uppercase;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    font-weight: 700;
+    color: var(--t3);
+  }
+  .band-head .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+  }
+  .band-head .dot.discovered { background: var(--discovered); }
+  .band-head .dot.enriching { background: var(--enriching); }
+  .band-head .dot.ready { background: var(--ready); }
+  .band-head .dot.sent { background: var(--sent); }
+  .band-head .dot.replied { background: var(--replied); }
+  .band-head .count {
+    margin-left: auto;
+    font-family: var(--mono);
+    color: var(--t4);
+  }
+  .band-head .add {
+    width: 16px; height: 16px;
+    display: grid; place-items: center;
+    color: var(--t4);
+    cursor: pointer;
+    border-radius: 3px;
+  }
+  .band-head .add:hover { background: var(--card); color: var(--t1); }
+
+  .band {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+
+  /* ── Card ────────────────────────────────────── */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r);
+    padding: 10px 11px 10px 11px;
+    cursor: grab;
+    position: relative;
+    transition: transform 0.12s ease, border-color 0.12s, box-shadow 0.12s;
+    overflow: hidden;
+  }
+  .card:hover {
+    background: var(--card-hover);
+    border-color: #3A4250;
+    transform: translateY(-1px);
+    box-shadow: 0 6px 14px -4px rgba(0,0,0,0.5), 0 2px 4px rgba(0,0,0,0.3);
+  }
+  .card:active { cursor: grabbing; }
+
+  .card-stripe {
+    position: absolute;
+    left: 0; right: 0; top: 0;
+    height: 2px;
+  }
+  .stripe-arxiv { background: var(--arxiv); }
+  .stripe-hf { background: var(--hf); }
+  .stripe-gh { background: var(--gh); }
+  .stripe-ph { background: var(--ph); }
+
+  .card.discovered {
+    border-style: dashed;
+    background: linear-gradient(180deg, var(--card) 0%, rgba(35,40,49,0.6) 100%);
+  }
+
+  .card-grip {
+    position: absolute;
+    top: 8px; right: 8px;
+    color: var(--t4);
+    cursor: grab;
+    opacity: 0;
+    transition: 0.15s;
+  }
+  .card:hover .card-grip { opacity: 1; }
+
+  .card-meta-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+    font-size: 10.5px;
+    color: var(--t3);
+    font-family: var(--mono);
+  }
+  .card-id { color: var(--t4); }
+  .card-spacer { flex: 1; }
+
+  .tier-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 9.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-family: var(--font);
+  }
+  .tier-strong {
+    background: rgba(245,158,11,0.12);
+    color: var(--strong);
+    border: 1px solid rgba(245,158,11,0.3);
+  }
+  .tier-normal {
+    background: rgba(107,114,128,0.12);
+    color: var(--t2);
+    border: 1px solid rgba(107,114,128,0.3);
+  }
+  .tier-strong::before {
+    content: '★';
+    font-size: 9px;
+  }
+
+  .card-title {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--t1);
+    line-height: 1.35;
+    margin-bottom: 6px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .card-author {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11.5px;
+    color: var(--t2);
+    margin-bottom: 8px;
+  }
+  .author-avatar {
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #4F46E5, #A78BFA);
+    color: #fff;
+    display: grid; place-items: center;
+    font-size: 9px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  .author-avatar.alt { background: linear-gradient(135deg, #0EA5E9, #38BDF8); }
+  .author-avatar.alt2 { background: linear-gradient(135deg, #F59E0B, #FBBF24); color: #2C2200; }
+  .author-avatar.alt3 { background: linear-gradient(135deg, #10B981, #34D399); color: #052E1F; }
+  .author-avatar.alt4 { background: linear-gradient(135deg, #EC4899, #F472B6); }
+
+  .author-name { font-weight: 500; color: var(--t1); }
+  .author-org {
+    color: var(--t3);
+    font-size: 11px;
+    margin-left: auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 110px;
+  }
+
+  /* HF/GH username heading */
+  .card-handle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+  }
+  .handle-text {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--t1);
+  }
+  .handle-text .at { color: var(--t3); }
+
+  .card-bio {
+    font-size: 11.5px;
+    color: var(--t2);
+    line-height: 1.4;
+    margin-bottom: 8px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  /* Score meter */
+  .score-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .score-meter {
+    flex: 1;
+    height: 4px;
+    background: var(--bg);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .score-fill {
+    height: 100%;
+    border-radius: 2px;
+  }
+  .score-high { background: linear-gradient(90deg, #34D399, #10B981); }
+  .score-mid { background: linear-gradient(90deg, #FBBF24, #F59E0B); }
+  .score-low { background: linear-gradient(90deg, #94A3B8, #6B7280); }
+
+  .score-val {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--t1);
+    min-width: 30px;
+    text-align: right;
+  }
+
+  /* Signals chips */
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-bottom: 8px;
+  }
+  .chip {
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    background: rgba(56,189,248,0.1);
+    color: #7DD3FC;
+    border: 1px solid rgba(56,189,248,0.18);
+    font-weight: 500;
+  }
+  .chip.cn {
+    background: rgba(244,114,182,0.1);
+    color: #F9A8D4;
+    border-color: rgba(244,114,182,0.18);
+  }
+  .chip.org {
+    background: rgba(167,139,250,0.1);
+    color: #C4B5FD;
+    border-color: rgba(167,139,250,0.18);
+  }
+
+  /* Email row */
+  .email-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 7px;
+    background: var(--bg);
+    border-radius: 4px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--t2);
+    margin-bottom: 7px;
+    border: 1px solid var(--line-soft);
+  }
+  .email-row svg { width: 11px; height: 11px; color: var(--t3); flex-shrink: 0; }
+  .email-row .email-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+  }
+
+  .email-row.ghost {
+    color: var(--t4);
+    background: transparent;
+    border: 1px dashed var(--line);
+    font-style: italic;
+  }
+
+  /* Find email CTA */
+  .cta {
+    width: 100%;
+    height: 26px;
+    background: rgba(56,189,248,0.08);
+    border: 1px solid rgba(56,189,248,0.25);
+    color: #7DD3FC;
+    border-radius: 5px;
+    font-family: inherit;
+    font-size: 11.5px;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    transition: 0.15s;
+  }
+  .cta:hover { background: rgba(56,189,248,0.16); color: #BAE6FD; }
+  .cta svg { width: 11px; height: 11px; }
+  .cta.ph {
+    background: rgba(218,85,47,0.08);
+    border-color: rgba(218,85,47,0.25);
+    color: #FCA67E;
+  }
+  .cta.ph:hover { background: rgba(218,85,47,0.16); }
+
+  /* Card footer */
+  .card-foot {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10.5px;
+    color: var(--t3);
+    margin-top: 2px;
+    padding-top: 7px;
+    border-top: 1px dashed var(--line-soft);
+  }
+  .card-foot svg { width: 11px; height: 11px; }
+  .card-foot .rep {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
+    color: var(--t2);
+    font-weight: 500;
+  }
+  .card-foot .rep .rep-dot { width: 6px; height: 6px; }
+
+  .reply-snippet {
+    font-size: 11px;
+    color: #6EE7B7;
+    background: rgba(52,211,153,0.06);
+    border-left: 2px solid var(--replied);
+    padding: 5px 7px;
+    border-radius: 3px;
+    margin-top: 5px;
+    font-style: italic;
+  }
+
+  .draft-preview {
+    font-size: 10.5px;
+    color: var(--t3);
+    background: var(--bg);
+    border: 1px solid var(--line-soft);
+    border-radius: 4px;
+    padding: 5px 7px;
+    margin-top: 4px;
+    line-height: 1.4;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .draft-preview .lbl {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    color: var(--t4);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 600;
+    margin-right: 4px;
+  }
+
+  /* Promote ghost */
+  .card-promote {
+    border: 1px dashed #38BDF8;
+    background: rgba(56,189,248,0.04);
+    transform: rotate(-1.5deg);
+    box-shadow: 0 8px 18px -4px rgba(56,189,248,0.25), 0 4px 8px rgba(0,0,0,0.4);
+  }
+  .promote-tag {
+    position: absolute;
+    top: -8px;
+    right: 8px;
+    background: #38BDF8;
+    color: #0B1722;
+    font-size: 9.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 2px 7px;
+    border-radius: 3px;
+    transform: rotate(1.5deg);
+  }
+
+  /* Footer chrome of column */
+  .col-foot {
+    padding: 8px 10px 10px;
+    border-top: 1px solid var(--line-soft);
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    font-size: 11px;
+    color: var(--t3);
+  }
+  .col-foot svg { width: 12px; height: 12px; }
+  .col-foot a { color: var(--t2); cursor: pointer; }
+  .col-foot a:hover { color: var(--t1); }
+
+  /* Time pill */
+  .time-pill {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--t3);
+  }
+
+  /* Status pill in meta-row */
+  .status {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 9.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-family: var(--font);
+  }
+  .s-discovered { background: rgba(107,114,128,0.15); color: #B0B7C2; }
+  .s-enriching { background: rgba(167,139,250,0.15); color: #C4B5FD; }
+  .s-ready { background: rgba(56,189,248,0.15); color: #7DD3FC; }
+  .s-sent { background: rgba(245,158,11,0.15); color: #FCD34D; }
+  .s-replied { background: rgba(52,211,153,0.15); color: #6EE7B7; }
+
+  /* Subtle grid background on board */
+  .board-wrap {
+    background:
+      radial-gradient(circle at 30% 0%, rgba(56,189,248,0.04) 0, transparent 50%),
+      radial-gradient(circle at 70% 0%, rgba(167,139,250,0.04) 0, transparent 50%),
+      var(--bg);
+    min-height: calc(100vh - 52px);
+  }
+
+</style>
+</head>
+<body>
+
+<!-- ─── TOP BAR ─────────────────────────────────────────── -->
+<div class="topbar">
+  <div class="brand">
+    <div class="brand-mark">M</div>
+    <span>Miracle Mail</span>
+    <span class="brand-sep">/</span>
+    <span class="brand-page">Pipeline</span>
+  </div>
+
+  <div class="topbar-divider"></div>
+
+  <div class="search">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+    <input placeholder="Search authors, repos, papers, products…">
+    <kbd>⌘K</kbd>
+  </div>
+
+  <div class="filter-group">
+    <div class="rep-stack">
+      <span class="rep-chip active"><span class="rep-dot rep-all-dot"></span>All</span>
+      <span class="rep-chip"><span class="rep-dot rep-leo"></span>Leo</span>
+      <span class="rep-chip"><span class="rep-dot rep-ethan"></span>Ethan</span>
+      <span class="rep-chip"><span class="rep-dot rep-chenyu"></span>Chenyu</span>
+    </div>
+
+    <button class="pill">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+      <span class="pill-label">Range:</span><span class="pill-val">Last 14d</span>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+    </button>
+
+    <button class="pill">
+      <span class="pill-label">Tier:</span><span class="pill-val">All</span>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+    </button>
+  </div>
+
+  <div class="topbar-right">
+    <button class="btn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+      Add lead
+    </button>
+    <button class="btn btn-primary">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+      Scan all sources
+    </button>
+    <div class="me-avatar">XW</div>
+  </div>
+</div>
+
+<div class="board-wrap">
+
+  <!-- ─── SUMMARY STRIP ─────────────────────────────── -->
+  <div class="summary">
+    <div class="sum-card sum-arxiv">
+      <div class="sum-icon arxiv">aX</div>
+      <div class="sum-meta">
+        <div class="sum-label">arXiv</div>
+        <div class="sum-value">12 <small>active · 4 ready</small></div>
+        <div class="sum-bars">
+          <div class="sum-bar b-disc" style="width:0%"></div>
+          <div class="sum-bar b-enr"  style="width:0%"></div>
+          <div class="sum-bar b-rdy"  style="width:33%"></div>
+          <div class="sum-bar b-snt"  style="width:42%"></div>
+          <div class="sum-bar b-rep"  style="width:25%"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sum-card sum-hf">
+      <div class="sum-icon hf">HF</div>
+      <div class="sum-meta">
+        <div class="sum-label">Hugging Face</div>
+        <div class="sum-value">8 <small>active · 1 ready</small></div>
+        <div class="sum-bars">
+          <div class="sum-bar b-disc" style="width:62%"></div>
+          <div class="sum-bar b-enr"  style="width:25%"></div>
+          <div class="sum-bar b-rdy"  style="width:13%"></div>
+          <div class="sum-bar b-snt"  style="width:0%"></div>
+          <div class="sum-bar b-rep"  style="width:0%"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sum-card sum-gh">
+      <div class="sum-icon gh">GH</div>
+      <div class="sum-meta">
+        <div class="sum-label">GitHub</div>
+        <div class="sum-value">6 <small>active · 1 sent</small></div>
+        <div class="sum-bars">
+          <div class="sum-bar b-disc" style="width:50%"></div>
+          <div class="sum-bar b-enr"  style="width:33%"></div>
+          <div class="sum-bar b-rdy"  style="width:0%"></div>
+          <div class="sum-bar b-snt"  style="width:17%"></div>
+          <div class="sum-bar b-rep"  style="width:0%"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sum-card sum-ph">
+      <div class="sum-icon ph">PH</div>
+      <div class="sum-meta">
+        <div class="sum-label">Product Hunt</div>
+        <div class="sum-value">4 <small>active · all need email</small></div>
+        <div class="sum-bars">
+          <div class="sum-bar b-disc" style="width:100%"></div>
+          <div class="sum-bar b-enr"  style="width:0%"></div>
+          <div class="sum-bar b-rdy"  style="width:0%"></div>
+          <div class="sum-bar b-snt"  style="width:0%"></div>
+          <div class="sum-bar b-rep"  style="width:0%"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── BOARD ─────────────────────────────────────── -->
+  <div class="board">
+
+    <!-- ════ COLUMN 1 — ARXIV ════════════════════════ -->
+    <div class="col">
+      <div class="col-head">
+        <div class="col-head-top">
+          <div class="col-icon arxiv">aX</div>
+          <div class="col-title">arXiv</div>
+          <div class="col-count">12</div>
+          <div class="col-action" title="Scan arXiv">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+          </div>
+          <div class="col-action" title="Column menu">
+            <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>
+          </div>
+        </div>
+        <div class="col-stages">
+          <div class="col-stage-mini"><b>0</b>Disc</div>
+          <div class="col-stage-mini"><b>0</b>Enr</div>
+          <div class="col-stage-mini"><b>4</b>Rdy</div>
+          <div class="col-stage-mini"><b>5</b>Snt</div>
+          <div class="col-stage-mini"><b>3</b>Rep</div>
+        </div>
+      </div>
+
+      <div class="col-body">
+
+        <!-- READY band -->
+        <div>
+          <div class="band-head">
+            <span class="dot ready"></span>Ready to send
+            <span class="count">4</span>
+            <span class="add">+</span>
+          </div>
+          <div class="band">
+
+            <div class="card">
+              <div class="card-stripe stripe-arxiv"></div>
+              <svg class="card-grip" viewBox="0 0 16 16" width="12" height="12"><circle cx="5" cy="4" r="1" fill="currentColor"/><circle cx="11" cy="4" r="1" fill="currentColor"/><circle cx="5" cy="8" r="1" fill="currentColor"/><circle cx="11" cy="8" r="1" fill="currentColor"/><circle cx="5" cy="12" r="1" fill="currentColor"/><circle cx="11" cy="12" r="1" fill="currentColor"/></svg>
+              <div class="card-meta-row">
+                <span class="card-id">aX-2847</span>
+                <span class="status s-ready">Ready</span>
+                <span class="card-spacer"></span>
+                <span class="tier-badge tier-strong">Strong</span>
+              </div>
+              <div class="card-title">Scaling Laws for Reward Model Overoptimization in Chinese LLMs</div>
+              <div class="card-author">
+                <div class="author-avatar">WL</div>
+                <span class="author-name">Wenjun Li</span>
+                <span class="author-org">Tsinghua · IIIS</span>
+              </div>
+              <div class="email-row">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><path d="m22 6-10 7L2 6"/></svg>
+                <span class="email-text">wenjun.li@mails.tsinghua.edu.cn</span>
+              </div>
+              <div class="draft-preview">
+                <span class="lbl">DRAFT</span>Hi Wenjun, your work on reward model overoptimization caught my attention — the failure modes you identified mirror what we…
+              </div>
+              <div class="card-foot">
+                <span class="time-pill">2h ago</span>
+                <span class="rep"><span class="rep-dot rep-leo"></span>Leo</span>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-stripe stripe-arxiv"></div>
+              <div class="card-meta-row">
+                <span class="card-id">aX-2841</span>
+                <span class="status s-ready">Ready</span>
+                <span class="card-spacer"></span>
+                <span class="tier-badge tier-normal">Normal</span>
+              </div>
+              <div class="card-title">Long-Context Retrieval-Augmented Generation with Hierarchical Caching</div>
+              <div class="card-author">
+                <div class="author-avatar alt">JZ</div>
+                <span class="author-name">Jiawei Zhao</span>
+                <span class="author-org">SJTU</span>
+              </div>
+              <div class="email-row">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><path d="m22 6-10 7L2 6"/></svg>
+                <span class="email-text">jiawei.zhao@sjtu.edu.cn</span>
+              </div>
+              <div class="card-foot">
+                <span class="time-pill">5h ago</span>
+                <span class="rep"><span class="rep-dot rep-chenyu"></span>Chenyu</span>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-stripe stripe-arxiv"></div>
+              <div class="card-meta-row">
+                <span class="card-id">aX-2839</span>
+                <span class="status s-ready">Ready</span>
+                <span class="card-spacer"></span>
+                <span class="tier-badge tier-normal">Normal</span>
+              </div>
+              <div class="card-title">MoE-Lite: Efficient Mixture-of-Experts Inference on Edge Devices</div>
+              <div class="card-author">
+                <div class="author-avatar alt2">YH</div>
+                <span class="author-name">Yu Han</span>
+                <span class="author-org">Zhejiang U.</span>
+              </div>
+              <div class="email-row">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><path d="m22 6-10 7L2 6"/></svg>
+                <span class="email-text">y.han@zju.edu.cn</span>
+              </div>
+              <div class="card-foot">
+                <span class="time-pill">8h ago</span>
+                <span class="rep"><span class="rep-dot rep-chenyu"></span>Chenyu</span>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-stripe stripe-arxiv"></div>
+              <div class="card-meta-row">
+                <span class="card-id">aX-2832</span>
+                <span class="status s-ready">Ready</span>
+                <span class="card-spacer"></span>
+                <span class="tier-badge tier-strong">Strong</span>
+              </div>
+              <div class="card-title">FlowMatch: Diffusion-Free Image Generation via Continuous Normalizing Flows</div>
+              <div class="card-author">
+                <div class="author-avatar alt3">XC</div>
+                <span class="author-name">Xinyi Chen</span>
+                <span class="author-org">PKU · CFCS</span>
+              </div>
+              <div class="email-row">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><path d="m22 6-10 7L2 6"/></svg>
+                <span class="email-text">xychen@stu.pku.edu.cn</span>
+              </div>
+              <div class="card-foot">
+                <span class="time-pill">12h ago</span>
+                <span class="rep"><span class="rep-dot rep-leo"></span>Leo</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SENT band -->
+        <div>
+          <div class="band-head">
+            <span class="dot sent"></span>Sent · awaiting reply
+            <span class="count">5</span>
+            <span class="add">+</span>
+          </div>
+          <div class="band">
+
+            <div class="card">
+              <div class="card-stripe stripe-arxiv"></div>
+              <div class="card-meta-row">
+                <span class="card-id">aX-2820</span>
+                <span class="status s-sent">Sent</span>
+                <span class="card-spacer"></span>
+                <span class="tier-badge tier-strong">Strong</span>
+              </div>
+              <div class="card-title">Self-Rewarding Code Models for Competition-Level Programming</div>
+              <div class="card-author">
+                <div class="author-avatar alt4">QS</div>
+                <span class="author-name">Qing Sun</span>
+                <span class="author-org">DeepSeek</span>
+              </div>
+              <div class="card-foot">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2 11 13"/><path d="m22 2-7 20-4-9-9-4 20-7z"/></svg>
+                <span>Sent 2d ago</span>
+                <span class="rep"><span class="rep-dot rep-leo"></span>Leo</span>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-stripe stripe-arxiv"></div>
+              <div class="card-meta-row">
+                <span class="card-id">aX-2818</span>
+                <span class="status s-sent">Sent</span>
+                <span class="card-spacer"></span>
+                <span class="tier-badge tier-normal">Normal</span>
+              </div>
+              <div class="card-title">Chain-of-Verification for Reducing Hallucination in Long-Form QA</div>
+              <div class="card-author">
+                <div class="author-avatar">RW</div>
+                <span class="author-name">Ruiqi Wang</span>
+                <span class="author-org">USTC</span>
+              </div>
+              <div class="card-foot">
+                <span>Sent 3d ago</span>
+                <span class="rep"><span class="rep-dot rep-chenyu"></span>Chenyu</span>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-stripe stripe-arxiv"></div>
+              <div class="card-meta-row">
+                <span class="card-id">aX-2811</span>
+                <span class="status s-sent">Sent</span>
+                <span class="card-spacer"></span>
+                <span class="tier-badge tier-normal">Normal</span>
+              </div>
+              <div class="card-title">Multi-Agent Debate for Mathematical Reasoning in 7B Models</div>
+              <div class="card-author">
+                <div class="author-avatar alt2">HG</div>
+                <span class="author-name">Hao Guo</span>
+                <span class="author-org">Fudan U.</span>
+              </div>
+              <div class="card-foot">
+                <span>Sent 4d ago</span>
+                <span class="rep"><span class="rep-dot rep-chenyu"></span>Chenyu</span>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-stripe stripe-arxiv"></div>
+              <div class="card-meta-row">
+                <span class="card-id">aX-2805</span>
+                <span class="status s-sent">Sent</span>
+                <span class="card-spacer"></span>
+                <span class="tier-badge tier-normal">Normal</span>
+              </div>
+              <div class="card-title">Distillation of Vision-Language Models for Mobile Inference</div>
+              <div class="card-author">
+                <div class="author-avatar alt3">LM</div>
+                <span class="author-name">Lin Ma</span>
+                <span class="author-org">CUHK-SZ</span>
+              </div>
+              <div class="card-foot">
+                <span>Sent 5d ago</span>
+                <span class="rep"><span class="rep-dot rep-ethan"></span>Ethan</span>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-stripe stripe-arxiv"></div>
+              <div class="card-meta-row">
+                <span class="card-id">aX-2802</span>
+                <span class="status s-sent">Sent</span>
+                <span class="card-spacer"></span>
+                <span class="tier-badge tier-normal">Normal</span>
+              </div>
+              <div class="card-title">Sparse Attention Patterns for 100K-Context Transformers</div>
+              <div class="card-author">
+                <div class="author-avatar alt">PT</div>
+                <span class="author-name">Peng Tao</span>
+                <span class="author-org">NUS</span>
+              </div>
+              <div class="card-foot">
+                <span>Sent 6d ago</span>
+                <span class="rep"><span class="rep-dot rep-ethan"></span>Ethan</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- REPLIED band -->
+        <div>
+          <div class="band-head">
+            <span class="dot replied"></span>Replied
+            <span class="count">3</span>
+            <span class="add">+</span>
+          </div>
+          <div class="band">
+
+            <div class="card">
+              <div class="card-stripe stripe-arxiv"></div>
+              <div class="card-meta-row">
+                <span class="card-id">aX-2790</span>
+                <span class="status s-replied">Replied</span>
+                <span class="card-spacer"></span>
+                <span class="tier-badge tier-strong">Strong</span>
+              </div>
+              <div class="card-title">Constitutional Alignment for Code Generation Models</div>
+              <div class="card-author">
+                <div class="author-avatar alt4">YQ</div>
+                <span class="author-name">Yifan Qiu</span>
+                <span class="author-org">Tsinghua</span>
+              </div>
+              <div class="reply-snippet">"Interested — let's set up a call next week. Tuesday afternoon work?"</div>
+              <div class="card-foot">
+                <span>Replied 1d ago</span>
+                <span class="rep"><span class="rep-dot rep-leo"></span>Leo</span>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-stripe stripe-arxiv"></div>
+              <div class="card-meta-row">
+                <span class="card-id">aX-2785</span>
+                <span class="status s-replied">Replied</span>
+                <span class="card-spacer"></span>
+                <span class="tier-badge tier-normal">Normal</span>
+              </div>
+              <div class="card-title">Token Pruning for Faster Inference on Long Documents</div>
+              <div class="card-author">
+                <div class="author-avatar">FL</div>
+                <span class="author-name">Feng Liu</span>
+                <span class="author-org">SJTU</span>
+              </div>
+              <div class="reply-snippet">"Thanks, but not a fit for our team right now."</div>
+              <div class="card-foot">
+                <span>Replied 2d ago</span>
+                <span class="rep"><span class="rep-dot rep-chenyu"></span>Chenyu</span>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-stripe stripe-arxiv"></div>
+              <div class="card-meta-row">
+                <span class="card-id">aX-2778</span>
+                <span class="status s-replied">Replied</span>
+                <span class="card-spacer"></span>
+                <span class="tier-badge tier-normal">Normal</span>
+              </div>
+              <div class="card-title">Active Learning Strategies for Medical Image Segmentation</div>
+              <div class="card-author">
+                <div class="author-avatar alt2">SY</div>
+                <span class="author-name">Si Yang</span>
+                <span class="author-org">CMU</span>
+              </div>
+              <div class="reply-snippet">"Could you share more on pricing for academic groups?"</div>
+              <div class="card-foot">
+                <span>Replied 4d ago</span>
+                <span class="rep"><span class="rep-dot rep-ethan"></span>Ethan</span>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+      </div>
+
+      <div class="col-foot">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="10"/></svg>
+        Last scan: <a>32 min ago</a>
+      </div>
+    </div>
+
+    <!-- ════ COLUMN 2 — HUGGING FACE ════════════════ -->
+    <div class="col">
+      <div class="col-head">
+        <div class="col-head-top">
+          <div class="col-icon hf">HF</div>
+          <div class="col-title">Hugging Face</div>
+          <div class="col-count">8</div>
+          <div class="col-action" title="Scan HF">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+          </div>
+          <div class="col-action">
+            <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>
+          </div>
+        </div>
+        <div class="col-stages">
+          <div class="col-stage-mini"><b>5</b>Disc</div>
+          <div class="col-stage-mini"><b>2</b>Enr</div>
+          <div class="col-stage-mini"><b>1</b>Rdy</div>
+          <div class="col-stage-mini"><b>0</b>Snt</div>
+          <div class="col-stage-mini"><b>0</b>Rep</div>
+        </div>
+      </div>
+
+      <div class="col-body">
+
+        <!-- DISCOVERED band -->
+        <div>
+          <div class="band-head">
+            <span class="dot discovered"></span>Discovered · need email
+            <span class="count">5</span>
+            <span class="add">+</span>
+          </div>
+          <div class="band">
+
+            <div class="card discovered">
+              <div class="card-stripe stripe-hf"></div>
+              <div class="card-meta-row">
+                <span class="card-id">hf-1129</span>
+                <span class="status s-discovered">Discovered</span>
+                <span class="card-spacer"></span>
+                <span class="tier-badge tier-strong">Strong</span>
+              </div>
+              <div class="card-handle">
+                <div class="author-avatar alt2">QA</div>
+                <div class="handle-text"><span class="at">@</span>qwen-ai</div>
+              </div>
+              <div class="card-bio">Qwen team · large language models, multilingual reasoning. Author of Qwen2.5-72B and Qwen-VL series.</div>
+              <div class="score-row">
+                <div class="score-meter"><div class="score-fill score-high" style="width:92%"></div></div>
+                <span class="score-val">0.92</span>
+              </div>
+              <div class="chips">
+                <span class="chip cn">cn-name</span>
+                <span class="chip org">alibaba</span>
+                <span class="chip">verified</span>
+              </div>
+              <div class="email-row ghost">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><path d="m22 6-10 7L2 6"/></svg>
+                <span class="email-text">no email yet</span>
+              </div>
+              <button class="cta">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+                Find email
+              </button>
+            </div>
+
+            <div class="card discovered">
+              <div class="card-stripe stripe-hf"></div>
+              <div class="card-meta-row">
+                <span class="card-id">hf-1126</span>
+                <span class="status s-discovered">Discovered</span>
+                <span class="card-spacer"></span>
+                <span class="tier-badge tier-normal">Normal</span>
+              </div>
+              <div class="card-handle">
+                <div class="author-avatar">WB</div>
+                <div class="handle-text"><span class="at">@</span>wangbo</div>
+              </div>
+              <div class="card-bio">PhD student @ THU. Building eval benchmarks for Chinese LLM safety.</div>
+              <div class="score-row">
+                <div class="score-meter"><div class="score-fill score-high" style="width:85%"></div></div>
+                <span class="score-val">0.85</span>
+              </div>
+              <div class="chips">
+                <span class="chip cn">cn-name</span>
+                <span class="chip org">tsinghua</span>
+              </div>
+              <button class="cta">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+                Find email
+              </button>
+            </div>
+
+            <div class="card discovered">
+              <div class="card-stripe stripe-hf"></div>
+              <div class="card-meta-row">
+                <span class="card-id">hf-1124</span>
+                <span class="status s-discovered">Discovered</span>
+                <span class="card-spacer"></span>
+                <span class="tier-badge tier-normal">Normal</span>
+              </div>
+              <div class="card-handle">
+                <div class="author-avatar alt3">DS</div>
+                <div class="handle-text"><span class="at">@</span>deepseek-ai</div>
+              </div>
+              <div class="card-bio">DeepSeek research org. Open-source LLMs for reasoning + code.</div>
+              <div class="score-row">
+                <div class="score-meter"><div class="score-fill score-high" style="width:88%"></div></div>
+                <span class="score-val">0.88</span>
+              </div>
+              <div class="chips">
+                <span class="chip org">org-account</span>
+                <span class="chip">verified</span>
+              </div>
+              <button class="cta">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+                Find email
+              </button>
+            </div>
+
+            <div class="card discovered">
+              <div class="card-stripe stripe-hf"></div>
+              <div class="card-meta-row">
+                <span class="card-id">hf-1119</span>
+                <span class="status s-discovered">Discovered</span>
+                <span class="card-spacer"></span>
+                <span class="tier-badge tier-normal">Normal</span>
+              </div>
+              <div class="card-handle">
+                <div class="author-avatar alt">MX</div>
+                <div class="handle-text"><span class="at">@</span>mengxi-zhou</div>
+              </div>
+              <div class="card-bio">RL + alignment. Published RLHF dataset for Chinese RLHF baselines.</div>
+              <div class="score-row">
+                <div class="score-meter"><div class="score-fill score-mid" style="width:71%"></div></div>
+                <span class="score-val">0.71</span>
+              </div>
+              <div class="chips">
+                <span class="chip cn">cn-name</span>
+                <span class="chip">rlhf</span>
+              </div>
+              <button class="cta">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+                Find email
+              </button>
+            </div>
+
+            <div class="card discovered">
+              <div class="card-stripe stripe-hf"></div>
+              <div class="card-meta-row">
+                <span class="card-id">hf-1115</span>
+                <span class="status s-discovered">Discovered</span>
+                <span class="card-spacer"></span>
+                <span class="tier-badge tier-normal">Normal</span>
+              </div>
+              <div class="card-handle">
+                <div class="author-avatar alt4">JL</div>
+                <div class="handle-text"><span class="at">@</span>jialin-tan</div>
+              </div>
+              <div class="card-bio">Speech & TTS. Co-author of CosyVoice models on HF.</div>
+              <div class="score-row">
+                <div class="score-meter"><div class="score-fill score-mid" style="width:64%"></div></div>
+                <span class="score-val">0.64</span>
+              </div>
+              <div class="chips">
+                <span class="chip cn">cn-name</span>
+                <span class="chip">tts</span>
+              </div>
+              <button class="cta">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+                Find email
+              </button>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- ENRICHING band -->
+        <div>
+          <div class="band-head">
+            <span class="dot enriching"></span>Enriching
+            <span class="count">2</span>
+          </div>
+          <div class="band">
+
+            <div class="card">
+              <div class="card-stripe stripe-hf"></div>
+              <div class="card-meta-row">
+                <span class="card-id">hf-1108</span>
+                <span class="status s-enriching">Enriching</span>
+                <span class="card-spacer"></span>
+                <span class="tier-badge tier-normal">Normal</span>
+              </div>
+              <div class="card-handle">
+                <div class="author-avatar">YS</div>
+                <div class="handle-text"><span class="at">@</span>yusheng-cv</div>
+              </div>
+              <div class="card-bio">Vision foundation models · ex-MSRA. Building open SAM-style models.</div>
+              <div class="chips">
+                <span class="chip cn">cn-name</span>
+                <span class="chip org">msra-alum</span>
+              </div>
+              <div class="email-row">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                <span class="email-text">searching… 3 candidates found</span>
+              </div>
+              <div class="card-foot">
+                <span class="time-pill">enriching · 12m</span>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-stripe stripe-hf"></div>
+              <div class="card-meta-row">
+                <span class="card-id">hf-1102</span>
+                <span class="status s-enriching">Enriching</span>
+                <span class="card-spacer"></span>
+                <span class="tier-badge tier-normal">Normal</span>
+              </div>
+              <div class="card-handle">
+                <div class="author-avatar alt2">XR</div>
+                <div class="handle-text"><span class="at">@</span>xinran-liu</div>
+              </div>
+              <div class="card-bio">NLP researcher, building open instruction-tuning datasets.</div>
+              <div class="chips">
+                <span class="chip cn">cn-name</span>
+                <span class="chip">datasets</span>
+              </div>
+              <div class="email-row">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                <span class="email-text">searching GitHub commits…</span>
+              </div>
+              <div class="card-foot">
+                <span class="time-pill">enriching · 4m</span>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- READY band — example of a promoted lead -->
+        <div>
+          <div class="band-head">
+            <span class="dot ready"></span>Ready · promoted
+            <span class="count">1</span>
+          </div>
+          <div class="band">
+
+            <div class="card card-promote">
+              <div class="promote-tag">promoted</div>
+              <div class="card-stripe stripe-hf"></div>
+              <div class="card-meta-row">
+                <span class="card-id">hf-1095</span>
+                <span class="status s-ready">Ready</span>
+                <span class="card-spacer"></span>
+                <span class="tier-badge tier-strong">Strong</span>
+              </div>
+              <div class="card-handle">
+                <div class="author-avatar alt3">ZH</div>
+                <div class="handle-text"><span class="at">@</span>zihao-wang</div>
+              </div>
+              <div class="card-bio">Co-author of OpenLLaMA-CN. Now PhD @ MILA.</div>
+              <div class="email-row">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><path d="m22 6-10 7L2 6"/></svg>
+                <span class="email-text">zihao.wang@mila.quebec</span>
+              </div>
+              <div class="draft-preview">
+                <span class="lbl">DRAFT</span>Hi Zihao, saw OpenLLaMA-CN — we're working with several teams on…
+              </div>
+              <div class="card-foot">
+                <span class="time-pill">just now</span>
+                <span class="rep"><span class="rep-dot rep-ethan"></span>Ethan</span>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+      </div>
+
+      <div class="col-foot">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="10"/></svg>
+        Last scan: <a>1h ago</a>
+      </div>
+    </div>
+
+    <!-- ════ COLUMN 3 — GITHUB ════════════════════════ -->
+    <div class="col">
+      <div class="col-head">
+        <div class="col-head-top">
+          <div class="col-icon gh">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><path d="M12 .5C5.4.5 0 5.9 0 12.5c0 5.3 3.4 9.8 8.2 11.4.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1.1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.6-.3-5.4-1.3-5.4-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2.9-.3 2-.4 3-.4s2.1.1 3 .4c2.3-1.6 3.3-1.2 3.3-1.2.7 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.4 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6C20.6 22.3 24 17.8 24 12.5 24 5.9 18.6.5 12 .5z"/></svg>
+          </div>
+          <div class="col-title">GitHub</div>
+          <div class="col-count">6</div>
+          <div class="col-action" title="Scan GH">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+          </div>
+          <div class="col-action">
+            <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>
+          </div>
+        </div>
+        <div class="col-stages">
+          <div class="col-stage-mini"><b>3</b>Disc</div>
+          <div class="col-stage-mini"><b>2</b>Enr</div>
+          <div class="col-stage-mini"><b>0</b>Rdy</div>
+          <div class="col-stage-mini"><b>1</b>Snt</div>
+          <div class="col-stage-mini"><b>0</b>Rep</div>
+        </div>
+      </div>
+
+      <div class="col-body">
+
+        <!-- DISCOVERED -->
+        <div>
+          <div class="band-head">
+            <span class="dot discovered"></span>Discovered · need email
+            <span class="count">3</span>
+            <span class="add">+</span>
+          </div>
+          <div class="band">
+
+            <div class="card discovered">
+              <div class="card-stripe stripe-gh"></div>
+              <div class="card-meta-row">
+                <span class="card-id">gh-672</span>
+                <span class="status s-discovered">Discovered</span>
+                <span class="card-spacer"></span>
+                <span class="tier-badge tier-strong">Strong</span>
+              </div>
+              <div class="card-handle">
+                <div class="author-avatar alt">YL</div>
+                <div class="handle-text"><span class="at">@</span>yuhan-li</div>
+              </div>
+              <div class="card-bio">Author of <b style="color:var(--t1)">llm-router</b> · 4.2k★ · routing layer for cost-aware LLM apps.</div>
+              <div class="score-row">
+                <div class="score-meter"><div class="score-fill score-high" style="width:90%"></div></div>
+                <span class="score-val">0.90</span>
+              </div>
+              <div class="chips">
+                <span class="chip">4.2k★</span>
+                <span class="chip cn">cn-name</span>
+                <span class="chip org">bytedance</span>
+              </div>
+              <button class="cta">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+                Find email
+              </button>
+            </div>
+
+            <div class="card discovered">
+              <div class="card-stripe stripe-gh"></div>
+              <div class="card-meta-row">
+                <span class="card-id">gh-668</span>
+                <span class="status s-discovered">Discovered</span>
+                <span class="card-spacer"></span>
+                <span class="tier-badge tier-normal">Normal</span>
+              </div>
+              <div class="card-handle">
+                <div class="author-avatar alt2">JX</div>
+                <div class="handle-text"><span class="at">@</span>jiaxiang</div>
+              </div>
+              <div class="card-bio"><b style="color:var(--t1)">jiaxiang/agent-toolkit</b> · 1.1k★ · multi-agent orchestration in TypeScript.</div>
+              <div class="score-row">
+                <div class="score-meter"><div class="score-fill score-mid" style="width:72%"></div></div>
+                <span class="score-val">0.72</span>
+              </div>
+              <div class="chips">
+                <span class="chip">1.1k★</span>
+                <span class="chip cn">cn-name</span>
+              </div>
+              <button class="cta">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+                Find email
+              </button>
+            </div>
+
+            <div class="card discovered">
+              <div class="card-stripe stripe-gh"></div>
+              <div class="card-meta-row">
+                <span class="card-id">gh-665</span>
+                <span class="status s-discovered">Discovered</span>
+                <span class="card-spacer"></span>
+                <span class="tier-badge tier-normal">Normal</span>
+              </div>
+              <div class="card-handle">
+                <div class="author-avatar alt4">TC</div>
+                <div class="handle-text"><span class="at">@</span>tian-chen</div>
+              </div>
+              <div class="card-bio"><b style="color:var(--t1)">tian-chen/vec-store</b> · 880★ · embedded vector DB written in Rust.</div>
+              <div class="score-row">
+                <div class="score-meter"><div class="score-fill score-mid" style="width:68%"></div></div>
+                <span class="score-val">0.68</span>
+              </div>
+              <div class="chips">
+                <span class="chip">880★</span>
+                <span class="chip cn">cn-name</span>
+                <span class="chip org">remote</span>
+              </div>
+              <button class="cta">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+                Find email
+              </button>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- ENRICHING -->
+        <div>
+          <div class="band-head">
+            <span class="dot enriching"></span>Enriching
+            <span class="count">2</span>
+          </div>
+          <div class="band">
+
+            <div class="card">
+              <div class="card-stripe stripe-gh"></div>
+              <div class="card-meta-row">
+                <span class="card-id">gh-660</span>
+                <span class="status s-enriching">Enriching</span>
+                <span class="card-spacer"></span>
+                <span class="tier-badge tier-normal">Normal</span>
+              </div>
+              <div class="card-handle">
+                <div class="author-avatar alt3">QY</div>
+                <div class="handle-text"><span class="at">@</span>qiyu-deng</div>
+              </div>
+              <div class="card-bio"><b style="color:var(--t1)">qiyu-deng/llmtrace</b> · 540★ · tracing + observability for agents.</div>
+              <div class="chips">
+                <span class="chip">540★</span>
+                <span class="chip cn">cn-name</span>
+              </div>
+              <div class="email-row">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                <span class="email-text">scanning recent commits…</span>
+              </div>
+              <div class="card-foot">
+                <span class="time-pill">enriching · 8m</span>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-stripe stripe-gh"></div>
+              <div class="card-meta-row">
+                <span class="card-id">gh-657</span>
+                <span class="status s-enriching">Enriching</span>
+                <span class="card-spacer"></span>
+                <span class="tier-badge tier-normal">Normal</span>
+              </div>
+              <div class="card-handle">
+                <div class="author-avatar">RS</div>
+                <div class="handle-text"><span class="at">@</span>ruoshi-sun</div>
+              </div>
+              <div class="card-bio"><b style="color:var(--t1)">ruoshi-sun/diff-eval</b> · 420★ · diffusion model eval suite.</div>
+              <div class="chips">
+                <span class="chip">420★</span>
+                <span class="chip cn">cn-name</span>
+              </div>
+              <div class="email-row">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                <span class="email-text">found: r***@gmail.com (verifying)</span>
+              </div>
+              <div class="card-foot">
+                <span class="time-pill">enriching · 2m</span>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- SENT -->
+        <div>
+          <div class="band-head">
+            <span class="dot sent"></span>Sent
+            <span class="count">1</span>
+          </div>
+          <div class="band">
+
+            <div class="card">
+              <div class="card-stripe stripe-gh"></div>
+              <div class="card-meta-row">
+                <span class="card-id">gh-650</span>
+                <span class="status s-sent">Sent</span>
+                <span class="card-spacer"></span>
+                <span class="tier-badge tier-normal">Normal</span>
+              </div>
+              <div class="card-handle">
+                <div class="author-avatar alt2">KW</div>
+                <div class="handle-text"><span class="at">@</span>kaiwen-zhu</div>
+              </div>
+              <div class="card-bio"><b style="color:var(--t1)">kaiwen-zhu/promptkit</b> · 2.1k★ · prompt engineering toolkit.</div>
+              <div class="card-foot">
+                <span>Sent 3d ago</span>
+                <span class="rep"><span class="rep-dot rep-ethan"></span>Ethan</span>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+      </div>
+
+      <div class="col-foot">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="10"/></svg>
+        Last scan: <a>2h ago</a>
+      </div>
+    </div>
+
+    <!-- ════ COLUMN 4 — PRODUCT HUNT ════════════════ -->
+    <div class="col">
+      <div class="col-head">
+        <div class="col-head-top">
+          <div class="col-icon ph">P</div>
+          <div class="col-title">Product Hunt</div>
+          <div class="col-count">4</div>
+          <div class="col-action" title="Scan PH">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+          </div>
+          <div class="col-action">
+            <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>
+          </div>
+        </div>
+        <div class="col-stages">
+          <div class="col-stage-mini"><b>4</b>Disc</div>
+          <div class="col-stage-mini"><b>0</b>Enr</div>
+          <div class="col-stage-mini"><b>0</b>Rdy</div>
+          <div class="col-stage-mini"><b>0</b>Snt</div>
+          <div class="col-stage-mini"><b>0</b>Rep</div>
+        </div>
+      </div>
+
+      <div class="col-body">
+
+        <div>
+          <div class="band-head">
+            <span class="dot discovered"></span>Discovered · need email
+            <span class="count">4</span>
+            <span class="add">+</span>
+          </div>
+          <div class="band">
+
+            <div class="card discovered">
+              <div class="card-stripe stripe-ph"></div>
+              <div class="card-meta-row">
+                <span class="card-id">ph-214</span>
+                <span class="status s-discovered">Discovered</span>
+                <span class="card-spacer"></span>
+                <span class="tier-badge tier-strong">Strong</span>
+              </div>
+              <div class="card-title" style="font-size:14px;color:var(--t1)">FlowAI</div>
+              <div class="card-bio" style="margin-bottom:6px">No-code AI workflows for ops teams · <span style="color:var(--t1)">#1 Product of the Day</span></div>
+              <div class="card-author">
+                <div class="author-avatar alt">MW</div>
+                <span class="author-name">Mike Wang</span>
+                <span class="author-org">@mikew</span>
+              </div>
+              <div class="chips">
+                <span class="chip cn">cn-name</span>
+                <span class="chip org">solo-maker</span>
+                <span class="chip">#1 today</span>
+              </div>
+              <div class="email-row ghost">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 4 12 14.01l-3-3"/><circle cx="12" cy="12" r="10"/></svg>
+                <span class="email-text">via twitter / website only</span>
+              </div>
+              <button class="cta ph">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+                Find email
+              </button>
+              <div class="card-foot">
+                <span class="time-pill">launched today</span>
+              </div>
+            </div>
+
+            <div class="card discovered">
+              <div class="card-stripe stripe-ph"></div>
+              <div class="card-meta-row">
+                <span class="card-id">ph-211</span>
+                <span class="status s-discovered">Discovered</span>
+                <span class="card-spacer"></span>
+                <span class="tier-badge tier-normal">Normal</span>
+              </div>
+              <div class="card-title" style="font-size:14px;color:var(--t1)">Lumen Notes</div>
+              <div class="card-bio" style="margin-bottom:6px">AI memo-writer for analysts · launched 2d ago</div>
+              <div class="card-author">
+                <div class="author-avatar alt3">CH</div>
+                <span class="author-name">Cheng He</span>
+                <span class="author-org">@chenghe_</span>
+              </div>
+              <div class="chips">
+                <span class="chip cn">cn-name</span>
+                <span class="chip">notes</span>
+              </div>
+              <div class="email-row ghost">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 4 12 14.01l-3-3"/><circle cx="12" cy="12" r="10"/></svg>
+                <span class="email-text">website contact form only</span>
+              </div>
+              <button class="cta ph">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+                Find email
+              </button>
+              <div class="card-foot">
+                <span class="time-pill">launched 2d ago</span>
+              </div>
+            </div>
+
+            <div class="card discovered">
+              <div class="card-stripe stripe-ph"></div>
+              <div class="card-meta-row">
+                <span class="card-id">ph-208</span>
+                <span class="status s-discovered">Discovered</span>
+                <span class="card-spacer"></span>
+                <span class="tier-badge tier-normal">Normal</span>
+              </div>
+              <div class="card-title" style="font-size:14px;color:var(--t1)">PixelGarden</div>
+              <div class="card-bio" style="margin-bottom:6px">Image-gen API for indie devs · 320 upvotes</div>
+              <div class="card-author">
+                <div class="author-avatar alt2">RZ</div>
+                <span class="author-name">Ruoxi Zhang</span>
+                <span class="author-org">@ruoxi</span>
+              </div>
+              <div class="chips">
+                <span class="chip cn">cn-name</span>
+                <span class="chip">api</span>
+              </div>
+              <div class="email-row ghost">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 4 12 14.01l-3-3"/><circle cx="12" cy="12" r="10"/></svg>
+                <span class="email-text">no public email</span>
+              </div>
+              <button class="cta ph">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+                Find email
+              </button>
+              <div class="card-foot">
+                <span class="time-pill">launched 4d ago</span>
+              </div>
+            </div>
+
+            <div class="card discovered">
+              <div class="card-stripe stripe-ph"></div>
+              <div class="card-meta-row">
+                <span class="card-id">ph-202</span>
+                <span class="status s-discovered">Discovered</span>
+                <span class="card-spacer"></span>
+                <span class="tier-badge tier-normal">Normal</span>
+              </div>
+              <div class="card-title" style="font-size:14px;color:var(--t1)">Veld</div>
+              <div class="card-bio" style="margin-bottom:6px">Voice agents for SaaS support · 180 upvotes</div>
+              <div class="card-author">
+                <div class="author-avatar alt4">BX</div>
+                <span class="author-name">Bo Xu</span>
+                <span class="author-org">@bo__xu</span>
+              </div>
+              <div class="chips">
+                <span class="chip cn">cn-name</span>
+                <span class="chip">voice</span>
+              </div>
+              <div class="email-row ghost">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 4 12 14.01l-3-3"/><circle cx="12" cy="12" r="10"/></svg>
+                <span class="email-text">twitter dm only</span>
+              </div>
+              <button class="cta ph">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+                Find email
+              </button>
+              <div class="card-foot">
+                <span class="time-pill">launched 6d ago</span>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+      </div>
+
+      <div class="col-foot">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="10"/></svg>
+        Last scan: <a>4h ago</a>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+</body>
+</html>

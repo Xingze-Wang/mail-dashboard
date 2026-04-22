@@ -1,0 +1,1134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Pipeline · Inbox</title>
+<!--
+DESIGN NOTES — Inbox-style (redesign-A)
+
+Three key decisions:
+
+1. ROW = ATOM, NOT CARD. The whole UI collapses to one vertical column of
+   52px-tall rows. No grid, no padding waste, no "card" framing. This
+   maximizes scannable density — you can see ~22 leads at once on a
+   laptop. Channel identity lives in a 3px colored stripe on the left
+   edge (arXiv=indigo, HF=amber, GitHub=slate, PH=red), so source is
+   pre-attentive without taking horizontal space.
+
+2. STATE COLLAPSES TO ONE GLYPH + ONE ACTION HINT. Instead of multi-color
+   status pills, status is a single small dot/icon at the right of the
+   row + a tier dot left of the name (gold = strong, gray = normal).
+   "Discovered" leads (no email yet) render in a muted style with a
+   "Find email" inline ghost button instead of a Send affordance — so
+   the visual difference between a ready arXiv lead and a discovered HF
+   lead is immediately obvious without reading.
+
+3. KEYBOARD-FIRST, NOT MOUSE-FIRST. There's a persistent keymap footer
+   (j/k/Enter/e/s/?), and the focused row gets a 2px left accent bar +
+   subtle bg shift, the way Superhuman / Linear do it. Detail panel
+   slides in from the right (40% width) and is itself keyboard-driven.
+   The top bar is filter chips + scan dropdown + search — no nav noise.
+
+Sacrificed: rich per-lead context (scores, signals, citation counts are
+truncated to two-line max). The detail panel is where richness lives.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0B0C0E;
+    --bg-elevated: #131418;
+    --bg-row-hover: #16181D;
+    --bg-row-focus: #1B1E25;
+    --panel: #101116;
+    --border: #1F2127;
+    --border-strong: #2A2D35;
+    --text: #E8E8EC;
+    --text-secondary: #9396A0;
+    --text-tertiary: #5C5F69;
+    --text-muted: #3F424A;
+
+    /* channel colors */
+    --ch-arxiv: #818CF8;       /* indigo */
+    --ch-hf: #F59E0B;          /* amber */
+    --ch-github: #94A3B8;      /* slate */
+    --ch-ph: #EF4444;          /* red */
+
+    /* tier */
+    --tier-strong: #FCD34D;
+    --tier-normal: #4B4F58;
+
+    /* status */
+    --st-ready: #34D399;
+    --st-sent: #60A5FA;
+    --st-replied: #C084FC;
+    --st-discovered: #6B7280;
+    --st-enriching: #FBBF24;
+
+    --radius: 6px;
+    --row-h: 52px;
+
+    --font: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+  }
+
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 13px;
+    line-height: 1.4;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow: hidden;
+  }
+
+  .app {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    height: 100vh;
+  }
+
+  /* ───── Sidebar (minimal) ───── */
+  .nav {
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    padding: 18px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .brand {
+    display: flex; align-items: center; gap: 10px;
+    padding: 4px 8px 22px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  .brand-dot {
+    width: 18px; height: 18px;
+    background: linear-gradient(135deg, #818CF8, #C084FC);
+    border-radius: 5px;
+    box-shadow: 0 0 12px rgba(129,140,248,0.4);
+  }
+  .nav-section { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); padding: 16px 8px 6px; font-weight: 600; }
+  .nav-item {
+    padding: 6px 8px;
+    border-radius: var(--radius);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 12.5px;
+    font-weight: 500;
+  }
+  .nav-item:hover { background: var(--bg-elevated); color: var(--text); }
+  .nav-item.active { background: var(--bg-row-focus); color: var(--text); }
+  .nav-item .count { font-family: var(--mono); font-size: 11px; color: var(--text-tertiary); }
+
+  .nav-foot {
+    margin-top: auto;
+    border-top: 1px solid var(--border);
+    padding-top: 12px;
+    display: flex; align-items: center; gap: 10px;
+    color: var(--text-secondary);
+    font-size: 12px;
+  }
+  .avatar-me { width: 24px; height: 24px; border-radius: 50%; background: linear-gradient(135deg, #34D399, #60A5FA); display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 11px; color: #0B0C0E; }
+
+  /* ───── Main column ───── */
+  .main { display: flex; flex-direction: column; min-width: 0; }
+
+  /* topbar */
+  .topbar {
+    border-bottom: 1px solid var(--border);
+    padding: 12px 20px 0;
+    display: flex; flex-direction: column; gap: 10px;
+    background: var(--bg);
+  }
+  .topbar-row { display: flex; align-items: center; gap: 12px; }
+  .topbar-title {
+    font-size: 18px; font-weight: 600; letter-spacing: -0.015em;
+    margin-right: auto;
+  }
+  .topbar-meta { font-family: var(--mono); font-size: 11px; color: var(--text-tertiary); }
+  .topbar-meta b { color: var(--text-secondary); font-weight: 500; }
+
+  .search {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 5px 10px;
+    width: 240px;
+  }
+  .search input {
+    background: transparent; border: 0; outline: 0;
+    color: var(--text); font-family: var(--font); font-size: 12.5px;
+    width: 100%;
+  }
+  .search input::placeholder { color: var(--text-tertiary); }
+  .kbd {
+    font-family: var(--mono); font-size: 10px;
+    color: var(--text-tertiary);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 1px 4px;
+  }
+
+  .btn {
+    border: 1px solid var(--border);
+    background: var(--bg-elevated);
+    color: var(--text);
+    font: 500 12px var(--font);
+    padding: 5px 10px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .btn:hover { border-color: var(--border-strong); background: var(--bg-row-hover); }
+  .btn-primary { background: linear-gradient(180deg, #6366F1, #4F46E5); border-color: transparent; color: white; }
+  .btn-primary:hover { filter: brightness(1.08); }
+  .btn .caret { color: var(--text-tertiary); }
+
+  /* chips */
+  .chips { display: flex; gap: 6px; padding-bottom: 10px; align-items: center; }
+  .chip {
+    font-size: 11.5px;
+    font-weight: 500;
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px;
+    background: transparent;
+  }
+  .chip:hover { border-color: var(--border-strong); color: var(--text); }
+  .chip.active { background: var(--text); color: var(--bg); border-color: var(--text); }
+  .chip .dot { width: 6px; height: 6px; border-radius: 50%; }
+  .chip-count { font-family: var(--mono); font-size: 10px; opacity: 0.7; }
+  .chip-divider { width: 1px; height: 16px; background: var(--border); margin: 0 4px; }
+
+  /* ───── Body split ───── */
+  .body {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 480px;
+    min-height: 0;
+  }
+
+  /* ───── Inbox list ───── */
+  .list {
+    overflow-y: auto;
+    border-right: 1px solid var(--border);
+    height: 80vh;
+    /* infinite-feel: subtle gradient at bottom */
+  }
+  .list::-webkit-scrollbar { width: 8px; }
+  .list::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }
+  .list::-webkit-scrollbar-track { background: transparent; }
+
+  .day-divider {
+    padding: 14px 20px 6px;
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-muted);
+    font-weight: 600;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+    position: sticky; top: 0; z-index: 2;
+  }
+
+  .row {
+    display: grid;
+    grid-template-columns: 3px 30px 1fr auto;
+    align-items: center;
+    height: var(--row-h);
+    border-bottom: 1px solid var(--border);
+    padding-right: 16px;
+    cursor: pointer;
+    position: relative;
+    transition: background 80ms ease;
+  }
+  .row:hover { background: var(--bg-row-hover); }
+  .row.focused { background: var(--bg-row-focus); }
+  .row.focused::before {
+    content: '';
+    position: absolute;
+    left: 3px; top: 0; bottom: 0;
+    width: 2px;
+    background: var(--text);
+  }
+
+  .stripe { width: 3px; height: 100%; }
+  .stripe.arxiv { background: var(--ch-arxiv); }
+  .stripe.hf { background: var(--ch-hf); }
+  .stripe.github { background: var(--ch-github); }
+  .stripe.ph { background: var(--ch-ph); }
+
+  .avatar {
+    margin-left: 12px;
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 600;
+    color: var(--text);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-strong);
+  }
+
+  .row-content {
+    margin-left: 12px;
+    min-width: 0;
+    display: flex; flex-direction: column; justify-content: center; gap: 2px;
+  }
+  .row-line1 {
+    display: flex; align-items: center; gap: 8px;
+    min-width: 0;
+    font-size: 13px;
+  }
+  .tier-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  .tier-dot.strong { background: var(--tier-strong); box-shadow: 0 0 6px rgba(252,211,77,0.5); }
+  .tier-dot.normal { background: var(--tier-normal); }
+  .row-name { font-weight: 600; color: var(--text); white-space: nowrap; }
+  .row-org { color: var(--text-tertiary); font-size: 12px; white-space: nowrap; }
+  .row-rep { font-size: 10.5px; color: var(--text-tertiary); font-family: var(--mono); padding: 1px 5px; border: 1px solid var(--border); border-radius: 3px; }
+
+  .row-line2 {
+    color: var(--text-secondary);
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .row.discovered .row-line2 { color: var(--text-tertiary); }
+  .row.discovered .row-name { color: var(--text-secondary); font-weight: 500; }
+
+  .row-right {
+    display: flex; align-items: center; gap: 12px;
+    margin-left: 16px;
+  }
+  .status-pill {
+    font-family: var(--mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-tertiary);
+    display: flex; align-items: center; gap: 5px;
+  }
+  .status-dot { width: 6px; height: 6px; border-radius: 50%; }
+  .status-dot.ready { background: var(--st-ready); }
+  .status-dot.sent { background: var(--st-sent); }
+  .status-dot.replied { background: var(--st-replied); box-shadow: 0 0 8px rgba(192,132,252,0.6); }
+  .status-dot.discovered { background: var(--st-discovered); }
+  .status-dot.enriching { background: var(--st-enriching); animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+  .ghost-action {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    border: 1px dashed var(--border-strong);
+    background: transparent;
+    padding: 3px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .ghost-action:hover { color: var(--text); border-color: var(--text-secondary); border-style: solid; }
+
+  .row-time { font-family: var(--mono); font-size: 11px; color: var(--text-muted); width: 38px; text-align: right; }
+
+  /* ───── Detail panel ───── */
+  .panel {
+    background: var(--panel);
+    overflow-y: auto;
+    display: flex; flex-direction: column;
+  }
+  .panel-head {
+    padding: 16px 20px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .panel-crumb {
+    font-size: 11px; color: var(--text-tertiary);
+    display: flex; align-items: center; gap: 6px;
+    margin-bottom: 8px;
+    font-family: var(--mono);
+  }
+  .panel-crumb .ch-tag {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-weight: 600;
+  }
+  .ch-tag.arxiv { color: var(--ch-arxiv); background: rgba(129,140,248,0.1); }
+  .ch-tag.hf { color: var(--ch-hf); background: rgba(245,158,11,0.1); }
+
+  .panel-title {
+    font-size: 18px; font-weight: 600; letter-spacing: -0.01em;
+    line-height: 1.3; margin-bottom: 6px;
+  }
+  .panel-sub { color: var(--text-secondary); font-size: 13px; }
+  .panel-sub a { color: var(--ch-arxiv); text-decoration: none; }
+
+  .panel-actions {
+    display: flex; gap: 8px; margin-top: 14px;
+  }
+  .panel-actions .btn { font-size: 12px; padding: 6px 12px; }
+
+  .panel-meta-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px 18px;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .pm-key { color: var(--text-tertiary); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 3px; font-weight: 600; }
+  .pm-val { color: var(--text); font-weight: 500; }
+  .pm-val.mono { font-family: var(--mono); font-size: 12px; }
+
+  .panel-section {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+  }
+  .panel-section h4 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-tertiary);
+    font-weight: 600;
+    margin-bottom: 10px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .panel-section h4 .edit { font-size: 11px; color: var(--text-secondary); cursor: pointer; text-transform: none; letter-spacing: 0; }
+  .panel-section h4 .edit:hover { color: var(--text); }
+
+  .draft-subject {
+    font-weight: 600; font-size: 13.5px; margin-bottom: 10px;
+    color: var(--text);
+  }
+  .draft-body {
+    font-size: 13px; line-height: 1.6;
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+  }
+  .draft-body b { color: var(--text); font-weight: 600; }
+
+  .signal-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 6px 0;
+    font-size: 12px;
+    border-bottom: 1px dashed var(--border);
+  }
+  .signal-row:last-child { border-bottom: 0; }
+  .signal-row .sig-key { color: var(--text-secondary); font-family: var(--mono); font-size: 11px; }
+  .signal-row .sig-val { color: var(--text); font-weight: 500; }
+  .signal-row .sig-val.true { color: var(--st-ready); }
+  .signal-row .sig-val.false { color: var(--text-muted); }
+
+  .find-email-cta {
+    margin-top: 12px;
+    display: flex; gap: 8px; flex-wrap: wrap;
+  }
+  .find-email-cta .btn { flex: 1; justify-content: center; }
+
+  /* ───── Footer keymap ───── */
+  .keymap {
+    border-top: 1px solid var(--border);
+    background: var(--panel);
+    padding: 8px 20px;
+    display: flex; align-items: center; gap: 18px;
+    font-size: 11px;
+    color: var(--text-tertiary);
+    grid-column: 1 / -1;
+  }
+  .keymap span { display: inline-flex; align-items: center; gap: 6px; }
+  .keymap .kbd { font-size: 10px; padding: 1px 5px; }
+  .keymap .spacer { flex: 1; }
+
+  .icon { width: 14px; height: 14px; flex-shrink: 0; }
+
+  /* avatar color variants */
+  .av-1 { background: linear-gradient(135deg, #818CF8, #C084FC); color: #0B0C0E; }
+  .av-2 { background: linear-gradient(135deg, #34D399, #14B8A6); color: #0B0C0E; }
+  .av-3 { background: linear-gradient(135deg, #F59E0B, #EF4444); color: #0B0C0E; }
+  .av-4 { background: linear-gradient(135deg, #60A5FA, #3B82F6); color: #0B0C0E; }
+  .av-5 { background: linear-gradient(135deg, #94A3B8, #64748B); color: #0B0C0E; }
+  .av-6 { background: linear-gradient(135deg, #FB7185, #F43F5E); color: #0B0C0E; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ─── Sidebar ─────────────────────────── -->
+  <aside class="nav">
+    <div class="brand">
+      <div class="brand-dot"></div>
+      <div>Pipeline</div>
+    </div>
+
+    <div class="nav-section">Inbox</div>
+    <div class="nav-item active"><span>All leads</span><span class="count">247</span></div>
+    <div class="nav-item"><span>Ready to send</span><span class="count">38</span></div>
+    <div class="nav-item"><span>Discovered</span><span class="count">12</span></div>
+    <div class="nav-item"><span>Sent</span><span class="count">156</span></div>
+    <div class="nav-item"><span>Replied</span><span class="count">9</span></div>
+
+    <div class="nav-section">Reps</div>
+    <div class="nav-item"><span>Leo · strong</span><span class="count">14</span></div>
+    <div class="nav-item"><span>Ethan · overseas</span><span class="count">19</span></div>
+    <div class="nav-item"><span>Chenyu · domestic</span><span class="count">5</span></div>
+
+    <div class="nav-foot">
+      <div class="avatar-me">XW</div>
+      <div>xw2893</div>
+    </div>
+  </aside>
+
+  <!-- ─── Main ─────────────────────────────── -->
+  <main class="main">
+
+    <!-- topbar -->
+    <div class="topbar">
+      <div class="topbar-row">
+        <div class="topbar-title">All leads</div>
+        <div class="topbar-meta"><b>247</b> total · <b>38</b> ready · <b>12</b> need email · last scan <b>14m</b> ago</div>
+        <div class="search">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+          <input placeholder="Search leads, schools, papers…" />
+          <span class="kbd">/</span>
+        </div>
+        <button class="btn btn-primary">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h12"/></svg>
+          Scan
+          <svg class="icon caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+      </div>
+
+      <div class="chips">
+        <button class="chip active">All <span class="chip-count">247</span></button>
+        <button class="chip"><span class="dot" style="background:var(--ch-arxiv)"></span>arXiv <span class="chip-count">225</span></button>
+        <button class="chip"><span class="dot" style="background:var(--ch-hf)"></span>Hugging Face <span class="chip-count">11</span></button>
+        <button class="chip"><span class="dot" style="background:var(--ch-github)"></span>GitHub <span class="chip-count">7</span></button>
+        <button class="chip"><span class="dot" style="background:var(--ch-ph)"></span>Product Hunt <span class="chip-count">4</span></button>
+        <span class="chip-divider"></span>
+        <button class="chip">Rep: All ▾</button>
+        <button class="chip">Status: All ▾</button>
+        <button class="chip">Tier: All ▾</button>
+      </div>
+    </div>
+
+    <!-- body: list + panel -->
+    <div class="body">
+
+      <!-- ─── List ─── -->
+      <div class="list" id="list">
+
+        <div class="day-divider">Today · Apr 19</div>
+
+        <!-- arXiv ready strong -->
+        <div class="row" data-id="1">
+          <div class="stripe arxiv"></div>
+          <div class="avatar av-1">YL</div>
+          <div class="row-content">
+            <div class="row-line1">
+              <span class="tier-dot strong"></span>
+              <span class="row-name">Yujia Li</span>
+              <span class="row-org">· Tsinghua · h-index 47</span>
+              <span class="row-rep">LEO</span>
+            </div>
+            <div class="row-line2">Scaling Laws for Reward Model Overoptimization in Chinese LLMs</div>
+          </div>
+          <div class="row-right">
+            <span class="status-pill"><span class="status-dot ready"></span>READY</span>
+            <span class="row-time">2m</span>
+          </div>
+        </div>
+
+        <!-- HF discovered -->
+        <div class="row discovered focused" data-id="2">
+          <div class="stripe hf"></div>
+          <div class="avatar av-3">QA</div>
+          <div class="row-content">
+            <div class="row-line1">
+              <span class="tier-dot strong"></span>
+              <span class="row-name">qwen-ai</span>
+              <span class="row-org">· Alibaba DAMO · score 0.91</span>
+            </div>
+            <div class="row-line2">12 models · 2.3M downloads · cn_org · chinese_name</div>
+          </div>
+          <div class="row-right">
+            <button class="ghost-action">Find email →</button>
+            <span class="row-time">8m</span>
+          </div>
+        </div>
+
+        <!-- arXiv ready normal -->
+        <div class="row" data-id="3">
+          <div class="stripe arxiv"></div>
+          <div class="avatar av-2">ZH</div>
+          <div class="row-content">
+            <div class="row-line1">
+              <span class="tier-dot normal"></span>
+              <span class="row-name">Zhang Hao</span>
+              <span class="row-org">· SJTU</span>
+              <span class="row-rep">ETHAN</span>
+            </div>
+            <div class="row-line2">Multi-Agent Collaboration for Long-Horizon Robotic Manipulation</div>
+          </div>
+          <div class="row-right">
+            <span class="status-pill"><span class="status-dot ready"></span>READY</span>
+            <span class="row-time">14m</span>
+          </div>
+        </div>
+
+        <!-- arXiv replied -->
+        <div class="row" data-id="4">
+          <div class="stripe arxiv"></div>
+          <div class="avatar av-4">CW</div>
+          <div class="row-content">
+            <div class="row-line1">
+              <span class="tier-dot strong"></span>
+              <span class="row-name">Chen Weidong</span>
+              <span class="row-org">· PKU · 8.2K citations</span>
+              <span class="row-rep">LEO</span>
+            </div>
+            <div class="row-line2">Re: ↩ "Yes, happy to chat next week — Tuesday 3pm Beijing OK?"</div>
+          </div>
+          <div class="row-right">
+            <span class="status-pill"><span class="status-dot replied"></span>REPLIED</span>
+            <span class="row-time">22m</span>
+          </div>
+        </div>
+
+        <!-- GitHub discovered -->
+        <div class="row discovered" data-id="5">
+          <div class="stripe github"></div>
+          <div class="avatar av-5">YL</div>
+          <div class="row-content">
+            <div class="row-line1">
+              <span class="tier-dot normal"></span>
+              <span class="row-name">yuhan-li</span>
+              <span class="row-org">· 3.4k stars · llm-router</span>
+            </div>
+            <div class="row-line2">Top contributor · TS/Python · profile mentions Hangzhou</div>
+          </div>
+          <div class="row-right">
+            <button class="ghost-action">Find email →</button>
+            <span class="row-time">31m</span>
+          </div>
+        </div>
+
+        <!-- arXiv enriching -->
+        <div class="row" data-id="6">
+          <div class="stripe arxiv"></div>
+          <div class="avatar av-6">WX</div>
+          <div class="row-content">
+            <div class="row-line1">
+              <span class="tier-dot normal"></span>
+              <span class="row-name">Wang Xinyu</span>
+              <span class="row-org">· Fudan</span>
+              <span class="row-rep">CHENYU</span>
+            </div>
+            <div class="row-line2">Efficient Mixture-of-Experts Training with Sparse Activation Caching</div>
+          </div>
+          <div class="row-right">
+            <span class="status-pill"><span class="status-dot enriching"></span>ENRICHING</span>
+            <span class="row-time">42m</span>
+          </div>
+        </div>
+
+        <!-- arXiv sent -->
+        <div class="row" data-id="7">
+          <div class="stripe arxiv"></div>
+          <div class="avatar av-1">JL</div>
+          <div class="row-content">
+            <div class="row-line1">
+              <span class="tier-dot strong"></span>
+              <span class="row-name">Jiaxiang Liu</span>
+              <span class="row-org">· CUHK · h-index 31</span>
+              <span class="row-rep">LEO</span>
+            </div>
+            <div class="row-line2">Direct Preference Optimization with Verifiable Reward Signals</div>
+          </div>
+          <div class="row-right">
+            <span class="status-pill"><span class="status-dot sent"></span>SENT</span>
+            <span class="row-time">1h</span>
+          </div>
+        </div>
+
+        <!-- PH discovered -->
+        <div class="row discovered" data-id="8">
+          <div class="stripe ph"></div>
+          <div class="avatar av-3">MW</div>
+          <div class="row-content">
+            <div class="row-line1">
+              <span class="tier-dot normal"></span>
+              <span class="row-name">Mike Wang</span>
+              <span class="row-org">· @mikewang_ai · twitter</span>
+            </div>
+            <div class="row-line2">Launching FlowAI · #2 on PH today · flowai.so</div>
+          </div>
+          <div class="row-right">
+            <button class="ghost-action">Find email →</button>
+            <span class="row-time">1h</span>
+          </div>
+        </div>
+
+        <!-- arXiv ready -->
+        <div class="row" data-id="9">
+          <div class="stripe arxiv"></div>
+          <div class="avatar av-2">SL</div>
+          <div class="row-content">
+            <div class="row-line1">
+              <span class="tier-dot normal"></span>
+              <span class="row-name">Sun Lei</span>
+              <span class="row-org">· ZJU</span>
+              <span class="row-rep">ETHAN</span>
+            </div>
+            <div class="row-line2">Vision-Language Pretraining for Document Understanding at Scale</div>
+          </div>
+          <div class="row-right">
+            <span class="status-pill"><span class="status-dot ready"></span>READY</span>
+            <span class="row-time">1h</span>
+          </div>
+        </div>
+
+        <!-- HF discovered -->
+        <div class="row discovered" data-id="10">
+          <div class="stripe hf"></div>
+          <div class="avatar av-3">DS</div>
+          <div class="row-content">
+            <div class="row-line1">
+              <span class="tier-dot strong"></span>
+              <span class="row-name">deepseek-ai</span>
+              <span class="row-org">· DeepSeek · score 0.96</span>
+            </div>
+            <div class="row-line2">28 models · 14M downloads · v3, coder-v2 trending</div>
+          </div>
+          <div class="row-right">
+            <button class="ghost-action">Find email →</button>
+            <span class="row-time">2h</span>
+          </div>
+        </div>
+
+        <!-- arXiv ready -->
+        <div class="row" data-id="11">
+          <div class="stripe arxiv"></div>
+          <div class="avatar av-4">LM</div>
+          <div class="row-content">
+            <div class="row-line1">
+              <span class="tier-dot strong"></span>
+              <span class="row-name">Liu Mingyu</span>
+              <span class="row-org">· USTC · h-index 38</span>
+              <span class="row-rep">LEO</span>
+            </div>
+            <div class="row-line2">Cross-Lingual Reasoning via Latent Code-Switching in Transformers</div>
+          </div>
+          <div class="row-right">
+            <span class="status-pill"><span class="status-dot ready"></span>READY</span>
+            <span class="row-time">2h</span>
+          </div>
+        </div>
+
+        <!-- arXiv sent -->
+        <div class="row" data-id="12">
+          <div class="stripe arxiv"></div>
+          <div class="avatar av-6">HZ</div>
+          <div class="row-content">
+            <div class="row-line1">
+              <span class="tier-dot normal"></span>
+              <span class="row-name">He Ziwei</span>
+              <span class="row-org">· NUS</span>
+              <span class="row-rep">ETHAN</span>
+            </div>
+            <div class="row-line2">Long-Context Inference Acceleration with KV Cache Compression</div>
+          </div>
+          <div class="row-right">
+            <span class="status-pill"><span class="status-dot sent"></span>SENT</span>
+            <span class="row-time">3h</span>
+          </div>
+        </div>
+
+        <div class="day-divider">Yesterday · Apr 18</div>
+
+        <!-- arXiv ready -->
+        <div class="row" data-id="13">
+          <div class="stripe arxiv"></div>
+          <div class="avatar av-1">XF</div>
+          <div class="row-content">
+            <div class="row-line1">
+              <span class="tier-dot strong"></span>
+              <span class="row-name">Xu Feiyan</span>
+              <span class="row-org">· MSRA · 5.1K citations</span>
+              <span class="row-rep">LEO</span>
+            </div>
+            <div class="row-line2">In-Context Learning Emerges from Gradient Descent over Attention</div>
+          </div>
+          <div class="row-right">
+            <span class="status-pill"><span class="status-dot ready"></span>READY</span>
+            <span class="row-time">5h</span>
+          </div>
+        </div>
+
+        <!-- GitHub discovered -->
+        <div class="row discovered" data-id="14">
+          <div class="stripe github"></div>
+          <div class="avatar av-5">JX</div>
+          <div class="row-content">
+            <div class="row-line1">
+              <span class="tier-dot normal"></span>
+              <span class="row-name">jiaxiang/llm-router</span>
+              <span class="row-org">· 1.2k stars</span>
+            </div>
+            <div class="row-line2">Recent commits in zh-CN · README mentions Shanghai</div>
+          </div>
+          <div class="row-right">
+            <button class="ghost-action">Find email →</button>
+            <span class="row-time">6h</span>
+          </div>
+        </div>
+
+        <!-- arXiv replied -->
+        <div class="row" data-id="15">
+          <div class="stripe arxiv"></div>
+          <div class="avatar av-2">TY</div>
+          <div class="row-content">
+            <div class="row-line1">
+              <span class="tier-dot strong"></span>
+              <span class="row-name">Tang Yufei</span>
+              <span class="row-org">· THU · h-index 52</span>
+              <span class="row-rep">LEO</span>
+            </div>
+            <div class="row-line2">Re: ↩ "Thanks for reaching out — what's the use case you have in mind?"</div>
+          </div>
+          <div class="row-right">
+            <span class="status-pill"><span class="status-dot replied"></span>REPLIED</span>
+            <span class="row-time">7h</span>
+          </div>
+        </div>
+
+        <!-- arXiv sent -->
+        <div class="row" data-id="16">
+          <div class="stripe arxiv"></div>
+          <div class="avatar av-4">PK</div>
+          <div class="row-content">
+            <div class="row-line1">
+              <span class="tier-dot normal"></span>
+              <span class="row-name">Peng Kaiwen</span>
+              <span class="row-org">· HKUST</span>
+              <span class="row-rep">ETHAN</span>
+            </div>
+            <div class="row-line2">Speculative Decoding with Tree-Structured Draft Verification</div>
+          </div>
+          <div class="row-right">
+            <span class="status-pill"><span class="status-dot sent"></span>SENT</span>
+            <span class="row-time">9h</span>
+          </div>
+        </div>
+
+        <!-- HF discovered -->
+        <div class="row discovered" data-id="17">
+          <div class="stripe hf"></div>
+          <div class="avatar av-3">WB</div>
+          <div class="row-content">
+            <div class="row-line1">
+              <span class="tier-dot normal"></span>
+              <span class="row-name">wangbo</span>
+              <span class="row-org">· independent · score 0.78</span>
+            </div>
+            <div class="row-line2">5 models · 240K downloads · finetune-king specialty</div>
+          </div>
+          <div class="row-right">
+            <button class="ghost-action">Find email →</button>
+            <span class="row-time">11h</span>
+          </div>
+        </div>
+
+        <!-- arXiv ready -->
+        <div class="row" data-id="18">
+          <div class="stripe arxiv"></div>
+          <div class="avatar av-1">QM</div>
+          <div class="row-content">
+            <div class="row-line1">
+              <span class="tier-dot normal"></span>
+              <span class="row-name">Qian Mu</span>
+              <span class="row-org">· BUAA</span>
+              <span class="row-rep">CHENYU</span>
+            </div>
+            <div class="row-line2">Sparse Attention Patterns for Edge-Deployable Vision Transformers</div>
+          </div>
+          <div class="row-right">
+            <span class="status-pill"><span class="status-dot ready"></span>READY</span>
+            <span class="row-time">14h</span>
+          </div>
+        </div>
+
+        <!-- PH discovered -->
+        <div class="row discovered" data-id="19">
+          <div class="stripe ph"></div>
+          <div class="avatar av-3">JC</div>
+          <div class="row-content">
+            <div class="row-line1">
+              <span class="tier-dot normal"></span>
+              <span class="row-name">Jenny Chen</span>
+              <span class="row-org">· @jennybuilds · twitter</span>
+            </div>
+            <div class="row-line2">Launched Cursive · #5 on PH yesterday · cursive.dev</div>
+          </div>
+          <div class="row-right">
+            <button class="ghost-action">Find email →</button>
+            <span class="row-time">16h</span>
+          </div>
+        </div>
+
+        <!-- arXiv ready -->
+        <div class="row" data-id="20">
+          <div class="stripe arxiv"></div>
+          <div class="avatar av-6">MR</div>
+          <div class="row-content">
+            <div class="row-line1">
+              <span class="tier-dot strong"></span>
+              <span class="row-name">Ma Ruoxi</span>
+              <span class="row-org">· Stanford · h-index 29</span>
+              <span class="row-rep">LEO</span>
+            </div>
+            <div class="row-line2">Constitutional AI Without Hand-Written Rules: Self-Generated Critiques</div>
+          </div>
+          <div class="row-right">
+            <span class="status-pill"><span class="status-dot ready"></span>READY</span>
+            <span class="row-time">18h</span>
+          </div>
+        </div>
+
+        <!-- arXiv sent -->
+        <div class="row" data-id="21">
+          <div class="stripe arxiv"></div>
+          <div class="avatar av-2">DL</div>
+          <div class="row-content">
+            <div class="row-line1">
+              <span class="tier-dot normal"></span>
+              <span class="row-name">Dong Lihua</span>
+              <span class="row-org">· Tencent AI Lab</span>
+              <span class="row-rep">CHENYU</span>
+            </div>
+            <div class="row-line2">RLHF Curriculum Design for Code Generation Tasks</div>
+          </div>
+          <div class="row-right">
+            <span class="status-pill"><span class="status-dot sent"></span>SENT</span>
+            <span class="row-time">19h</span>
+          </div>
+        </div>
+
+        <!-- arXiv ready -->
+        <div class="row" data-id="22">
+          <div class="stripe arxiv"></div>
+          <div class="avatar av-4">FS</div>
+          <div class="row-content">
+            <div class="row-line1">
+              <span class="tier-dot normal"></span>
+              <span class="row-name">Fang Shuo</span>
+              <span class="row-org">· Microsoft Beijing</span>
+              <span class="row-rep">ETHAN</span>
+            </div>
+            <div class="row-line2">Token-Level Reward Modeling for Mathematical Reasoning Chains</div>
+          </div>
+          <div class="row-right">
+            <span class="status-pill"><span class="status-dot ready"></span>READY</span>
+            <span class="row-time">21h</span>
+          </div>
+        </div>
+
+        <!-- GitHub discovered -->
+        <div class="row discovered" data-id="23">
+          <div class="stripe github"></div>
+          <div class="avatar av-5">RJ</div>
+          <div class="row-content">
+            <div class="row-line1">
+              <span class="tier-dot normal"></span>
+              <span class="row-name">ruijie-zhao</span>
+              <span class="row-org">· 890 stars · agent-os</span>
+            </div>
+            <div class="row-line2">Maintains 3 popular agent frameworks · bio: "ex-ByteDance"</div>
+          </div>
+          <div class="row-right">
+            <button class="ghost-action">Find email →</button>
+            <span class="row-time">22h</span>
+          </div>
+        </div>
+
+        <!-- arXiv replied -->
+        <div class="row" data-id="24">
+          <div class="stripe arxiv"></div>
+          <div class="avatar av-1">YH</div>
+          <div class="row-content">
+            <div class="row-line1">
+              <span class="tier-dot strong"></span>
+              <span class="row-name">Yang Han</span>
+              <span class="row-org">· DeepMind · h-index 41</span>
+              <span class="row-rep">LEO</span>
+            </div>
+            <div class="row-line2">Re: ↩ "Interesting — can you share more about the eval methodology?"</div>
+          </div>
+          <div class="row-right">
+            <span class="status-pill"><span class="status-dot replied"></span>REPLIED</span>
+            <span class="row-time">1d</span>
+          </div>
+        </div>
+
+        <!-- arXiv ready -->
+        <div class="row" data-id="25">
+          <div class="stripe arxiv"></div>
+          <div class="avatar av-6">LZ</div>
+          <div class="row-content">
+            <div class="row-line1">
+              <span class="tier-dot normal"></span>
+              <span class="row-name">Lin Ziqi</span>
+              <span class="row-org">· NJU</span>
+              <span class="row-rep">CHENYU</span>
+            </div>
+            <div class="row-line2">Distributed Training of Trillion-Parameter MoE Models on Heterogeneous GPUs</div>
+          </div>
+          <div class="row-right">
+            <span class="status-pill"><span class="status-dot ready"></span>READY</span>
+            <span class="row-time">1d</span>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ─── Detail panel (HF discovered example, matching focused row) ─── -->
+      <aside class="panel">
+        <div class="panel-head">
+          <div class="panel-crumb">
+            <span class="ch-tag hf">Hugging Face</span>
+            <span>·</span>
+            <span>discovered 8m ago</span>
+            <span>·</span>
+            <span>score 0.91</span>
+          </div>
+          <div class="panel-title">qwen-ai</div>
+          <div class="panel-sub">
+            Alibaba DAMO Academy · <a href="#">huggingface.co/qwen-ai →</a>
+          </div>
+          <div class="panel-actions">
+            <button class="btn btn-primary">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><path d="m22 6-10 7L2 6"/></svg>
+              Find email
+            </button>
+            <button class="btn">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+              Assign rep
+            </button>
+            <button class="btn">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+              Skip
+            </button>
+          </div>
+        </div>
+
+        <div class="panel-meta-grid">
+          <div>
+            <div class="pm-key">Models</div>
+            <div class="pm-val mono">12</div>
+          </div>
+          <div>
+            <div class="pm-key">Downloads</div>
+            <div class="pm-val mono">2.34M</div>
+          </div>
+          <div>
+            <div class="pm-key">Score</div>
+            <div class="pm-val mono">0.91</div>
+          </div>
+          <div>
+            <div class="pm-key">Promoted</div>
+            <div class="pm-val">—</div>
+          </div>
+          <div>
+            <div class="pm-key">Location</div>
+            <div class="pm-val">Hangzhou, China</div>
+          </div>
+          <div>
+            <div class="pm-key">Org</div>
+            <div class="pm-val">Alibaba DAMO</div>
+          </div>
+        </div>
+
+        <div class="panel-section">
+          <h4>Bio</h4>
+          <div class="draft-body">Qwen team @ Alibaba DAMO Academy. Building open foundation models. Recent releases: Qwen2.5-72B, Qwen2.5-Coder, Qwen2-VL.</div>
+        </div>
+
+        <div class="panel-section">
+          <h4>Signals</h4>
+          <div class="signal-row"><span class="sig-key">chinese_name</span><span class="sig-val true">true</span></div>
+          <div class="signal-row"><span class="sig-key">cn_org</span><span class="sig-val true">true (Alibaba)</span></div>
+          <div class="signal-row"><span class="sig-key">cn_location</span><span class="sig-val true">true (Hangzhou)</span></div>
+          <div class="signal-row"><span class="sig-key">model_count_gte_5</span><span class="sig-val true">true (12)</span></div>
+          <div class="signal-row"><span class="sig-key">downloads_gte_100k</span><span class="sig-val true">true (2.34M)</span></div>
+          <div class="signal-row"><span class="sig-key">contact_hint</span><span class="sig-val false">false</span></div>
+        </div>
+
+        <div class="panel-section">
+          <h4>Contact discovery <span class="edit">manual override</span></h4>
+          <div class="draft-body" style="font-size:12px;">
+            No email on profile. Suggested actions:
+          </div>
+          <div class="find-email-cta">
+            <button class="btn">Search Alibaba domain</button>
+            <button class="btn">Check arXiv co-authors</button>
+            <button class="btn">Open profile →</button>
+          </div>
+        </div>
+
+      </aside>
+
+    </div>
+
+    <!-- footer keymap -->
+    <div class="keymap">
+      <span><span class="kbd">j</span> <span class="kbd">k</span> navigate</span>
+      <span><span class="kbd">↵</span> open</span>
+      <span><span class="kbd">e</span> send</span>
+      <span><span class="kbd">f</span> find email</span>
+      <span><span class="kbd">s</span> skip</span>
+      <span><span class="kbd">/</span> search</span>
+      <span class="spacer"></span>
+      <span>Showing <b style="color:var(--text-secondary)">25 of 247</b> · scroll for more</span>
+      <span><span class="kbd">?</span> all shortcuts</span>
+    </div>
+
+  </main>
+</div>
+
+<script>
+  // Minimal keyboard nav demo — j/k move focus, Enter logs id
+  const rows = Array.from(document.querySelectorAll('.row'));
+  let idx = rows.findIndex(r => r.classList.contains('focused'));
+  if (idx < 0) idx = 0;
+
+  function focus(i) {
+    rows.forEach(r => r.classList.remove('focused'));
+    idx = Math.max(0, Math.min(rows.length - 1, i));
+    rows[idx].classList.add('focused');
+    rows[idx].scrollIntoView({ block: 'nearest' });
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'INPUT') return;
+    if (e.key === 'j') { e.preventDefault(); focus(idx + 1); }
+    else if (e.key === 'k') { e.preventDefault(); focus(idx - 1); }
+    else if (e.key === '/') { e.preventDefault(); document.querySelector('.search input').focus(); }
+  });
+
+  rows.forEach((r, i) => r.addEventListener('click', () => focus(i)));
+</script>
+</body>
+</html>

@@ -28,6 +28,10 @@ export interface ScannedLead {
   computeConfidence: number;
   computeReason: string;
   matchedDirections: string[];
+  s2AuthorId: string | null;
+  hIndex: number | null;
+  citationCount: number | null;
+  paperCount: number | null;
 }
 
 interface ArxivPaper {
@@ -497,10 +501,15 @@ async function getContactedEmails(
   if (emails.length === 0) return new Set();
   const lower = emails.map((e) => e.toLowerCase());
 
-  // Check email_contact_history for contacts within the last 365 days
   const oneYearAgo = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString();
 
-  const [{ data: historyRows }, { data: sentRows }] = await Promise.all([
+  // Check persons table (primary source of truth) + legacy tables
+  const [{ data: personRows }, { data: historyRows }, { data: sentRows }] = await Promise.all([
+    // persons: check if any person has this email AND was contacted within 365 days
+    supabase
+      .from("persons")
+      .select("emails")
+      .gte("last_outreach_at", oneYearAgo),
     supabase
       .from("email_contact_history")
       .select("email")
@@ -514,6 +523,17 @@ async function getContactedEmails(
   ]);
 
   const result = new Set<string>();
+
+  // Check persons: each row has an emails array, check if any of our candidate emails match
+  for (const r of personRows ?? []) {
+    const personEmails = (r as { emails: string[] }).emails ?? [];
+    for (const pe of personEmails) {
+      if (lower.includes(pe.toLowerCase())) {
+        result.add(pe.toLowerCase());
+      }
+    }
+  }
+
   for (const r of historyRows ?? []) result.add((r as { email: string }).email.toLowerCase());
   for (const r of sentRows ?? []) result.add((r as { to: string }).to.toLowerCase());
   return result;
@@ -583,15 +603,55 @@ async function archivePaper(
   }
 }
 
-/** Record that we contacted this email */
-export async function recordContact(email: string, paperTitle: string, subject: string): Promise<void> {
+/** Record that we contacted this email — writes to both email_contact_history and persons */
+export async function recordContact(
+  email: string,
+  paperTitle: string,
+  subject: string,
+  paperArxivId?: string | null,
+): Promise<void> {
+  const now = new Date().toISOString();
+  const emailLower = email.toLowerCase();
+
+  // Write to legacy table
   await supabase.from("email_contact_history").upsert({
-    email: email.toLowerCase(),
+    email: emailLower,
     paper_title: paperTitle,
     subject,
-    contacted_at: new Date().toISOString(),
+    contacted_at: now,
     source: "pipeline",
+    paper_arxiv_id: paperArxivId ?? null,
   });
+
+  // Upsert into persons (source of truth)
+  const { data: existing } = await supabase
+    .from("persons")
+    .select("id, outreach_count, source_events")
+    .contains("emails", [emailLower])
+    .limit(1);
+
+  if (existing && existing.length > 0) {
+    const person = existing[0] as { id: string; outreach_count: number; source_events: unknown[] };
+    const events = (person.source_events ?? []) as unknown[];
+    await supabase.from("persons").update({
+      last_outreach_at: now,
+      last_outreach_source: "pipeline",
+      outreach_count: (person.outreach_count ?? 0) + 1,
+      outreach_status: "contacted",
+      last_seen_at: now,
+      updated_at: now,
+      source_events: [...events, { source: "pipeline", paper_title: paperTitle, found_at: now }],
+    }).eq("id", person.id);
+  } else {
+    await supabase.from("persons").insert({
+      emails: [emailLower],
+      last_outreach_at: now,
+      last_outreach_source: "pipeline",
+      outreach_count: 1,
+      outreach_status: "contacted",
+      source_events: [{ source: "pipeline", paper_title: paperTitle, found_at: now }],
+    });
+  }
 }
 
 // ─── Sleep helper ────────────────────────────────────────────────────────────
@@ -759,6 +819,10 @@ export async function scanArxiv(options?: {
           computeConfidence: analysis.compute_confidence,
           computeReason: analysis.compute_reason ?? "",
           matchedDirections: analysis.matched_directions,
+          s2AuthorId: null,
+          hIndex: null,
+          citationCount: null,
+          paperCount: null,
         });
       }
 

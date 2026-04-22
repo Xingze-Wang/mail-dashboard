@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
+import { requireAdmin } from "@/lib/auth-helpers";
 
 function mapLead(l: Record<string, unknown>) {
   return {
@@ -24,6 +25,12 @@ function mapLead(l: Record<string, unknown>) {
     status: l.status,
     sentAt: l.sent_at,
     createdAt: l.created_at,
+    s2AuthorId: l.s2_author_id,
+    hIndex: l.h_index,
+    citationCount: l.citation_count,
+    paperCount: l.paper_count,
+    leadTier: l.lead_tier,
+    assignedRepId: l.assigned_rep_id,
   };
 }
 
@@ -54,12 +61,14 @@ export async function PATCH(
 
   try {
     const body = await req.json();
-    const { status, draftSubject, draftHtml } = body;
+    const { status, draftSubject, draftHtml, assignedRepId, leadTier } = body;
 
     const updates: Record<string, unknown> = {};
     if (status !== undefined) updates.status = status;
     if (draftSubject !== undefined) updates.draft_subject = draftSubject;
     if (draftHtml !== undefined) updates.draft_html = draftHtml;
+    if (assignedRepId !== undefined) updates.assigned_rep_id = assignedRepId;
+    if (leadTier !== undefined) updates.lead_tier = leadTier;
 
     if (Object.keys(updates).length === 0) {
       return NextResponse.json({ error: "No fields to update" }, { status: 400 });
@@ -91,6 +100,8 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const gate = await requireAdmin(req);
+  if ("response" in gate) return gate.response;
   const { id } = await params;
 
   const { error } = await supabase

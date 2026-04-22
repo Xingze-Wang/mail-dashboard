@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
+import { requireSession } from "@/lib/auth-helpers";
+import { getRep } from "@/lib/assignment";
 
 /** Clean up `to` field — handles JSON array strings like '["a@b.com"]' */
 function cleanToField(to: string | null): string {
@@ -18,6 +20,14 @@ function cleanToField(to: string | null): string {
 
 export async function POST(req: NextRequest) {
   try {
+    const secret = process.env.INBOUND_SECRET;
+    if (secret) {
+      const auth = req.headers.get("authorization") || "";
+      const header = req.headers.get("x-inbound-secret") || "";
+      if (auth !== `Bearer ${secret}` && header !== secret) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      }
+    }
     const body = await req.json();
     const { from, to, subject, html, text, message_id, in_reply_to, references, headers } = body;
 
@@ -79,16 +89,40 @@ export async function GET(req: NextRequest) {
   const limit = parseInt(searchParams.get("limit") || "50");
   const offset = (page - 1) * limit;
 
-  const [{ data: emails }, { count: total }] = await Promise.all([
-    supabase
-      .from("inbound_emails")
-      .select()
-      .order("created_at", { ascending: false })
-      .range(offset, offset + limit - 1),
-    supabase
-      .from("inbound_emails")
-      .select("*", { count: "exact", head: true }),
-  ]);
+  // Per-sales scoping: regular sales only see inbounds in threads they
+  // originated. Admin + senior see everything (they triage across the
+  // team). Same two-step resolve as unread-count: find this rep's
+  // thread ids via the outbound `emails` table, then filter.
+  const session = await requireSession(req);
+  const isPrivileged = session?.role === "admin" || session?.role === "senior";
+  let threadIds: string[] | null = null;
+  if (!isPrivileged && session?.repId) {
+    const rep = await getRep(session.repId);
+    if (!rep) return NextResponse.json({ emails: [], total: 0, page, limit });
+    const { data: outbound } = await supabase
+      .from("emails")
+      .select("thread_id")
+      .ilike("from", `%${rep.sender_email}%`)
+      .not("thread_id", "is", null);
+    threadIds = (outbound ?? [])
+      .map((r) => r.thread_id as string | null)
+      .filter((t): t is string => !!t);
+    if (threadIds.length === 0) return NextResponse.json({ emails: [], total: 0, page, limit });
+  }
+
+  let listQuery = supabase
+    .from("inbound_emails")
+    .select()
+    .order("created_at", { ascending: false })
+    .range(offset, offset + limit - 1);
+  let countQuery = supabase
+    .from("inbound_emails")
+    .select("*", { count: "exact", head: true });
+  if (threadIds) {
+    listQuery = listQuery.in("thread_id", threadIds);
+    countQuery = countQuery.in("thread_id", threadIds);
+  }
+  const [{ data: emails }, { count: total }] = await Promise.all([listQuery, countQuery]);
 
   // Map snake_case DB fields to camelCase for frontend
   const mapped = (emails || []).map((e) => ({

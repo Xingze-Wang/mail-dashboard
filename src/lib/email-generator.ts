@@ -110,7 +110,7 @@ function generateThirdParagraph(
 
 // ============ Prompt template loading ============
 
-const DEFAULT_INTRO_PROMPT_NAME = "pipeline_intro_prompt";
+export const DEFAULT_INTRO_PROMPT_NAME = "pipeline_intro_prompt";
 
 /**
  * Load a prompt template from the DB (templates table).
@@ -132,7 +132,7 @@ async function loadPromptTemplate(name: string): Promise<string | null> {
 
 // ============ Gemini personalized intro ============
 
-const DEFAULT_INTRO_PROMPT = `根据论文写一句个性化开头（1句话）。
+export const DEFAULT_INTRO_PROMPT = `根据论文写一句个性化开头（1句话）。
 
 标题: {{title}}
 摘要: {{abstract}}
@@ -231,6 +231,8 @@ export async function generateDraft(lead: {
   schoolName: string | null;
   schoolTier: number | null;
   matchedDirections: string[];
+  repName?: string;
+  repWechatId?: string;
 }): Promise<{ subject: string; html: string }> {
   const schoolInfo = getSchoolInfo(lead.authorEmail);
   const greeting = lead.firstName
@@ -248,6 +250,19 @@ export async function generateDraft(lead: {
     lead.matchedDirections,
   );
 
+  // Default to Leo only when the caller genuinely has no rep (should be rare —
+  // every pipeline_leads row is assigned at insert time). Log when we fall back
+  // so a silent Leo-default doesn't sneak past us.
+  if (!lead.repName || !lead.repWechatId) {
+    console.warn("generateDraft: missing rep identity, falling back to Leo", {
+      authorEmail: lead.authorEmail,
+      hasName: !!lead.repName,
+      hasWechat: !!lead.repWechatId,
+    });
+  }
+  const repName = lead.repName || "Leo";
+  const repWechat = lead.repWechatId || "Lorenserus1";
+
   const fullTitle = lead.title.replace(/\n/g, " ").trim();
   const closingName = lead.firstName
     ? escapeHtml(lead.firstName)
@@ -262,10 +277,10 @@ export async function generateDraft(lead: {
 <body style="font-family: sans-serif; font-size: 14px; line-height: 1.8; color: #333;">
 ${greeting}<br><br>
 ${personalizedIntroHtml}<br><br>
-我是奇绩创坛的Leo。针对具备高潜力的前沿科研项目，奇绩算力计划目前正开放新一轮的申请，希望能通过免费算力，将科研的固定成本转变为边际成本，助力前沿想法的快速验证。<br><br>
+我是奇绩创坛的${escapeHtml(repName)}。针对具备高潜力的前沿科研项目，奇绩算力计划目前正开放新一轮的申请，希望能通过免费算力，将科研的固定成本转变为边际成本，助力前沿想法的快速验证。<br><br>
 ${thirdParagraph}<br><br>
-如果${closingName}对算力支持感兴趣，欢迎<a href="${APPLY_URL_CTA}">申请</a>或加我微信交流（Lorenserus1）。<br><br>
-<span style="font-size: 14px; color: #333; line-height: 1.6;">Leo<br>奇绩创坛</span>
+如果${closingName}对算力支持感兴趣，欢迎<a href="${APPLY_URL_CTA}">申请</a>或加我微信交流（${escapeHtml(repWechat)}）。<br><br>
+<span style="font-size: 14px; color: #333; line-height: 1.6;">${escapeHtml(repName)}<br>奇绩创坛</span>
 </body></html>`;
 
   return { subject, html };

@@ -1,0 +1,2139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<!-- DESIGN NOTES
+  Direction D — "Refined card stream with channel tabs"
+
+  Three key decisions:
+
+  1. CHANNEL-AS-PRIMARY-AXIS, STATUS-AS-SECONDARY.
+     The current mockup treats status (New/Contacted/Qualified) as the top
+     filter — that worked when arXiv was the only source. With HF/GH/PH leads
+     that have no email and no "contacted" state, status is no longer
+     orthogonal across sources. Channel tabs (All / arXiv / HF / GitHub / PH)
+     become the primary filter; status reduces to a chip filter inside All.
+     Counts ride as subscript so the user always sees source mix at a glance.
+
+  2. ONE CARD SHAPE, TWO CONTENT VARIANTS.
+     A grid-per-source would have fragmented the feed. Instead: a single
+     stream of cards with the same outer geometry — same padding, radius,
+     border, hover. The INSIDE adapts: arXiv shows paper title + draft
+     snippet, "discovery" cards show handle + signal chips + bio. A 3px
+     left edge accent encodes readiness (green = ready, amber = enriching,
+     slate = discovered). User scans the left edge to find what's actionable
+     today. Action buttons mirror this — primary "Send" only on ready cards,
+     ghost "Find email" on discovery cards.
+
+  3. DENSITY YOU CAN BREATHE IN.
+     Generous 24px card padding, 14px gap between cards, display/body/meta
+     type scale (28/15/12). Color is reserved for tier and readiness;
+     everything else is greyscale. Borders carry depth — no shadows except on
+     hover. The PH empty state becomes a soft onboarding tile rather than a
+     dead "0 results" — it sells the next integration the user could turn on.
+-->
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Miracle Mail — Pipeline · Refined Stream</title>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #FAFAF8;
+    --bg-soft: #F5F5F1;
+    --card: #FFFFFF;
+    --text: #0F0F0E;
+    --text-2: #5A5A56;
+    --text-3: #97968E;
+    --text-4: #C4C3BC;
+    --border: #E8E7E1;
+    --border-soft: #F0EFE9;
+    --border-strong: #D7D6CF;
+
+    --accent: #0F0F0E;
+
+    --green: #15803D;
+    --green-soft: #ECFDF3;
+    --green-edge: #BBF7D0;
+
+    --amber: #B45309;
+    --amber-soft: #FFFBEB;
+    --amber-edge: #FDE68A;
+
+    --slate: #475569;
+    --slate-soft: #F1F5F9;
+    --slate-edge: #E2E8F0;
+
+    --blue: #1D4ED8;
+    --blue-soft: #EFF6FF;
+    --blue-edge: #BFDBFE;
+
+    --rose: #BE185D;
+    --rose-soft: #FDF2F8;
+
+    --violet: #6D28D9;
+    --violet-soft: #F5F3FF;
+
+    /* Source brand tints (very subtle) */
+    --src-arxiv: #B91C1C;
+    --src-hf: #FF9D00;
+    --src-gh: #1F2937;
+    --src-ph: #DA552F;
+
+    --radius: 12px;
+    --radius-sm: 8px;
+    --radius-xs: 6px;
+    --sidebar-w: 232px;
+
+    --font-display: 'Newsreader', Georgia, serif;
+    --font-body: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  }
+
+  html, body { background: var(--bg); }
+  body {
+    font-family: var(--font-body);
+    color: var(--text);
+    display: flex;
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-size: 14px;
+    line-height: 1.5;
+    font-feature-settings: "ss01", "cv11";
+  }
+
+  /* ── Sidebar ────────────────────────────────────────────── */
+  .sidebar {
+    width: var(--sidebar-w);
+    min-height: 100vh;
+    background: var(--card);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    top: 0; left: 0;
+    z-index: 100;
+  }
+
+  .sidebar-logo {
+    padding: 24px 22px 20px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .logo-mark {
+    width: 28px;
+    height: 28px;
+    background: var(--accent);
+    border-radius: 7px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-family: var(--font-display);
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: -0.04em;
+  }
+
+  .sidebar-logo span {
+    font-family: var(--font-display);
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+
+  .sidebar-section-label {
+    font-size: 10.5px;
+    font-weight: 600;
+    color: var(--text-4);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 14px 22px 6px;
+  }
+
+  .sidebar-nav {
+    padding: 4px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 10px;
+    border-radius: var(--radius-xs);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-2);
+    text-decoration: none;
+    position: relative;
+  }
+  .nav-item:hover { background: var(--bg); color: var(--text); }
+  .nav-item.active {
+    background: var(--bg);
+    color: var(--text);
+    font-weight: 600;
+  }
+  .nav-item svg { width: 16px; height: 16px; flex-shrink: 0; opacity: 0.6; }
+  .nav-item.active svg { opacity: 0.95; }
+
+  .nav-item .nav-count {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+    font-weight: 500;
+  }
+  .nav-item .nav-dot {
+    margin-left: auto;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--green);
+  }
+
+  .sidebar-spacer { flex: 1; }
+
+  .sidebar-footer {
+    padding: 14px 16px 18px;
+    border-top: 1px solid var(--border-soft);
+  }
+
+  .sidebar-footer .user {
+    display: flex; align-items: center; gap: 10px;
+    padding: 6px;
+    border-radius: var(--radius-xs);
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .sidebar-footer .user:hover { background: var(--bg); }
+
+  .avatar {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 600;
+    color: var(--text);
+    background: linear-gradient(135deg, #FDE68A, #FCD34D);
+    flex-shrink: 0;
+  }
+
+  .user-name { font-size: 13px; font-weight: 600; color: var(--text); line-height: 1.2; }
+  .user-role { font-size: 11px; color: var(--text-3); }
+
+  /* ── Main ──────────────────────────────────────────────── */
+  .main {
+    margin-left: var(--sidebar-w);
+    flex: 1;
+    min-height: 100vh;
+  }
+
+  .topbar {
+    padding: 22px 36px 0;
+  }
+
+  .topbar-row {
+    display: flex; align-items: flex-end; justify-content: space-between;
+    gap: 24px;
+    margin-bottom: 26px;
+  }
+
+  .crumb {
+    font-size: 12px;
+    color: var(--text-3);
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .crumb .sep { color: var(--text-4); }
+
+  .page-title {
+    font-family: var(--font-display);
+    font-size: 30px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+    color: var(--text);
+    line-height: 1.1;
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+  }
+  .page-title .subtle {
+    font-family: var(--font-body);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-3);
+    letter-spacing: 0;
+  }
+
+  .topbar-actions { display: flex; gap: 8px; align-items: center; }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 12px;
+    border-radius: var(--radius-xs);
+    font-size: 12.5px;
+    font-weight: 500;
+    font-family: var(--font-body);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--text);
+    line-height: 1.3;
+  }
+  .btn:hover { border-color: var(--border-strong); background: var(--bg); }
+  .btn svg { width: 14px; height: 14px; opacity: 0.7; }
+
+  .btn-primary {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+  }
+  .btn-primary:hover { background: #2A2A28; border-color: #2A2A28; }
+  .btn-primary svg { opacity: 1; }
+
+  .iconbtn {
+    width: 30px; height: 30px;
+    display: inline-flex;
+    align-items: center; justify-content: center;
+    border-radius: var(--radius-xs);
+    border: 1px solid var(--border);
+    background: var(--card);
+    cursor: pointer;
+    color: var(--text-2);
+    transition: all 0.15s;
+  }
+  .iconbtn:hover { background: var(--bg); color: var(--text); border-color: var(--border-strong); }
+  .iconbtn svg { width: 14px; height: 14px; }
+
+  /* ── Stat strip ─────────────────────────────────────────── */
+  .stat-strip {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 12px;
+    padding: 0 36px;
+    margin-bottom: 24px;
+  }
+
+  .stat {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .stat-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 8px;
+  }
+  .stat-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .stat-trend {
+    font-size: 10.5px;
+    font-weight: 600;
+    color: var(--green);
+    background: var(--green-soft);
+    padding: 2px 6px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+  }
+  .stat-trend.flat { color: var(--text-3); background: var(--bg-soft); }
+  .stat-trend.down { color: var(--src-arxiv); background: #FEF2F2; }
+
+  .stat-value {
+    font-family: var(--font-display);
+    font-size: 26px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+    color: var(--text);
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+  }
+  .stat-value .unit {
+    font-family: var(--font-body);
+    font-size: 13px;
+    color: var(--text-3);
+    font-weight: 500;
+    margin-left: 2px;
+  }
+
+  .sparkline {
+    height: 28px;
+    width: 100%;
+    margin-top: 2px;
+  }
+
+  /* ── Channel tabs (primary filter) ─────────────────────── */
+  .channel-bar {
+    padding: 0 36px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 0;
+    overflow-x: auto;
+  }
+
+  .ch-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 11px 16px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-3);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    transition: all 0.15s;
+    white-space: nowrap;
+    user-select: none;
+  }
+  .ch-tab:hover { color: var(--text-2); }
+  .ch-tab.active {
+    color: var(--text);
+    border-bottom-color: var(--text);
+    font-weight: 600;
+  }
+  .ch-tab .ch-icon {
+    width: 14px; height: 14px;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .ch-tab .ch-count {
+    font-size: 10.5px;
+    font-weight: 600;
+    color: var(--text-3);
+    background: var(--bg-soft);
+    padding: 1px 6px;
+    border-radius: 999px;
+    font-variant-numeric: tabular-nums;
+  }
+  .ch-tab.active .ch-count {
+    background: var(--text);
+    color: white;
+  }
+
+  /* ── Stream toolbar ─────────────────────────────────────── */
+  .stream-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 18px 36px 14px;
+    flex-wrap: wrap;
+  }
+
+  .chip-group {
+    display: inline-flex;
+    background: var(--bg-soft);
+    border: 1px solid var(--border-soft);
+    border-radius: 999px;
+    padding: 2px;
+  }
+
+  .chip {
+    padding: 4px 12px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-3);
+    border-radius: 999px;
+    cursor: pointer;
+    transition: all 0.15s;
+    user-select: none;
+    white-space: nowrap;
+  }
+  .chip:hover { color: var(--text-2); }
+  .chip.active {
+    background: var(--card);
+    color: var(--text);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    font-weight: 600;
+  }
+
+  .toolbar-spacer { flex: 1; }
+
+  .select-light {
+    appearance: none;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xs);
+    padding: 6px 26px 6px 10px;
+    font-size: 12px;
+    font-weight: 500;
+    font-family: var(--font-body);
+    color: var(--text-2);
+    cursor: pointer;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%2397968E' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+    transition: border-color 0.15s;
+  }
+  .select-light:hover { border-color: var(--border-strong); color: var(--text); }
+
+  .rep-pills {
+    display: inline-flex;
+    gap: 4px;
+    padding-left: 4px;
+  }
+  .rep-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 9px 4px 4px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    font-size: 11.5px;
+    font-weight: 500;
+    color: var(--text-2);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .rep-pill:hover { border-color: var(--border-strong); }
+  .rep-pill.active { background: var(--text); color: white; border-color: var(--text); }
+  .rep-pill .rp-dot {
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 9.5px; font-weight: 700;
+    color: white;
+  }
+  .rep-pill.active .rp-dot { background: rgba(255,255,255,0.18) !important; }
+
+  /* ── Card stream ────────────────────────────────────────── */
+  .stream {
+    padding: 0 36px 60px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .card {
+    position: relative;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 22px 24px 20px 28px;
+    transition: all 0.18s ease;
+    overflow: hidden;
+  }
+  .card:hover {
+    border-color: var(--border-strong);
+    box-shadow: 0 1px 3px rgba(15,15,14,0.04), 0 6px 16px rgba(15,15,14,0.05);
+    transform: translateY(-1px);
+  }
+
+  /* Readiness edge — thin colored stripe on the left */
+  .card::before {
+    content: "";
+    position: absolute;
+    top: 14px; bottom: 14px; left: 0;
+    width: 3px;
+    border-radius: 0 3px 3px 0;
+    background: var(--border-strong);
+    transition: background 0.18s;
+  }
+  .card.ready::before { background: var(--green); }
+  .card.enriching::before { background: var(--amber); }
+  .card.discovered::before { background: var(--slate-edge); }
+  .card.sent::before { background: var(--blue-edge); }
+  .card.replied::before { background: var(--violet); }
+
+  .card-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+  }
+
+  .src-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 9px 3px 6px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    background: var(--bg-soft);
+    color: var(--text-2);
+    border: 1px solid var(--border-soft);
+    line-height: 1.4;
+  }
+  .src-badge .src-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+  }
+  .src-badge.arxiv .src-dot { background: var(--src-arxiv); }
+  .src-badge.hf .src-dot { background: var(--src-hf); }
+  .src-badge.gh .src-dot { background: var(--src-gh); }
+  .src-badge.ph .src-dot { background: var(--src-ph); }
+
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    font-size: 10.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .status-badge.ready { background: var(--green-soft); color: var(--green); }
+  .status-badge.enriching { background: var(--amber-soft); color: var(--amber); }
+  .status-badge.discovered { background: var(--slate-soft); color: var(--slate); }
+  .status-badge.sent { background: var(--blue-soft); color: var(--blue); }
+  .status-badge.replied { background: var(--violet-soft); color: var(--violet); }
+
+  .tier-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    font-size: 10.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .tier-badge.strong {
+    background: var(--amber-soft);
+    color: var(--amber);
+    border: 1px solid var(--amber-edge);
+  }
+  .tier-badge.normal {
+    background: var(--bg-soft);
+    color: var(--text-3);
+    border: 1px solid var(--border-soft);
+  }
+
+  .head-meta {
+    margin-left: auto;
+    font-size: 11.5px;
+    color: var(--text-3);
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-variant-numeric: tabular-nums;
+  }
+  .head-meta .dot { width: 3px; height: 3px; border-radius: 50%; background: var(--text-4); }
+
+  .card-title {
+    font-family: var(--font-display);
+    font-size: 18px;
+    line-height: 1.35;
+    font-weight: 500;
+    color: var(--text);
+    letter-spacing: -0.015em;
+    margin-bottom: 10px;
+  }
+  .card-title.handle {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .card-title .handle-mono {
+    font-family: var(--font-mono);
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text);
+    background: var(--bg-soft);
+    padding: 2px 8px;
+    border-radius: var(--radius-xs);
+    border: 1px solid var(--border-soft);
+  }
+  .card-title .fullname {
+    font-family: var(--font-display);
+    font-weight: 500;
+    font-size: 18px;
+    color: var(--text);
+  }
+
+  .author-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12.5px;
+    color: var(--text-2);
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+  }
+  .author-row .au-name { font-weight: 600; color: var(--text); }
+  .author-row .au-sep { color: var(--text-4); }
+  .author-row .au-email {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--text-2);
+  }
+  .author-row .au-org { color: var(--text-2); }
+
+  .draft-snippet {
+    background: var(--bg);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-xs);
+    padding: 10px 14px;
+    font-size: 12.5px;
+    color: var(--text-2);
+    line-height: 1.55;
+    margin-bottom: 14px;
+    position: relative;
+  }
+  .draft-snippet .draft-label {
+    font-size: 9.5px;
+    font-weight: 700;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 4px;
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+  .draft-snippet .draft-subj {
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 2px;
+    font-size: 12.5px;
+  }
+
+  .signal-chips {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+
+  .sig-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11.5px;
+    font-weight: 500;
+    padding: 3px 9px;
+    border-radius: 999px;
+    background: var(--bg-soft);
+    border: 1px solid var(--border-soft);
+    color: var(--text-2);
+    white-space: nowrap;
+  }
+  .sig-chip svg { width: 11px; height: 11px; opacity: 0.5; }
+  .sig-chip.score {
+    background: var(--green-soft);
+    border-color: var(--green-edge);
+    color: var(--green);
+    font-family: var(--font-mono);
+    font-weight: 600;
+  }
+  .sig-chip.cn {
+    background: var(--rose-soft);
+    border-color: #FBCFE8;
+    color: var(--rose);
+  }
+  .sig-chip.org {
+    background: var(--blue-soft);
+    border-color: var(--blue-edge);
+    color: var(--blue);
+  }
+
+  .bio {
+    font-size: 13px;
+    color: var(--text-2);
+    line-height: 1.55;
+    margin-bottom: 14px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .contact-hints {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+    font-size: 12px;
+    color: var(--text-2);
+  }
+  .contact-hint {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: var(--text-2);
+    text-decoration: none;
+  }
+  .contact-hint:hover { color: var(--text); }
+  .contact-hint svg { width: 13px; height: 13px; opacity: 0.6; }
+  .contact-hint .h-key { color: var(--text-3); font-size: 11.5px; }
+  .contact-hint .h-val { font-family: var(--font-mono); font-size: 11.5px; }
+
+  .card-foot {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding-top: 14px;
+    border-top: 1px dashed var(--border-soft);
+  }
+
+  .foot-meta {
+    font-size: 11.5px;
+    color: var(--text-3);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .foot-meta .rep-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 8px 2px 3px;
+    border-radius: 999px;
+    background: var(--bg-soft);
+    border: 1px solid var(--border-soft);
+    color: var(--text-2);
+    font-weight: 500;
+  }
+  .rep-chip .rp-dot {
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    color: white;
+    font-size: 9px;
+    font-weight: 700;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+
+  .foot-actions {
+    margin-left: auto;
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+
+  .ghost {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 6px 11px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-2);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-xs);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .ghost:hover { background: var(--bg); color: var(--text); }
+  .ghost svg { width: 13px; height: 13px; opacity: 0.65; }
+
+  .secondary {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text);
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xs);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .secondary:hover { background: var(--bg); border-color: var(--border-strong); }
+  .secondary svg { width: 13px; height: 13px; opacity: 0.65; }
+
+  .primary {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 6px 14px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: white;
+    background: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-xs);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .primary:hover { background: #2A2A28; box-shadow: 0 2px 6px rgba(15,15,14,0.18); }
+  .primary svg { width: 13px; height: 13px; }
+
+  .primary.find {
+    background: var(--card);
+    color: var(--text);
+    border: 1px dashed var(--border-strong);
+  }
+  .primary.find:hover { background: var(--bg); border-style: solid; }
+
+  /* Empty state */
+  .empty {
+    background: var(--card);
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius);
+    padding: 40px 32px;
+    display: flex;
+    align-items: center;
+    gap: 28px;
+  }
+  .empty-glyph {
+    width: 56px; height: 56px;
+    border-radius: 14px;
+    background: linear-gradient(135deg, #FFF2EE, #FFD9C8);
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    font-family: var(--font-display);
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--src-ph);
+  }
+  .empty-body { flex: 1; }
+  .empty-title {
+    font-family: var(--font-display);
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    color: var(--text);
+    margin-bottom: 4px;
+  }
+  .empty-text {
+    font-size: 13px;
+    color: var(--text-2);
+    line-height: 1.55;
+    max-width: 540px;
+  }
+  .empty-actions {
+    display: flex; gap: 8px; flex-shrink: 0;
+  }
+
+  /* Source brand glyph */
+  .src-glyph {
+    width: 14px; height: 14px;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+
+  /* Section divider in stream */
+  .day-rule {
+    display: flex; align-items: center; gap: 12px;
+    margin: 8px 4px 0;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-3);
+  }
+  .day-rule::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--border-soft);
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #DBDAD3; border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: #BCBBB3; }
+
+  /* Focus rings */
+  button:focus-visible, .chip:focus-visible, .ch-tab:focus-visible, .nav-item:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: var(--radius-xs);
+  }
+
+  @media (max-width: 1100px) {
+    .stat-strip { grid-template-columns: repeat(3, 1fr); }
+    .card-foot { flex-wrap: wrap; }
+    .foot-actions { width: 100%; justify-content: flex-end; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ════════════════════ SIDEBAR ════════════════════ -->
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <div class="logo-mark">M</div>
+    <span>Miracle Mail</span>
+  </div>
+
+  <div class="sidebar-section-label">Workspace</div>
+  <nav class="sidebar-nav">
+    <a class="nav-item" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+      Dashboard
+    </a>
+    <a class="nav-item active" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h13"/><path d="M3 12h10"/><path d="M3 18h7"/><circle cx="19" cy="6" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="13" cy="18" r="2"/></svg>
+      Pipeline
+      <span class="nav-count">142</span>
+    </a>
+    <a class="nav-item" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z"/></svg>
+      Inbox
+      <span class="nav-dot"></span>
+    </a>
+    <a class="nav-item" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+      Emails
+      <span class="nav-count">389</span>
+    </a>
+    <a class="nav-item" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2.5"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+      Templates
+    </a>
+  </nav>
+
+  <div class="sidebar-section-label">Operate</div>
+  <nav class="sidebar-nav">
+    <a class="nav-item" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+      Brief
+    </a>
+    <a class="nav-item" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+      Scorer
+    </a>
+    <a class="nav-item" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="17" y1="10" x2="3" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="17" y1="18" x2="3" y2="18"/></svg>
+      Logs
+    </a>
+    <a class="nav-item" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+      Settings
+    </a>
+  </nav>
+
+  <div class="sidebar-spacer"></div>
+
+  <div class="sidebar-footer">
+    <div class="user">
+      <div class="avatar">XW</div>
+      <div>
+        <div class="user-name">Xingze Wang</div>
+        <div class="user-role">Admin · Miracle+</div>
+      </div>
+    </div>
+  </div>
+</aside>
+
+<!-- ════════════════════ MAIN ════════════════════ -->
+<main class="main">
+
+  <!-- Top bar -->
+  <div class="topbar">
+    <div class="topbar-row">
+      <div>
+        <div class="crumb">
+          <span>Workspace</span><span class="sep">/</span><span>Pipeline</span>
+        </div>
+        <div class="page-title">
+          Pipeline
+          <span class="subtle">142 active leads · synced 4 min ago</span>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <button class="iconbtn" title="Search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        </button>
+        <button class="btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Export
+        </button>
+        <button class="btn btn-primary">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Add lead
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Stat strip -->
+  <div class="stat-strip">
+    <div class="stat">
+      <div class="stat-head">
+        <span class="stat-label">Total leads</span>
+        <span class="stat-trend"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>+38</span>
+      </div>
+      <div class="stat-value">482</div>
+      <svg class="sparkline" viewBox="0 0 200 32" preserveAspectRatio="none">
+        <polyline fill="none" stroke="#15803D" stroke-width="1.6" points="0,22 18,18 36,20 54,12 72,16 90,10 108,14 126,8 144,12 162,6 180,10 200,4"/>
+        <polyline fill="rgba(21,128,61,0.08)" stroke="none" points="0,22 18,18 36,20 54,12 72,16 90,10 108,14 126,8 144,12 162,6 180,10 200,4 200,32 0,32"/>
+      </svg>
+    </div>
+
+    <div class="stat">
+      <div class="stat-head">
+        <span class="stat-label">This week</span>
+        <span class="stat-trend"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>+12%</span>
+      </div>
+      <div class="stat-value">38</div>
+      <svg class="sparkline" viewBox="0 0 200 32" preserveAspectRatio="none">
+        <polyline fill="none" stroke="#1D4ED8" stroke-width="1.6" points="0,24 30,20 60,22 90,14 120,18 150,8 180,12 200,6"/>
+        <polyline fill="rgba(29,78,216,0.08)" stroke="none" points="0,24 30,20 60,22 90,14 120,18 150,8 180,12 200,6 200,32 0,32"/>
+      </svg>
+    </div>
+
+    <div class="stat">
+      <div class="stat-head">
+        <span class="stat-label">Ready to send</span>
+        <span class="stat-trend"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>+9</span>
+      </div>
+      <div class="stat-value">27<span class="unit">/142</span></div>
+      <svg class="sparkline" viewBox="0 0 200 32" preserveAspectRatio="none">
+        <polyline fill="none" stroke="#B45309" stroke-width="1.6" points="0,16 22,20 44,14 66,18 88,10 110,14 132,8 154,16 176,12 200,8"/>
+        <polyline fill="rgba(180,83,9,0.08)" stroke="none" points="0,16 22,20 44,14 66,18 88,10 110,14 132,8 154,16 176,12 200,8 200,32 0,32"/>
+      </svg>
+    </div>
+
+    <div class="stat">
+      <div class="stat-head">
+        <span class="stat-label">Sent · 7d</span>
+        <span class="stat-trend flat">±0</span>
+      </div>
+      <div class="stat-value">63</div>
+      <svg class="sparkline" viewBox="0 0 200 32" preserveAspectRatio="none">
+        <polyline fill="none" stroke="#5A5A56" stroke-width="1.6" points="0,16 25,12 50,18 75,14 100,16 125,12 150,18 175,14 200,16"/>
+        <polyline fill="rgba(90,90,86,0.06)" stroke="none" points="0,16 25,12 50,18 75,14 100,16 125,12 150,18 175,14 200,16 200,32 0,32"/>
+      </svg>
+    </div>
+
+    <div class="stat">
+      <div class="stat-head">
+        <span class="stat-label">Reply rate</span>
+        <span class="stat-trend"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>+0.6</span>
+      </div>
+      <div class="stat-value">8.4<span class="unit">%</span></div>
+      <svg class="sparkline" viewBox="0 0 200 32" preserveAspectRatio="none">
+        <polyline fill="none" stroke="#6D28D9" stroke-width="1.6" points="0,22 25,20 50,18 75,16 100,12 125,14 150,10 175,8 200,6"/>
+        <polyline fill="rgba(109,40,217,0.08)" stroke="none" points="0,22 25,20 50,18 75,16 100,12 125,14 150,10 175,8 200,6 200,32 0,32"/>
+      </svg>
+    </div>
+  </div>
+
+  <!-- Channel tabs -->
+  <div class="channel-bar">
+    <div class="ch-tab active">
+      <span class="ch-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/></svg>
+      </span>
+      All
+      <span class="ch-count">142</span>
+    </div>
+    <div class="ch-tab">
+      <span class="ch-icon" style="color: var(--src-arxiv);">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      </span>
+      arXiv
+      <span class="ch-count">114</span>
+    </div>
+    <div class="ch-tab">
+      <span class="ch-icon" style="color: var(--src-hf);">
+        <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="9"/></svg>
+      </span>
+      Hugging Face
+      <span class="ch-count">14</span>
+    </div>
+    <div class="ch-tab">
+      <span class="ch-icon" style="color: var(--src-gh);">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .3a12 12 0 00-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2 0 1.9 1.2 1.9 1.2 1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-6 0-1.2.5-2.3 1.3-3.1-.2-.4-.6-1.6.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 016 0C17.3 4.7 18.3 5 18.3 5c.7 1.6.2 2.8.1 3.2.8.8 1.3 1.9 1.3 3.1 0 4.6-2.8 5.6-5.5 5.9.5.4.9 1.1.9 2.3v3.3c0 .3.2.7.8.6A12 12 0 0012 .3"/></svg>
+      </span>
+      GitHub
+      <span class="ch-count">12</span>
+    </div>
+    <div class="ch-tab">
+      <span class="ch-icon" style="color: var(--src-ph);">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.6 0 12 0zm.7 13.5h-3v3.5H7V6.9h5.7c2.6 0 4.5 1.5 4.5 3.3 0 1.8-1.9 3.3-4.5 3.3z"/></svg>
+      </span>
+      Product Hunt
+      <span class="ch-count">2</span>
+    </div>
+  </div>
+
+  <!-- Stream toolbar -->
+  <div class="stream-toolbar">
+    <div class="chip-group">
+      <div class="chip active">All status</div>
+      <div class="chip">Discovered</div>
+      <div class="chip">Enriching</div>
+      <div class="chip">Ready</div>
+      <div class="chip">Sent</div>
+      <div class="chip">Replied</div>
+    </div>
+
+    <div class="rep-pills">
+      <div class="rep-pill active">
+        <span class="rp-dot" style="background: #1D4ED8;">L</span>
+        Leo
+      </div>
+      <div class="rep-pill">
+        <span class="rp-dot" style="background: #BE185D;">E</span>
+        Ethan
+      </div>
+      <div class="rep-pill">
+        <span class="rp-dot" style="background: #B45309;">C</span>
+        Chenyu
+      </div>
+    </div>
+
+    <div class="toolbar-spacer"></div>
+
+    <select class="select-light">
+      <option>Sort: Newest</option>
+      <option>Sort: Score</option>
+      <option>Sort: Tier</option>
+      <option>Sort: Last activity</option>
+    </select>
+  </div>
+
+  <!-- ═══ STREAM ═══ -->
+  <div class="stream">
+
+    <div class="day-rule">Today · Apr 19</div>
+
+    <!-- 1 — arXiv READY (Stanford, strong) -->
+    <div class="card ready">
+      <div class="card-head">
+        <span class="src-badge arxiv"><span class="src-dot"></span>arXiv</span>
+        <span class="status-badge ready">
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg>
+          Ready
+        </span>
+        <span class="tier-badge strong">Strong</span>
+        <span class="head-meta">
+          2,841 cites <span class="dot"></span> h-index 34 <span class="dot"></span> 12m ago
+        </span>
+      </div>
+      <div class="card-title">Scaling Laws for Reward Model Overoptimization in Chinese Large Language Models</div>
+      <div class="author-row">
+        <span class="au-name">Yichen Liu</span>
+        <span class="au-sep">·</span>
+        <span class="au-org">Stanford NLP</span>
+        <span class="au-sep">·</span>
+        <span class="au-email">yichen.liu@stanford.edu</span>
+      </div>
+      <div class="draft-snippet">
+        <div class="draft-label">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/></svg>
+          Draft · Leo
+        </div>
+        <div class="draft-subj">Re: Scaling Laws for Reward Model Overoptimization — quick thoughts</div>
+        Hi Yichen, your finding that reward model size dominates KL budget at the Pareto frontier reframes how we'd architect Chinese-language RLHF runs at Miracle+. We've been running similar...
+      </div>
+      <div class="card-foot">
+        <span class="foot-meta">
+          Assigned to
+          <span class="rep-chip"><span class="rp-dot" style="background:#1D4ED8;">L</span>Leo</span>
+        </span>
+        <div class="foot-actions">
+          <button class="ghost">Skip</button>
+          <button class="secondary">View draft</button>
+          <button class="primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            Send
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2 — HF DISCOVERED (no email) -->
+    <div class="card discovered">
+      <div class="card-head">
+        <span class="src-badge hf"><span class="src-dot"></span>Hugging Face</span>
+        <span class="status-badge discovered">
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg>
+          Discovered
+        </span>
+        <span class="head-meta">
+          43 models <span class="dot"></span> 2.1k followers <span class="dot"></span> 38m ago
+        </span>
+      </div>
+      <div class="card-title handle">
+        <span class="handle-mono">@deepseek-ai</span>
+        <span class="fullname">DeepSeek</span>
+      </div>
+      <div class="signal-chips">
+        <span class="sig-chip score">score 0.93</span>
+        <span class="sig-chip cn">CN org</span>
+        <span class="sig-chip">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg>
+          Hangzhou
+        </span>
+        <span class="sig-chip">trending model</span>
+        <span class="sig-chip">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+          verified org
+        </span>
+      </div>
+      <div class="bio">
+        Open-source AI research org behind DeepSeek-V3 and DeepSeek-R1. Recent uploads include math-tuned 32B variants and a multilingual coder. Strong publication cadence; team member contact via Twitter or careers page.
+      </div>
+      <div class="contact-hints">
+        <a class="contact-hint" href="#">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 2h3l-7 8 8 12h-6l-5-7-6 7H2l8-9L2 2h6l4 6z"/></svg>
+          <span class="h-val">@deepseek_ai</span>
+        </a>
+        <span class="contact-hint">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
+          <span class="h-val">deepseek.com</span>
+        </span>
+        <span class="contact-hint"><span class="h-key">Email guess:</span> <span class="h-val" style="color: var(--text-3);">none yet</span></span>
+      </div>
+      <div class="card-foot">
+        <span class="foot-meta">Unassigned · auto-routes to <strong style="color:var(--text-2);">Chenyu</strong> if domestic</span>
+        <div class="foot-actions">
+          <button class="ghost">Mute</button>
+          <button class="secondary">View profile</button>
+          <button class="primary find">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            Find email
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3 — arXiv SENT -->
+    <div class="card sent">
+      <div class="card-head">
+        <span class="src-badge arxiv"><span class="src-dot"></span>arXiv</span>
+        <span class="status-badge sent">
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg>
+          Sent
+        </span>
+        <span class="tier-badge normal">Normal</span>
+        <span class="head-meta">
+          312 cites <span class="dot"></span> sent 2h ago
+        </span>
+      </div>
+      <div class="card-title">Multi-Modal Contrastive Pre-Training with Cross-Lingual Alignment for Vision-Language Tasks</div>
+      <div class="author-row">
+        <span class="au-name">Wei Chen</span>
+        <span class="au-sep">·</span>
+        <span class="au-org">浙江大学 (ZJU)</span>
+        <span class="au-sep">·</span>
+        <span class="au-email">weichen@zju.edu.cn</span>
+      </div>
+      <div class="card-foot">
+        <span class="foot-meta">
+          Sent by
+          <span class="rep-chip"><span class="rp-dot" style="background:#B45309;">C</span>Chenyu</span>
+          · awaiting reply
+        </span>
+        <div class="foot-actions">
+          <button class="ghost">Open thread</button>
+          <button class="secondary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 00-4-4H4"/></svg>
+            Follow up
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4 — GH DISCOVERED -->
+    <div class="card discovered">
+      <div class="card-head">
+        <span class="src-badge gh"><span class="src-dot"></span>GitHub</span>
+        <span class="status-badge discovered">
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg>
+          Discovered
+        </span>
+        <span class="head-meta">
+          1.4k stars <span class="dot"></span> 47 contribs <span class="dot"></span> 1h ago
+        </span>
+      </div>
+      <div class="card-title handle">
+        <span class="handle-mono">jiaxiang/llm-router</span>
+        <span class="fullname">Jiaxiang Wu</span>
+      </div>
+      <div class="signal-chips">
+        <span class="sig-chip score">score 0.81</span>
+        <span class="sig-chip cn">中文 README</span>
+        <span class="sig-chip org">ex-Tencent</span>
+        <span class="sig-chip">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+          recent push
+        </span>
+      </div>
+      <div class="bio">
+        Lightweight router for routing prompts across local + frontier LLMs. Author maintains 6 other infra repos, ships Chinese tutorials weekly. Public profile lists Twitter and a personal blog at jiaxiang.dev.
+      </div>
+      <div class="contact-hints">
+        <a class="contact-hint" href="#">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 2h3l-7 8 8 12h-6l-5-7-6 7H2l8-9L2 2h6l4 6z"/></svg>
+          <span class="h-val">@jiaxiangw</span>
+        </a>
+        <span class="contact-hint">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
+          <span class="h-val">jiaxiang.dev</span>
+        </span>
+        <span class="contact-hint"><span class="h-key">Email guess:</span> <span class="h-val">jiaxiang@*.com</span></span>
+      </div>
+      <div class="card-foot">
+        <span class="foot-meta">Unassigned · queued for enrichment</span>
+        <div class="foot-actions">
+          <button class="ghost">Mute</button>
+          <button class="secondary">Promote</button>
+          <button class="primary find">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            Find email
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 5 — arXiv READY (MIT) -->
+    <div class="card ready">
+      <div class="card-head">
+        <span class="src-badge arxiv"><span class="src-dot"></span>arXiv</span>
+        <span class="status-badge ready">
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg>
+          Ready
+        </span>
+        <span class="tier-badge strong">Strong</span>
+        <span class="head-meta">
+          1,923 cites <span class="dot"></span> h-index 28 <span class="dot"></span> 3h ago
+        </span>
+      </div>
+      <div class="card-title">Efficient Long-Context Transformers via Hierarchical Attention with Linear Complexity</div>
+      <div class="author-row">
+        <span class="au-name">Ananya Raghavan</span>
+        <span class="au-sep">·</span>
+        <span class="au-org">MIT CSAIL</span>
+        <span class="au-sep">·</span>
+        <span class="au-email">araghavan@mit.edu</span>
+      </div>
+      <div class="draft-snippet">
+        <div class="draft-label">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/></svg>
+          Draft · Leo
+        </div>
+        <div class="draft-subj">Hierarchical attention at 1M ctx — building blocks for our infra</div>
+        Ananya — your linear-attention hierarchy hits the same memory ceiling we've been bumping into when scaling Miracle+ context past 256k. Curious whether the chunked-prefix mechanism degrades on...
+      </div>
+      <div class="card-foot">
+        <span class="foot-meta">
+          Assigned to
+          <span class="rep-chip"><span class="rp-dot" style="background:#1D4ED8;">L</span>Leo</span>
+        </span>
+        <div class="foot-actions">
+          <button class="ghost">Skip</button>
+          <button class="secondary">View draft</button>
+          <button class="primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            Send
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 6 — HF DISCOVERED (Qwen) -->
+    <div class="card discovered">
+      <div class="card-head">
+        <span class="src-badge hf"><span class="src-dot"></span>Hugging Face</span>
+        <span class="status-badge discovered">
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg>
+          Discovered
+        </span>
+        <span class="head-meta">
+          312 models <span class="dot"></span> 18k followers <span class="dot"></span> 4h ago
+        </span>
+      </div>
+      <div class="card-title handle">
+        <span class="handle-mono">@Qwen</span>
+        <span class="fullname">Alibaba Qwen Team</span>
+      </div>
+      <div class="signal-chips">
+        <span class="sig-chip score">score 0.97</span>
+        <span class="sig-chip cn">CN org</span>
+        <span class="sig-chip org">Alibaba Cloud</span>
+        <span class="sig-chip">verified</span>
+      </div>
+      <div class="bio">
+        Official Hugging Face presence for Tongyi Qianwen. Ships base + chat + code + audio variants across 0.5B–72B. Team active on GitHub, blog, and WeChat tech newsletter.
+      </div>
+      <div class="contact-hints">
+        <a class="contact-hint" href="#">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
+          <span class="h-val">qwenlm.github.io</span>
+        </a>
+        <span class="contact-hint"><span class="h-key">Email guess:</span> <span class="h-val">qwen@list.alibaba-inc.com</span></span>
+      </div>
+      <div class="card-foot">
+        <span class="foot-meta">High priority · would route to <strong style="color:var(--text-2);">Chenyu</strong></span>
+        <div class="foot-actions">
+          <button class="ghost">Mute</button>
+          <button class="secondary">View profile</button>
+          <button class="primary find">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            Find email
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 7 — arXiv REPLIED -->
+    <div class="card replied">
+      <div class="card-head">
+        <span class="src-badge arxiv"><span class="src-dot"></span>arXiv</span>
+        <span class="status-badge replied">
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg>
+          Replied
+        </span>
+        <span class="tier-badge strong">Strong</span>
+        <span class="head-meta">
+          5,106 cites <span class="dot"></span> replied 5h ago
+        </span>
+      </div>
+      <div class="card-title">Reward-Guided RLHF for Controllable Code Generation in Multi-Lingual Codebases</div>
+      <div class="author-row">
+        <span class="au-name">James Kim</span>
+        <span class="au-sep">·</span>
+        <span class="au-org">UC Berkeley BAIR</span>
+        <span class="au-sep">·</span>
+        <span class="au-email">jkim@berkeley.edu</span>
+      </div>
+      <div class="draft-snippet">
+        <div class="draft-label">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 00-4-4H4"/></svg>
+          James replied · 5h ago
+        </div>
+        <div class="draft-subj">Re: Reward-guided RLHF — happy to chat next week</div>
+        Thanks for the thoughtful read! Tuesday or Wednesday EST works on my end. The chunked reward scheme actually does generalize past 64k — I'd love to see if Miracle+...
+      </div>
+      <div class="card-foot">
+        <span class="foot-meta">
+          Owned by
+          <span class="rep-chip"><span class="rp-dot" style="background:#1D4ED8;">L</span>Leo</span>
+          · move to WeChat?
+        </span>
+        <div class="foot-actions">
+          <button class="ghost">Archive</button>
+          <button class="secondary">Open thread</button>
+          <button class="primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"/></svg>
+            WeChat
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 8 — arXiv ENRICHING -->
+    <div class="card enriching">
+      <div class="card-head">
+        <span class="src-badge arxiv"><span class="src-dot"></span>arXiv</span>
+        <span class="status-badge enriching">
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg>
+          Enriching
+        </span>
+        <span class="tier-badge normal">Normal</span>
+        <span class="head-meta">
+          487 cites <span class="dot"></span> 6h ago
+        </span>
+      </div>
+      <div class="card-title">Adaptive Graph Neural Networks for Molecular Property Prediction with Few-Shot Learning</div>
+      <div class="author-row">
+        <span class="au-name">Liang Zhang</span>
+        <span class="au-sep">·</span>
+        <span class="au-org">上海交通大学 (SJTU)</span>
+        <span class="au-sep">·</span>
+        <span class="au-email" style="color: var(--text-3);">resolving email…</span>
+      </div>
+      <div class="card-foot">
+        <span class="foot-meta">
+          Email lookup running · ETA 2 min
+        </span>
+        <div class="foot-actions">
+          <button class="ghost">Skip</button>
+          <button class="secondary">Manual lookup</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="day-rule">Yesterday · Apr 18</div>
+
+    <!-- 9 — arXiv READY (Tsinghua) -->
+    <div class="card ready">
+      <div class="card-head">
+        <span class="src-badge arxiv"><span class="src-dot"></span>arXiv</span>
+        <span class="status-badge ready">
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg>
+          Ready
+        </span>
+        <span class="tier-badge strong">Strong</span>
+        <span class="head-meta">
+          3,204 cites <span class="dot"></span> h-index 31 <span class="dot"></span> 1d ago
+        </span>
+      </div>
+      <div class="card-title">Self-Refinement Loops for Mathematical Reasoning: A Survey of 2024 Methods</div>
+      <div class="author-row">
+        <span class="au-name">Haoran Sun</span>
+        <span class="au-sep">·</span>
+        <span class="au-org">清华大学 IIIS</span>
+        <span class="au-sep">·</span>
+        <span class="au-email">sunhr@mail.tsinghua.edu.cn</span>
+      </div>
+      <div class="draft-snippet">
+        <div class="draft-label">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/></svg>
+          Draft · Chenyu
+        </div>
+        <div class="draft-subj">您的 self-refinement 综述 — 想约个十五分钟</div>
+        孙老师好，读完了您新放的 self-refinement 综述，特别认同您把 reasoning chain consolidation 单独列为一类的判断。我们在 Miracle+ 内部正在...
+      </div>
+      <div class="card-foot">
+        <span class="foot-meta">
+          Assigned to
+          <span class="rep-chip"><span class="rp-dot" style="background:#B45309;">C</span>Chenyu</span>
+        </span>
+        <div class="foot-actions">
+          <button class="ghost">Skip</button>
+          <button class="secondary">View draft</button>
+          <button class="primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            Send
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 10 — PH DISCOVERED -->
+    <div class="card discovered">
+      <div class="card-head">
+        <span class="src-badge ph"><span class="src-dot"></span>Product Hunt</span>
+        <span class="status-badge discovered">
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg>
+          Discovered
+        </span>
+        <span class="head-meta">
+          #3 of the day <span class="dot"></span> 412 upvotes <span class="dot"></span> 1d ago
+        </span>
+      </div>
+      <div class="card-title handle">
+        <span class="handle-mono">@mike-wang</span>
+        <span class="fullname">Mike Wang — launched FlowAI</span>
+      </div>
+      <div class="signal-chips">
+        <span class="sig-chip score">score 0.78</span>
+        <span class="sig-chip cn">CN founder</span>
+        <span class="sig-chip org">YC W24</span>
+        <span class="sig-chip">first launch</span>
+      </div>
+      <div class="bio">
+        Maker of FlowAI, a workflow agent for ops teams. Twitter bio mentions Beijing roots, currently SF-based. Product page links to a public Calendly and a personal site at flowai.app.
+      </div>
+      <div class="contact-hints">
+        <a class="contact-hint" href="#">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 2h3l-7 8 8 12h-6l-5-7-6 7H2l8-9L2 2h6l4 6z"/></svg>
+          <span class="h-val">@mikew_flowai</span>
+        </a>
+        <span class="contact-hint">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
+          <span class="h-val">flowai.app</span>
+        </span>
+        <span class="contact-hint"><span class="h-key">Email guess:</span> <span class="h-val">mike@flowai.app</span></span>
+      </div>
+      <div class="card-foot">
+        <span class="foot-meta">Unassigned · would route to <strong style="color:var(--text-2);">Ethan</strong></span>
+        <div class="foot-actions">
+          <button class="ghost">Mute</button>
+          <button class="secondary">Promote</button>
+          <button class="primary find">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            Find email
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 11 — arXiv READY -->
+    <div class="card ready">
+      <div class="card-head">
+        <span class="src-badge arxiv"><span class="src-dot"></span>arXiv</span>
+        <span class="status-badge ready">
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg>
+          Ready
+        </span>
+        <span class="tier-badge normal">Normal</span>
+        <span class="head-meta">
+          628 cites <span class="dot"></span> h-index 14 <span class="dot"></span> 1d ago
+        </span>
+      </div>
+      <div class="card-title">Sparse Speculative Decoding for On-Device Code Completion at 5ms Latency</div>
+      <div class="author-row">
+        <span class="au-name">Priya Nair</span>
+        <span class="au-sep">·</span>
+        <span class="au-org">CMU LTI</span>
+        <span class="au-sep">·</span>
+        <span class="au-email">pnair@cs.cmu.edu</span>
+      </div>
+      <div class="draft-snippet">
+        <div class="draft-label">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/></svg>
+          Draft · Ethan
+        </div>
+        <div class="draft-subj">5ms speculative decoding — would love to compare notes</div>
+        Hi Priya — your draft-and-verify scheme with sparse trees is the cleanest take I've seen on edge inference. We're hitting an 11ms floor on a similar setup at Miracle+...
+      </div>
+      <div class="card-foot">
+        <span class="foot-meta">
+          Assigned to
+          <span class="rep-chip"><span class="rp-dot" style="background:#BE185D;">E</span>Ethan</span>
+        </span>
+        <div class="foot-actions">
+          <button class="ghost">Skip</button>
+          <button class="secondary">View draft</button>
+          <button class="primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            Send
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 12 — HF DISCOVERED (wangbo) -->
+    <div class="card discovered">
+      <div class="card-head">
+        <span class="src-badge hf"><span class="src-dot"></span>Hugging Face</span>
+        <span class="status-badge discovered">
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg>
+          Discovered
+        </span>
+        <span class="head-meta">
+          7 models <span class="dot"></span> 480 followers <span class="dot"></span> 1d ago
+        </span>
+      </div>
+      <div class="card-title handle">
+        <span class="handle-mono">@wangbo</span>
+        <span class="fullname">Bo Wang</span>
+      </div>
+      <div class="signal-chips">
+        <span class="sig-chip score">score 0.85</span>
+        <span class="sig-chip cn">中文 bio</span>
+        <span class="sig-chip org">独立研究者</span>
+        <span class="sig-chip">3 finetunes/wk</span>
+      </div>
+      <div class="bio">
+        Independent researcher; has been quietly fine-tuning 7B–14B models for long-form Chinese writing tasks. Bio links to a small WeChat-hosted site and a Bilibili tutorial channel. No GitHub.
+      </div>
+      <div class="contact-hints">
+        <span class="contact-hint">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
+          <span class="h-val">wangbo.notion.site</span>
+        </span>
+        <span class="contact-hint"><span class="h-key">Email guess:</span> <span class="h-val" style="color: var(--text-3);">none yet</span></span>
+      </div>
+      <div class="card-foot">
+        <span class="foot-meta">Unassigned · would route to <strong style="color:var(--text-2);">Chenyu</strong></span>
+        <div class="foot-actions">
+          <button class="ghost">Mute</button>
+          <button class="secondary">View profile</button>
+          <button class="primary find">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            Find email
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 13 — GH DISCOVERED yuhan-li -->
+    <div class="card discovered">
+      <div class="card-head">
+        <span class="src-badge gh"><span class="src-dot"></span>GitHub</span>
+        <span class="status-badge discovered">
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg>
+          Discovered
+        </span>
+        <span class="head-meta">
+          892 stars <span class="dot"></span> 1d ago
+        </span>
+      </div>
+      <div class="card-title handle">
+        <span class="handle-mono">yuhan-li/agent-eval</span>
+        <span class="fullname">Yuhan Li</span>
+      </div>
+      <div class="signal-chips">
+        <span class="sig-chip score">score 0.74</span>
+        <span class="sig-chip cn">CN-based</span>
+        <span class="sig-chip org">PhD @ HKUST</span>
+        <span class="sig-chip">trending</span>
+      </div>
+      <div class="bio">
+        Open-source eval harness for tool-use agents — supports MCP, ReAct, and custom traces. Author publishes evaluator papers and maintains a clean GitHub profile with school email visible.
+      </div>
+      <div class="contact-hints">
+        <span class="contact-hint"><span class="h-key">Email:</span> <span class="h-val">yuhanli@ust.hk</span></span>
+        <a class="contact-hint" href="#">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
+          <span class="h-val">yuhanli.cc</span>
+        </a>
+      </div>
+      <div class="card-foot">
+        <span class="foot-meta">Found email · ready to promote</span>
+        <div class="foot-actions">
+          <button class="ghost">Mute</button>
+          <button class="secondary">View profile</button>
+          <button class="primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+            Promote to lead
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 14 — arXiv SENT -->
+    <div class="card sent">
+      <div class="card-head">
+        <span class="src-badge arxiv"><span class="src-dot"></span>arXiv</span>
+        <span class="status-badge sent">
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg>
+          Sent
+        </span>
+        <span class="tier-badge normal">Normal</span>
+        <span class="head-meta">
+          204 cites <span class="dot"></span> sent 1d ago
+        </span>
+      </div>
+      <div class="card-title">Curriculum Distillation for Cross-Domain Reasoning Transfer in Small Language Models</div>
+      <div class="author-row">
+        <span class="au-name">Tianyi Zhao</span>
+        <span class="au-sep">·</span>
+        <span class="au-org">中科院自动化所</span>
+        <span class="au-sep">·</span>
+        <span class="au-email">tianyi.zhao@ia.ac.cn</span>
+      </div>
+      <div class="card-foot">
+        <span class="foot-meta">
+          Sent by
+          <span class="rep-chip"><span class="rp-dot" style="background:#B45309;">C</span>Chenyu</span>
+          · awaiting reply
+        </span>
+        <div class="foot-actions">
+          <button class="ghost">Open thread</button>
+          <button class="secondary">Follow up</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="day-rule">Earlier this week</div>
+
+    <!-- 15 — arXiv READY -->
+    <div class="card ready">
+      <div class="card-head">
+        <span class="src-badge arxiv"><span class="src-dot"></span>arXiv</span>
+        <span class="status-badge ready">
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg>
+          Ready
+        </span>
+        <span class="tier-badge strong">Strong</span>
+        <span class="head-meta">
+          4,418 cites <span class="dot"></span> h-index 26 <span class="dot"></span> 3d ago
+        </span>
+      </div>
+      <div class="card-title">Compositional Generalization in Vision-Language Models via Symbolic Pretraining</div>
+      <div class="author-row">
+        <span class="au-name">Sara Goldberg</span>
+        <span class="au-sep">·</span>
+        <span class="au-org">NYU CILVR</span>
+        <span class="au-sep">·</span>
+        <span class="au-email">sara.goldberg@nyu.edu</span>
+      </div>
+      <div class="draft-snippet">
+        <div class="draft-label">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/></svg>
+          Draft · Ethan
+        </div>
+        <div class="draft-subj">Symbolic pretraining for VLM compositional gen — quick question</div>
+        Hi Sara, the symbolic-grounding ablation in section 4.3 was particularly striking. We're trying to reproduce a similar effect at Miracle+ with smaller VLMs and...
+      </div>
+      <div class="card-foot">
+        <span class="foot-meta">
+          Assigned to
+          <span class="rep-chip"><span class="rp-dot" style="background:#BE185D;">E</span>Ethan</span>
+        </span>
+        <div class="foot-actions">
+          <button class="ghost">Skip</button>
+          <button class="secondary">View draft</button>
+          <button class="primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            Send
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 16 — arXiv ENRICHING -->
+    <div class="card enriching">
+      <div class="card-head">
+        <span class="src-badge arxiv"><span class="src-dot"></span>arXiv</span>
+        <span class="status-badge enriching">
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg>
+          Enriching
+        </span>
+        <span class="tier-badge normal">Normal</span>
+        <span class="head-meta">
+          82 cites <span class="dot"></span> 3d ago
+        </span>
+      </div>
+      <div class="card-title">Mixture-of-Depths: Learning to Allocate Compute Per Token in Decoder-Only LMs</div>
+      <div class="author-row">
+        <span class="au-name">Junwei Lin</span>
+        <span class="au-sep">·</span>
+        <span class="au-org">北京大学 (PKU)</span>
+        <span class="au-sep">·</span>
+        <span class="au-email" style="color: var(--text-3);">resolving via OpenReview…</span>
+      </div>
+      <div class="card-foot">
+        <span class="foot-meta">Enrichment in progress · 3 attempts</span>
+        <div class="foot-actions">
+          <button class="ghost">Skip</button>
+          <button class="secondary">Manual lookup</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 17 — GH DISCOVERED -->
+    <div class="card discovered">
+      <div class="card-head">
+        <span class="src-badge gh"><span class="src-dot"></span>GitHub</span>
+        <span class="status-badge discovered">
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg>
+          Discovered
+        </span>
+        <span class="head-meta">
+          3.1k stars <span class="dot"></span> 4d ago
+        </span>
+      </div>
+      <div class="card-title handle">
+        <span class="handle-mono">linyifan/torch-cn</span>
+        <span class="fullname">Yifan Lin</span>
+      </div>
+      <div class="signal-chips">
+        <span class="sig-chip score">score 0.69</span>
+        <span class="sig-chip cn">中文文档</span>
+        <span class="sig-chip org">Shanghai</span>
+      </div>
+      <div class="bio">
+        PyTorch utilities optimized for Chinese-language NLP — tokenizer, dataloader, evaluation suite. Author also runs a popular Zhihu blog on LLM internals.
+      </div>
+      <div class="contact-hints">
+        <span class="contact-hint"><span class="h-key">Email guess:</span> <span class="h-val" style="color: var(--text-3);">none yet</span></span>
+        <a class="contact-hint" href="#">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
+          <span class="h-val">zhihu.com/people/linyifan</span>
+        </a>
+      </div>
+      <div class="card-foot">
+        <span class="foot-meta">Unassigned · would route to <strong style="color:var(--text-2);">Chenyu</strong></span>
+        <div class="foot-actions">
+          <button class="ghost">Mute</button>
+          <button class="secondary">View profile</button>
+          <button class="primary find">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            Find email
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 18 — arXiv REPLIED -->
+    <div class="card replied">
+      <div class="card-head">
+        <span class="src-badge arxiv"><span class="src-dot"></span>arXiv</span>
+        <span class="status-badge replied">
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg>
+          Replied
+        </span>
+        <span class="tier-badge normal">Normal</span>
+        <span class="head-meta">
+          replied 4d ago
+        </span>
+      </div>
+      <div class="card-title">RAG with Hierarchical Memory Indices for Million-Document Question Answering</div>
+      <div class="author-row">
+        <span class="au-name">Ziwei Hu</span>
+        <span class="au-sep">·</span>
+        <span class="au-org">复旦大学 (Fudan)</span>
+        <span class="au-sep">·</span>
+        <span class="au-email">zwhu@fudan.edu.cn</span>
+      </div>
+      <div class="card-foot">
+        <span class="foot-meta">
+          Owned by
+          <span class="rep-chip"><span class="rp-dot" style="background:#B45309;">C</span>Chenyu</span>
+          · WeChat exchanged
+        </span>
+        <div class="foot-actions">
+          <button class="ghost">Archive</button>
+          <button class="secondary">Open thread</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 19 — HF DISCOVERED qwen contributor -->
+    <div class="card discovered">
+      <div class="card-head">
+        <span class="src-badge hf"><span class="src-dot"></span>Hugging Face</span>
+        <span class="status-badge discovered">
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg>
+          Discovered
+        </span>
+        <span class="head-meta">
+          12 models <span class="dot"></span> 5d ago
+        </span>
+      </div>
+      <div class="card-title handle">
+        <span class="handle-mono">@chenxin</span>
+        <span class="fullname">Chen Xin</span>
+      </div>
+      <div class="signal-chips">
+        <span class="sig-chip score">score 0.71</span>
+        <span class="sig-chip cn">CN</span>
+        <span class="sig-chip">audio LLM</span>
+      </div>
+      <div class="bio">
+        Audio + speech models with Mandarin emphasis. Recently uploaded a streaming TTS variant. Bio mentions Beijing and a small Discord community.
+      </div>
+      <div class="contact-hints">
+        <span class="contact-hint"><span class="h-key">Email guess:</span> <span class="h-val" style="color: var(--text-3);">none yet</span></span>
+      </div>
+      <div class="card-foot">
+        <span class="foot-meta">Unassigned · low priority</span>
+        <div class="foot-actions">
+          <button class="ghost">Mute</button>
+          <button class="secondary">View profile</button>
+          <button class="primary find">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            Find email
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 20 — arXiv READY -->
+    <div class="card ready">
+      <div class="card-head">
+        <span class="src-badge arxiv"><span class="src-dot"></span>arXiv</span>
+        <span class="status-badge ready">
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg>
+          Ready
+        </span>
+        <span class="tier-badge normal">Normal</span>
+        <span class="head-meta">
+          156 cites <span class="dot"></span> 5d ago
+        </span>
+      </div>
+      <div class="card-title">Probing the Inductive Biases of LLMs on Tabular Data Reasoning Benchmarks</div>
+      <div class="author-row">
+        <span class="au-name">Anika Patel</span>
+        <span class="au-sep">·</span>
+        <span class="au-org">Cornell Tech</span>
+        <span class="au-sep">·</span>
+        <span class="au-email">apatel@cornell.edu</span>
+      </div>
+      <div class="draft-snippet">
+        <div class="draft-label">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/></svg>
+          Draft · Ethan
+        </div>
+        <div class="draft-subj">Tabular reasoning probes — a build-vs-buy question</div>
+        Hi Anika, your finding that LLMs implicitly learn columnar adjacency was unexpected. We're scoping a tabular-eval pipeline at Miracle+ and...
+      </div>
+      <div class="card-foot">
+        <span class="foot-meta">
+          Assigned to
+          <span class="rep-chip"><span class="rp-dot" style="background:#BE185D;">E</span>Ethan</span>
+        </span>
+        <div class="foot-actions">
+          <button class="ghost">Skip</button>
+          <button class="secondary">View draft</button>
+          <button class="primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            Send
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ Empty state for PH (shown after the 20 mixed leads — represents what the PH tab would look like with only 2 leads, but framed as onboarding for the channel as a whole) ═══ -->
+    <div class="day-rule">Product Hunt · channel onboarding</div>
+
+    <div class="empty">
+      <div class="empty-glyph">PH</div>
+      <div class="empty-body">
+        <div class="empty-title">Product Hunt is just getting started</div>
+        <div class="empty-text">
+          We've ingested 2 makers so far, both visible above. To see more, connect your Product Hunt API key — we'll watch daily launches for Chinese-rooted makers and queue them here. Average channel volume after week 1: ~8 leads/day.
+        </div>
+      </div>
+      <div class="empty-actions">
+        <button class="secondary">Learn more</button>
+        <button class="btn btn-primary">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
+          Connect PH
+        </button>
+      </div>
+    </div>
+
+  </div>
+
+</main>
+
+<script>
+  // Channel tab switch (visual only)
+  document.querySelectorAll('.ch-tab').forEach(t => {
+    t.addEventListener('click', () => {
+      document.querySelectorAll('.ch-tab').forEach(x => x.classList.remove('active'));
+      t.classList.add('active');
+    });
+  });
+
+  // Status chips
+  document.querySelectorAll('.chip').forEach(c => {
+    c.addEventListener('click', () => {
+      c.parentElement.querySelectorAll('.chip').forEach(x => x.classList.remove('active'));
+      c.classList.add('active');
+    });
+  });
+
+  // Rep pill toggle (multi-select feel)
+  document.querySelectorAll('.rep-pill').forEach(p => {
+    p.addEventListener('click', () => p.classList.toggle('active'));
+  });
+
+  // Sidebar nav
+  document.querySelectorAll('.nav-item').forEach(n => {
+    n.addEventListener('click', e => {
+      e.preventDefault();
+      document.querySelectorAll('.nav-item').forEach(x => x.classList.remove('active'));
+      n.classList.add('active');
+    });
+  });
+</script>
+
+</body>
+</html>

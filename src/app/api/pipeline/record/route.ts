@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
+import { lookupAuthor } from "@/lib/semantic-scholar";
+import { getAssignmentConfig, classifyLead, assignRep } from "@/lib/assignment";
+import { getSchoolInfo } from "@/lib/email-generator";
 
 /**
  * POST /api/pipeline/record
@@ -22,7 +25,7 @@ import { supabase } from "@/lib/db";
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { paper, emailed, all_authors, compute, matched_directions, subject } = body;
+    const { paper, emailed, all_authors, compute, matched_directions, subject, body_html } = body;
 
     if (!paper?.arxiv_id || !emailed?.email) {
       return NextResponse.json({ error: "paper.arxiv_id and emailed.email required" }, { status: 400 });
@@ -78,6 +81,44 @@ export async function POST(req: NextRequest) {
       await supabase.from("paper_authors").insert(authorRows);
     }
 
+    // 2b. School info lookup (from email domain)
+    const schoolInfo = emailed.email ? getSchoolInfo(emailed.email) : null;
+    const schoolName = schoolInfo?.name ?? null;
+    const schoolTier = schoolInfo?.tier ?? null;
+
+    // 2c. Semantic Scholar enrichment (best-effort, non-blocking)
+    let s2AuthorId: string | null = null;
+    let hIndex: number | null = null;
+    let citationCount: number | null = null;
+    let paperCount: number | null = null;
+    try {
+      const s2 = await lookupAuthor(paper.title, emailed.author_name);
+      if (s2) {
+        s2AuthorId = s2.authorId;
+        hIndex = s2.hIndex;
+        citationCount = s2.citationCount;
+        paperCount = s2.paperCount;
+      }
+    } catch {
+      // S2 enrichment failure is non-blocking
+    }
+
+    // 2d. Classify lead and assign rep
+    let leadTier: "strong" | "normal" = "normal";
+    let assignedRepId: number | null = null;
+    try {
+      const config = await getAssignmentConfig();
+      leadTier = classifyLead(config, {
+        citationCount,
+        hIndex,
+        schoolTier,
+        authorEmail: emailed.email,
+      });
+      assignedRepId = assignRep(config, leadTier, emailed.email);
+    } catch {
+      // Classification/assignment failure is non-blocking
+    }
+
     // 3. Upsert pipeline_lead (so dashboard has the lead)
     await supabase.from("pipeline_leads").upsert(
       {
@@ -90,14 +131,28 @@ export async function POST(req: NextRequest) {
         author_name: emailed.author_name || null,
         author_email: emailed.email,
         first_name: emailed.first_name || null,
+        school_name: schoolName,
+        school_tier: schoolTier,
         compute_level: compute?.level || null,
         compute_confidence: compute?.confidence || null,
         compute_reason: compute?.reason || null,
         matched_directions: JSON.stringify(matched_directions || []),
         draft_subject: subject || null,
+        // Persist the sent HTML under both fields so the drift / judge-vs-human
+        // view has `draft_original_html` to judge and `draft_html` to diff
+        // against edits. Python sends the same content for both since this
+        // flow has no sales-edit step — if a later flow adds edits, split them.
+        draft_html: body_html || null,
+        draft_original_html: body_html || null,
         status: "sent",
         sent_at: new Date().toISOString(),
         source: "python_script",
+        s2_author_id: s2AuthorId,
+        h_index: hIndex,
+        citation_count: citationCount,
+        paper_count: paperCount,
+        lead_tier: leadTier,
+        assigned_rep_id: assignedRepId,
       },
       { onConflict: "arxiv_id" },
     );

@@ -1,18 +1,39 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
+import { llmChat } from "@/lib/llm-proxy";
 
 /**
  * GET /api/brief/summary?id=xxx
  *
- * Returns: { summary: string, talkingPoints: string[] }
- * - summary: 口语化中文 brief for sales
- * - talkingPoints: 3-4 deep, paper-specific questions to ask on WeChat
+ * Returns a structured brief for the sales rep:
+ *   {
+ *     paper:          "1 sentence naming the paper + authors"
+ *     mainIdea:       "2-3 sentences — what the paper does in plain Chinese"
+ *     coreInnovation: "2-3 sentences — what's actually new, why it matters"
+ *     questions:      ["3 paper-specific technical questions to ask on WeChat"]
+ *     approach:       "2-3 sentences — how sales should open the conversation"
+ *     summary:        back-compat string = whole thing concatenated, so old
+ *                     callers still render something sensible
+ *   }
+ *
+ * Uses Opus via the MiraclePlus proxy, falls back to Gemini 2.0 Flash on
+ * Opus failure. Never returns 500 — if both LLMs fail, we ship a minimal
+ * rule-based fallback so sales always sees *something*.
  */
+
+interface StructuredBrief {
+  paper: string;
+  mainIdea: string;
+  coreInnovation: string;
+  questions: string[];
+  approach: string;
+  persuasionAngle: "ethos" | "logos" | "pathos";
+  angleHint: string;
+}
+
 export async function GET(req: NextRequest) {
   const id = new URL(req.url).searchParams.get("id");
-  if (!id) {
-    return NextResponse.json({ error: "id required" }, { status: 400 });
-  }
+  if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
 
   let info: Record<string, unknown> | null = null;
 
@@ -33,115 +54,166 @@ export async function GET(req: NextRequest) {
     if (paper) info = paper;
   }
 
-  if (!info) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
+  if (!info) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const apiKey = process.env.GOOGLE_API_KEY;
-  if (!apiKey) {
-    return NextResponse.json({
-      summary: buildFallbackSummary(info),
-      talkingPoints: [],
-    });
-  }
+  const prompt = buildPrompt(info);
 
-  const prompt = `你是一个帮助销售准备微信会话的助手。根据以下论文信息，返回一个JSON对象，包含两部分。
-
-信息：
-- 作者: ${info.author_name || info.authors || "未知"}
-- 学校: ${info.school_name || "未知"}
-- 论文标题: ${info.title}
-- 摘要: ${((info.abstract as string) || "").slice(0, 1200)}
-- 算力需求: ${info.compute_level || "未知"}（置信度 ${info.compute_confidence || "未知"}）
-- 算力原因: ${info.compute_reason || "未知"}
-- 研究方向: ${info.matched_directions || "未知"}
-${info.status ? `- 邮件状态: ${info.status}${info.sent_at ? `，已于 ${info.sent_at} 发送` : ""}` : ""}
-
-请返回以下JSON格式：
-{
-  "summary": "3-5句口语化中文brief，像给同事口头介绍。第一句说人+学校+方向。第二句大白话解释论文做了什么。第三句说为什么需要算力。最后一句给微信聊天切入点。",
-  "talking_points": [
-    "基于论文内容的深度问题1 — 要具体到论文的方法/发现，不要泛泛而谈。比如：你们在XX实验中用了YY方法，如果scale up到ZZ规模，预计需要什么级别的算力？",
-    "基于论文内容的深度问题2 — 可以问他们下一步计划、瓶颈在哪、如果有更多算力想先做什么",
-    "基于论文内容的深度问题3 — 展示你读过他的论文，问一个只有读过才能问的问题",
-    "关于合作的自然过渡 — 如何从技术讨论自然引到算力支持申请"
-  ]
-}
-
-要求：
-- talking_points 必须是具体的、基于这篇论文的问题，不是通用问题
-- 每个问题都应该展示出你理解了这篇论文的核心贡献
-- 用中文写，语气像同事间的技术讨论
-- 只返回JSON，不要其他文字`;
-
+  // Opus → Gemini fallback, per the "Opus-only with Gemini fallback" rule.
+  let brief: StructuredBrief | null = null;
   try {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-        }),
-        signal: AbortSignal.timeout(20_000),
-      },
-    );
-
-    if (!res.ok) {
-      return NextResponse.json({
-        summary: buildFallbackSummary(info),
-        talkingPoints: [],
-      });
-    }
-
-    const data = await res.json();
-    const raw: string =
-      data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-
-    // Parse JSON from response
-    const cleaned = raw
-      .trim()
-      .replace(/^```\w*\n?/g, "")
-      .replace(/```$/g, "")
-      .trim();
-
-    try {
-      const parsed = JSON.parse(cleaned);
-      return NextResponse.json({
-        summary: parsed.summary || buildFallbackSummary(info),
-        talkingPoints: parsed.talking_points || [],
-      });
-    } catch {
-      // If JSON parse fails, treat entire response as summary
-      return NextResponse.json({
-        summary: raw.trim() || buildFallbackSummary(info),
-        talkingPoints: [],
-      });
-    }
-  } catch {
-    return NextResponse.json({
-      summary: buildFallbackSummary(info),
-      talkingPoints: [],
+    const r = await llmChat({
+      model: "claude-opus-4.7",
+      system: SYSTEM,
+      user: prompt,
+      temperature: 0.2,
+      max_tokens: 1500,
+      json: true,
+      timeoutMs: 30_000,
     });
+    brief = parseBrief(r.text);
+  } catch {
+    // fall through
+  }
+
+  if (!brief) {
+    try {
+      const r = await llmChat({
+        model: "gemini-3-pro",
+        system: SYSTEM,
+        user: prompt,
+        temperature: 0.2,
+        max_tokens: 1500,
+        json: true,
+        timeoutMs: 30_000,
+      });
+      brief = parseBrief(r.text);
+    } catch {
+      // fall through to hardcoded fallback
+    }
+  }
+
+  if (!brief) brief = fallbackBrief(info);
+
+  // Back-compat: stitch sections into a single `summary` string too, so the
+  // existing DetailView (which only renders `summary`) degrades gracefully
+  // until its UI is updated.
+  const summary = [
+    brief.paper,
+    "",
+    `【主要想法】${brief.mainIdea}`,
+    "",
+    `【核心创新】${brief.coreInnovation}`,
+    "",
+    "【可以聊的技术问题】",
+    ...brief.questions.map((q, i) => `${i + 1}. ${q}`),
+    "",
+    `【怎么切入】${brief.approach}`,
+  ].join("\n");
+
+  return NextResponse.json({
+    ...brief,
+    summary,
+    // Also return `talkingPoints` for any lingering callers reading the old shape.
+    talkingPoints: brief.questions,
+  });
+}
+
+const SYSTEM = `你是帮销售准备聊微信的论文助手。销售不是技术出身，但聊天的对象是博士/教授。你的 brief 要让销售能 5 秒内抓住论文在做什么，并能问出几个只有"真的读过"才能问的问题。
+
+输出风格：
+- 中文，口语化，但技术词该用就用（不要把 "attention" 翻成 "注意力机制" 这种），Agent这种词英文就行
+- 不啰嗦，不总结废话
+- 问题要具体到论文里真实出现过的方法/实验/设定，不要 "你对 X 方向怎么看" 这种空话`;
+
+function buildPrompt(info: Record<string, unknown>): string {
+  const authors = info.author_name || info.authors || "未知";
+  const school = info.school_name || "未知";
+  const title = info.title ?? "";
+  const abstract = ((info.abstract as string) || "").slice(0, 1800);
+  const computeLevel = info.compute_level || "未知";
+  const computeReason = info.compute_reason || "";
+  const directions = info.matched_directions || "";
+
+  return `信息：
+- 作者: ${authors}
+- 学校: ${school}
+- 标题: ${title}
+- 摘要: ${abstract}
+- 算力档位: ${computeLevel}
+- 算力需求理由: ${computeReason}
+- 研究方向: ${directions}
+
+请只返回一个 JSON 对象：
+{
+  "paper": "一句话：作者 (学校) 的 xx 论文 / 《标题》",
+  "mainIdea": "2-3 句话，口语地说论文在做一件什么事（问题是什么 + 他们用什么方法去解）",
+  "coreInnovation": "2-3 句话，这篇论文哪里新。点出具体的技术 insight —— 是架构改动？训练方法？数据？评测？不要说'提出了新方法'这种空话。",
+  "questions": [
+    "问题 1：针对论文里具体的某个方法/实验/发现问一个技术问题，让对方一看就知道你读过",
+    "问题 2：问他下一步想做什么 / 现在的瓶颈 / 如果 scale up 会遇到什么",
+    "问题 3：问一个关于实验局限或 reviewer 可能 push 的点（从实验章节推断）"
+  ],
+  "approach": "2-3 句话，销售怎么开场。基于问题 1 自然切入，最后过渡到算力合作。不要直接说'我们有算力'，要先让对方觉得你懂他研究。",
+  "persuasionAngle": "ethos | logos | pathos —— 选最适合打动这个研究者的角度。判断标准：
+    - ethos（权威/背书）：资深 PI、知名实验室、有 industry 经验的人。强调奇绩 portfolio、谁在用我们。
+    - logos（理性/数据）：industry researcher、追求 ROI 的人、reviewer 风格的论文。强调具体数字（100万额度、1.5%通过率、免费、不占股）。
+    - pathos（共情/赋能）：年轻 PhD、做创新性强但资源紧的工作、第一作者新人。强调'你的工作很重要，我们想 enable'。",
+  "angleHint": "一句话告诉销售用什么策略和这个人聊。例：'资深 PI，重点提奇绩支持过的同领域 portfolio'，或'年轻 PhD，先认可 idea 的独特性再谈算力'。≤30 字。"
+}
+
+只返回 JSON，不要任何其它文字。不要 markdown 包裹。`;
+}
+
+function parseBrief(raw: string): StructuredBrief | null {
+  const cleaned = raw
+    .trim()
+    .replace(/^```\w*\n?/g, "")
+    .replace(/```$/g, "")
+    .trim();
+  try {
+    const obj = JSON.parse(cleaned);
+    const questions = Array.isArray(obj.questions)
+      ? (obj.questions as unknown[]).map(String).filter((q) => q.trim()).slice(0, 5)
+      : [];
+    if (!obj.paper || !obj.mainIdea || !obj.coreInnovation || questions.length === 0 || !obj.approach) {
+      return null;
+    }
+    // Persuasion fields are optional — fall back to logos + neutral hint
+    // so old prompts and missing fields don't break the response.
+    const angleRaw = String(obj.persuasionAngle ?? obj.persuasion_angle ?? "logos").toLowerCase();
+    const persuasionAngle: StructuredBrief["persuasionAngle"] =
+      angleRaw === "ethos" || angleRaw === "pathos" ? angleRaw : "logos";
+    return {
+      paper: String(obj.paper),
+      mainIdea: String(obj.mainIdea),
+      coreInnovation: String(obj.coreInnovation),
+      questions,
+      approach: String(obj.approach),
+      persuasionAngle,
+      angleHint: String(obj.angleHint ?? obj.angle_hint ?? "").slice(0, 120),
+    };
+  } catch {
+    return null;
   }
 }
 
-function buildFallbackSummary(info: Record<string, unknown>): string {
-  const parts: string[] = [];
-  const name = info.author_name || info.authors || "该研究者";
-  const school = info.school_name ? `，来自${info.school_name}` : "";
-  parts.push(`${name}${school}。`);
-  if (info.title) parts.push(`论文：${info.title}。`);
-  if (info.compute_reason) parts.push(`算力需求（${info.compute_level}）：${info.compute_reason}。`);
-  if (info.matched_directions) {
-    let dirs: string;
-    try {
-      const parsed = JSON.parse(info.matched_directions as string);
-      dirs = Array.isArray(parsed) ? parsed.join("、") : String(info.matched_directions);
-    } catch {
-      dirs = String(info.matched_directions);
-    }
-    parts.push(`研究方向：${dirs}。`);
-  }
-  return parts.join("");
+function fallbackBrief(info: Record<string, unknown>): StructuredBrief {
+  const author = (info.author_name || info.authors || "该研究者") as string;
+  const school = (info.school_name as string) || "";
+  const title = (info.title as string) || "(未命名论文)";
+  const reason = (info.compute_reason as string) || "";
+  const directions = (info.matched_directions as string) || "";
+  return {
+    paper: `${author}${school ? `（${school}）` : ""}的论文《${title}》`,
+    mainIdea: (info.abstract as string)?.slice(0, 200) || "摘要暂不可用。",
+    coreInnovation: reason || "摘要里没明显指出创新点，建议直接读原文。",
+    questions: [
+      "论文里的核心方法在更大模型/更大数据上是否稳定？",
+      "下一步想做什么？现在最卡的是算力、数据还是别的？",
+      directions ? `在 ${directions} 方向上，这篇 insight 是否能迁移到相关任务？` : "这个方法在相关任务上迁移得如何？",
+    ],
+    approach: "先针对论文里某个具体发现问一个问题，让对方知道你读过，再引到「如果有更多算力你会做什么」，自然过渡到算力申请。",
+    persuasionAngle: "logos",
+    angleHint: "默认走 logos：先讲数字（100万、免费、不占股），再过渡到算力支持。",
+  };
 }

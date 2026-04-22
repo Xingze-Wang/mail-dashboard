@@ -6,11 +6,10 @@ import {
   RefreshCw,
   ArrowLeft,
   Loader2,
-  FileText,
   GraduationCap,
   Cpu,
   ExternalLink,
-  Search,
+  Inbox as InboxIcon,
 } from "lucide-react";
 import { formatDate, getStatusColor, getStatusDot } from "@/lib/utils";
 import { ComposeModal } from "@/components/compose-modal";
@@ -57,13 +56,11 @@ interface BriefData {
   authorMismatch: { note: string } | null;
 }
 
-function computeBadge(level: string | null) {
-  switch (level) {
-    case "heavy": return "bg-red-500/20 text-red-400";
-    case "moderate": return "bg-yellow-500/20 text-yellow-400";
-    case "light": return "bg-green-500/20 text-green-400";
-    default: return "bg-neutral-500/20 text-neutral-400";
-  }
+function computeBadgeClass(level: string | null) {
+  if (level === "heavy") return "badge-compute heavy";
+  if (level === "moderate") return "badge-compute moderate";
+  if (level === "light") return "badge-compute light";
+  return "badge-compute";
 }
 
 function BriefPanel({ email }: { email: Email }) {
@@ -125,12 +122,21 @@ function BriefPanel({ email }: { email: Email }) {
     return (
       <button
         onClick={handleActivate}
-        className="w-full rounded-lg border border-green-500/30 bg-green-500/10 p-5 text-center hover:bg-green-500/20 transition-colors"
+        style={{
+          width: "100%",
+          borderRadius: 10,
+          border: "1px solid #BBF7D0",
+          background: "var(--green-bg)",
+          padding: 20,
+          textAlign: "center",
+          cursor: "pointer",
+          transition: "all 0.15s ease",
+        }}
       >
-        <p className="text-[14px] font-medium text-green-400 mb-1">
+        <p style={{ fontSize: 14, fontWeight: 600, color: "var(--green)", marginBottom: 4 }}>
           Added on WeChat
         </p>
-        <p className="text-[12px] text-green-400/60">
+        <p style={{ fontSize: 12, color: "var(--green)", opacity: 0.7 }}>
           Click to generate paper brief + talking points
         </p>
       </button>
@@ -140,13 +146,10 @@ function BriefPanel({ email }: { email: Email }) {
   // Loading state
   if (loading) {
     return (
-      <div className="space-y-4 animate-pulse">
-        <div className="rounded-lg border border-neutral-800 bg-neutral-900/50 p-4">
-          <div className="flex items-center gap-2 text-[12px] text-neutral-600">
-            <Search className="h-3.5 w-3.5" />
-            Looking up paper...
-          </div>
-        </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <div className="skeleton" style={{ height: 80 }} />
+        <div className="skeleton" style={{ height: 120 }} />
+        <div className="skeleton" style={{ height: 100 }} />
       </div>
     );
   }
@@ -154,8 +157,8 @@ function BriefPanel({ email }: { email: Email }) {
   // No match found
   if (!brief) {
     return (
-      <div className="rounded-lg border border-neutral-800 bg-neutral-900/50 p-4">
-        <p className="text-[12px] text-neutral-500">
+      <div className="section-card" style={{ padding: 16 }}>
+        <p style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
           No matching paper found for this email.
         </p>
       </div>
@@ -165,83 +168,89 @@ function BriefPanel({ email }: { email: Email }) {
   const { paper, research } = brief;
 
   return (
-    <div className="space-y-4">
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {/* Confirmed badge */}
-      <div className="rounded-lg bg-green-500/10 border border-green-500/20 px-4 py-2">
-        <p className="text-[11px] text-green-400 font-medium">Added on WeChat — recorded</p>
+      <div style={{ borderRadius: 8, background: "var(--green-bg)", border: "1px solid #BBF7D0", padding: "8px 14px" }}>
+        <p style={{ fontSize: 11, color: "var(--green)", fontWeight: 600 }}>Added on WeChat — recorded</p>
       </div>
 
       {/* AI Summary */}
-      <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-4">
-        <p className="text-[11px] text-blue-400 font-medium mb-2">Sales Brief</p>
+      <div style={{ borderRadius: 10, border: "1px solid #BFDBFE", background: "var(--blue-bg)", padding: 16 }}>
+        <p style={{ fontSize: 11, color: "var(--blue)", fontWeight: 600, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+          Sales Brief
+        </p>
         {summaryLoading ? (
-          <p className="text-[12px] text-neutral-500 animate-pulse">Generating brief...</p>
+          <p style={{ fontSize: 12, color: "var(--text-tertiary)" }}>Generating brief...</p>
         ) : summary ? (
-          <p className="text-[13px] text-neutral-200 leading-relaxed whitespace-pre-line">
+          <p style={{ fontSize: 13, color: "var(--text)", lineHeight: 1.6, whiteSpace: "pre-line" }}>
             {summary}
           </p>
         ) : (
-          <p className="text-[12px] text-neutral-500">No summary available</p>
+          <p style={{ fontSize: 12, color: "var(--text-tertiary)" }}>No summary available</p>
         )}
       </div>
 
       {/* Paper info */}
-      <div className="rounded-lg border border-neutral-800 bg-neutral-900/50 p-4">
-        <div className="flex items-center justify-between mb-2">
-          <p className="text-[11px] text-neutral-500 font-medium">Paper</p>
+      <div className="section-card" style={{ padding: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+          <p style={{ fontSize: 11, color: "var(--text-tertiary)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+            Paper
+          </p>
           {paper.pdfUrl && (
             <a
               href={paper.pdfUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-[11px] text-blue-400 hover:text-blue-300"
+              style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--blue)" }}
             >
-              <ExternalLink className="h-3 w-3" />
+              <ExternalLink style={{ width: 12, height: 12 }} />
               PDF
             </a>
           )}
         </div>
-        <p className="text-[13px] text-white font-medium mb-1">{paper.title}</p>
-        <p className="text-[11px] text-neutral-500 mb-2">{paper.authors}</p>
+        <p style={{ fontSize: 13, color: "var(--text)", fontWeight: 600, marginBottom: 4 }}>{paper.title}</p>
+        <p style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 8 }}>{paper.authors}</p>
         {paper.abstract && (
-          <p className="text-[11px] text-neutral-500 leading-relaxed">
+          <p style={{ fontSize: 11.5, color: "var(--text-secondary)", lineHeight: 1.6 }}>
             {paper.abstract}
           </p>
         )}
       </div>
 
       {/* Research profile */}
-      <div className="rounded-lg border border-neutral-800 bg-neutral-900/50 p-4">
-        <p className="text-[11px] text-neutral-500 font-medium mb-2">Research Profile</p>
-        <div className="space-y-2">
+      <div className="section-card" style={{ padding: 16 }}>
+        <p style={{ fontSize: 11, color: "var(--text-tertiary)", fontWeight: 600, marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+          Research Profile
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {research.computeLevel && (
-            <div className="flex items-center gap-2">
-              <Cpu className="h-3 w-3 text-neutral-600" />
-              <span className={`rounded px-1.5 py-0.5 text-[11px] ${computeBadge(research.computeLevel)}`}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <Cpu style={{ width: 12, height: 12, color: "var(--text-tertiary)" }} />
+              <span className={computeBadgeClass(research.computeLevel)}>
                 {research.computeLevel}
               </span>
               {research.computeConfidence != null && (
-                <span className="text-[11px] text-neutral-600">
+                <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
                   {Math.round((research.computeConfidence ?? 0) * 100)}%
                 </span>
               )}
             </div>
           )}
           {research.computeReason && (
-            <p className="text-[12px] text-neutral-400">{research.computeReason}</p>
+            <p style={{ fontSize: 12, color: "var(--text-secondary)" }}>{research.computeReason}</p>
           )}
           {research.directions.length > 0 && (
-            <div className="flex flex-wrap gap-1 mt-1">
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
               {research.directions.map((d) => (
-                <span key={d} className="rounded px-1.5 py-0.5 text-[10px] bg-blue-500/15 text-blue-400">
+                <span key={d} className="direction-tag" style={{ background: "var(--blue-bg)", color: "var(--blue)", borderColor: "#BFDBFE" }}>
                   {d}
                 </span>
               ))}
             </div>
           )}
           {brief.personName && research.schoolName && (
-            <div className="flex items-center gap-1.5 text-[11px] text-neutral-500 mt-1">
-              <GraduationCap className="h-3 w-3" />
+            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-tertiary)", marginTop: 4 }}>
+              <GraduationCap style={{ width: 12, height: 12 }} />
               {brief.personName} · {research.schoolName}
             </div>
           )}
@@ -250,13 +259,15 @@ function BriefPanel({ email }: { email: Email }) {
 
       {/* AI-generated talking points */}
       {talkingPoints.length > 0 && (
-        <div className="rounded-lg border border-neutral-800 bg-neutral-900/50 p-4">
-          <p className="text-[11px] text-neutral-500 font-medium mb-2">Talking Points</p>
-          <ul className="space-y-2 text-[12px] text-neutral-400">
+        <div className="section-card" style={{ padding: 16 }}>
+          <p style={{ fontSize: 11, color: "var(--text-tertiary)", fontWeight: 600, marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+            Talking Points
+          </p>
+          <ul style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 12, color: "var(--text-secondary)" }}>
             {talkingPoints.map((point, i) => (
-              <li key={i} className="flex gap-2">
-                <span className="text-neutral-600 shrink-0">{i + 1}.</span>
-                <span className="leading-relaxed">{point}</span>
+              <li key={i} style={{ display: "flex", gap: 8 }}>
+                <span style={{ color: "var(--text-tertiary)", flexShrink: 0 }}>{i + 1}.</span>
+                <span style={{ lineHeight: 1.6 }}>{point}</span>
               </li>
             ))}
           </ul>
@@ -265,8 +276,8 @@ function BriefPanel({ email }: { email: Email }) {
 
       {/* Author mismatch */}
       {brief.authorMismatch && (
-        <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-4">
-          <p className="text-[11px] text-amber-400">{brief.authorMismatch.note}</p>
+        <div style={{ borderRadius: 10, border: "1px solid #FDE68A", background: "#FFFBEB", padding: 16 }}>
+          <p style={{ fontSize: 11.5, color: "var(--gold)" }}>{brief.authorMismatch.note}</p>
         </div>
       )}
     </div>
@@ -332,41 +343,43 @@ export default function EmailsPage() {
     const sanitized = selected.html ? sanitizeHtml(selected.html) : "";
 
     return (
-      <div className="p-6">
-        <button
-          onClick={() => setSelected(null)}
-          className="flex items-center gap-2 text-[13px] text-neutral-400 hover:text-white mb-4 transition-colors"
-        >
-          <ArrowLeft className="h-4 w-4" />
+      <div>
+        <button onClick={() => setSelected(null)} className="btn" style={{ marginBottom: 16 }}>
+          <ArrowLeft />
           Back to emails
         </button>
 
         {/* Email header */}
-        <div className="rounded-lg border border-neutral-800 bg-neutral-900/50 px-5 py-4 mb-4">
-          <h2 className="text-[16px] font-semibold text-white mb-2">{selected.subject}</h2>
-          <div className="flex items-center gap-4 text-[12px] text-neutral-500 flex-wrap">
-            <span>To: <span className="text-neutral-300">{selected.to}</span></span>
-            <span className="flex items-center gap-1.5">
+        <div className="section-card" style={{ marginBottom: 16, padding: "16px 20px" }}>
+          <h2 style={{ fontFamily: "var(--font-heading)", fontSize: 18, fontWeight: 600, color: "var(--text)", marginBottom: 8, letterSpacing: "-0.01em" }}>
+            {selected.subject}
+          </h2>
+          <div style={{ display: "flex", alignItems: "center", gap: 16, fontSize: 12, color: "var(--text-tertiary)", flexWrap: "wrap" }}>
+            <span>To: <span style={{ color: "var(--text)" }}>{selected.to}</span></span>
+            <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <span className={`h-1.5 w-1.5 rounded-full ${getStatusDot(selected.status)}`} />
-              <span className={`capitalize ${getStatusColor(selected.status)}`}>{selected.status}</span>
+              <span className={`capitalize ${getStatusColor(selected.status)}`} style={{ fontWeight: 600 }}>
+                {selected.status}
+              </span>
             </span>
             <span>{new Date(selected.createdAt).toLocaleString()}</span>
           </div>
         </div>
 
         {/* Two-column: left = email content, right = brief */}
-        <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-4">
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 380px", gap: 16 }}>
           {/* Left: Email content */}
-          <div className="rounded-lg border border-neutral-800 bg-neutral-900/50 p-5 min-w-0">
+          <div className="section-card" style={{ padding: 20, minWidth: 0 }}>
             {detailLoading ? (
-              <div className="flex items-center gap-2 text-neutral-500 text-[13px]">
+              <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--text-tertiary)", fontSize: 13 }}>
                 <Loader2 className="h-4 w-4 animate-spin" />
                 Loading email content...
               </div>
             ) : sanitized ? (
               <>
                 <div
-                  className="email-detail-content rounded-lg bg-white text-black p-5"
+                  className="email-detail-content"
+                  style={{ borderRadius: 8, background: "#FFFFFF", color: "#1A1A1A", padding: 20, border: "1px solid var(--border-light)" }}
                   dangerouslySetInnerHTML={{ __html: sanitized }}
                 />
                 <style>{`
@@ -376,18 +389,18 @@ export default function EmailsPage() {
                 `}</style>
               </>
             ) : selected.text ? (
-              <pre className="text-[13px] text-neutral-300 whitespace-pre-wrap font-sans">
+              <pre style={{ fontSize: 13, color: "var(--text)", whiteSpace: "pre-wrap", fontFamily: "var(--font-body)" }}>
                 {selected.text}
               </pre>
             ) : (
-              <p className="text-[13px] text-neutral-500 italic">
+              <p style={{ fontSize: 13, color: "var(--text-tertiary)", fontStyle: "italic" }}>
                 Content not available — this email may have expired from Resend&apos;s storage.
               </p>
             )}
           </div>
 
           {/* Right: Brief panel (sticky) */}
-          <div className="min-w-0 lg:sticky lg:top-6 lg:self-start lg:max-h-[calc(100vh-4rem)] lg:overflow-y-auto">
+          <div style={{ minWidth: 0, position: "sticky", top: 24, alignSelf: "flex-start", maxHeight: "calc(100vh - 4rem)", overflowY: "auto" }}>
             <BriefPanel email={selected} />
           </div>
         </div>
@@ -398,149 +411,153 @@ export default function EmailsPage() {
   // List view
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-semibold text-white tracking-tight">Emails</h1>
-          <p className="text-sm text-neutral-400 mt-1">{total} total emails</p>
+      {/* ── Page Header ── */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 28 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 14 }}>
+          <h1 className="page-title">Emails</h1>
+          <span className="lead-count">{total} total</span>
         </div>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={fetchEmails}
-            className="rounded-lg border border-neutral-700 p-2 text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
-          >
-            <RefreshCw className="h-4 w-4" />
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={fetchEmails} className="btn">
+            <RefreshCw />
+            Refresh
           </button>
-          <button
-            onClick={() => setComposeOpen(true)}
-            className="flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-[13px] font-medium text-black hover:bg-neutral-200 transition-colors"
-          >
-            <Plus className="h-4 w-4" />
+          <button onClick={() => setComposeOpen(true)} className="btn btn-primary">
+            <Plus />
             Compose
           </button>
         </div>
       </div>
 
-      {/* Search */}
+      {/* ── Search ── */}
       <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          setSearchQuery(searchInput);
-          setPage(1);
-        }}
-        className="mb-5"
+        onSubmit={(e) => { e.preventDefault(); setSearchQuery(searchInput); setPage(1); }}
+        style={{ marginBottom: 20 }}
       >
-        <div className="relative">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-500" />
+        <div style={{ position: "relative" }}>
           <input
             type="text"
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                setSearchQuery(searchInput);
-                setPage(1);
-              }
+              if (e.key === "Enter") { setSearchQuery(searchInput); setPage(1); }
             }}
             placeholder="Search by email address (e.g. zhang, mit.edu)..."
-            className="w-full rounded-xl border border-neutral-700/50 bg-neutral-900/80 py-3 pl-11 pr-24 text-[14px] text-white placeholder:text-neutral-600 focus:outline-none focus:border-neutral-500 focus:bg-neutral-900 transition-all"
+            className="search-input"
+            style={{ width: "100%" }}
           />
-          {searchQuery ? (
+          {searchQuery && (
             <button
               type="button"
               onClick={() => { setSearchInput(""); setSearchQuery(""); setPage(1); }}
-              className="absolute right-4 top-1/2 -translate-y-1/2 rounded-md bg-neutral-800 px-2.5 py-1 text-[11px] text-neutral-400 hover:text-white hover:bg-neutral-700 transition-colors"
+              style={{
+                position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)",
+                borderRadius: 6, background: "var(--bg)", border: "1px solid var(--border-light)",
+                padding: "3px 10px", fontSize: 11, color: "var(--text-secondary)", cursor: "pointer",
+              }}
             >
               Clear
             </button>
-          ) : (
-            <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[11px] text-neutral-700">
-              Enter to search
-            </span>
           )}
         </div>
         {searchQuery && (
-          <p className="mt-2 text-[12px] text-neutral-500">
-            Showing results for <span className="text-neutral-300">&ldquo;{searchQuery}&rdquo;</span>
-            {" "}<span className="text-neutral-600">({total} found)</span>
+          <p style={{ marginTop: 8, fontSize: 12, color: "var(--text-tertiary)" }}>
+            Showing results for{" "}
+            <span style={{ color: "var(--text)" }}>&ldquo;{searchQuery}&rdquo;</span>{" "}
+            <span style={{ color: "var(--text-tertiary)" }}>({total} found)</span>
           </p>
         )}
       </form>
 
-      {/* Status Filter */}
-      <div className="flex gap-1 mb-5 border-b border-neutral-800/50 pb-3">
-        {statuses.map((s) => (
-          <button
-            key={s}
-            onClick={() => { setStatusFilter(s === "all" ? null : s); setPage(1); }}
-            className={`rounded-md px-3 py-1.5 text-[12px] font-medium transition-colors ${
-              (s === "all" && !statusFilter) || s === statusFilter
-                ? "bg-neutral-800 text-white"
-                : "text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/50"
-            }`}
-          >
-            {s.charAt(0).toUpperCase() + s.slice(1)}
-          </button>
-        ))}
-      </div>
-
-      {/* Email List */}
-      <div className="rounded-xl border border-neutral-800 bg-neutral-900/50 overflow-hidden">
-        <div className="grid grid-cols-[1fr_200px_100px_120px] gap-4 px-5 py-3 border-b border-neutral-800 bg-neutral-900/80">
-          <span className="text-[11px] font-medium text-neutral-500 uppercase tracking-wider">To / Subject</span>
-          <span className="text-[11px] font-medium text-neutral-500 uppercase tracking-wider">From</span>
-          <span className="text-[11px] font-medium text-neutral-500 uppercase tracking-wider">Status</span>
-          <span className="text-[11px] font-medium text-neutral-500 uppercase tracking-wider text-right">Date</span>
-        </div>
-
-        {loading ? (
-          <div className="px-5 py-8 text-center text-sm text-neutral-500 animate-pulse">Loading...</div>
-        ) : emails.length === 0 ? (
-          <div className="px-5 py-8 text-center text-sm text-neutral-500">No emails found.</div>
-        ) : (
-          <div className="divide-y divide-neutral-800/50">
-            {emails.map((email) => (
-              <div
-                key={email.id}
-                onClick={() => openEmail(email)}
-                className="grid grid-cols-[1fr_200px_100px_120px] gap-4 px-5 py-3 hover:bg-neutral-800/30 transition-colors cursor-pointer"
+      {/* ── Status Filter ── */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 20, alignItems: "center" }}>
+        <div className="status-tabs">
+          {statuses.map((s) => {
+            const isActive = (s === "all" && !statusFilter) || s === statusFilter;
+            return (
+              <button
+                key={s}
+                onClick={() => { setStatusFilter(s === "all" ? null : s); setPage(1); }}
+                className={`status-tab ${isActive ? "active" : ""}`}
               >
-                <div className="min-w-0">
-                  <p className="text-[13px] text-white truncate">{email.to}</p>
-                  <p className="text-[12px] text-neutral-500 truncate">{email.subject}</p>
-                </div>
-                <div className="flex items-center">
-                  <span className="text-[12px] text-neutral-400 truncate">{email.from}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className={`h-1.5 w-1.5 rounded-full ${getStatusDot(email.status)}`} />
-                  <span className={`text-[12px] font-medium capitalize ${getStatusColor(email.status)}`}>
-                    {email.status}
-                  </span>
-                </div>
-                <div className="flex items-center justify-end">
-                  <span className="text-[12px] text-neutral-500">{formatDate(email.createdAt)}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+                {s.charAt(0).toUpperCase() + s.slice(1)}
+              </button>
+            );
+          })}
+        </div>
       </div>
+
+      {/* ── Email List ── */}
+      {loading ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="skeleton" style={{ height: 56 }} />
+          ))}
+        </div>
+      ) : emails.length === 0 ? (
+        <div className="empty-state">
+          <div className="empty-icon">
+            <InboxIcon style={{ width: 20, height: 20 }} />
+          </div>
+          <h3>No emails found</h3>
+          <p>{searchQuery ? "Try a different query." : "Compose your first email to see it here."}</p>
+        </div>
+      ) : (
+        <div className="section-card" style={{ padding: 0, overflow: "hidden" }}>
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>To / Subject</th>
+                <th>From</th>
+                <th>Status</th>
+                <th style={{ textAlign: "right" }}>Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              {emails.map((email) => (
+                <tr key={email.id} onClick={() => openEmail(email)} style={{ cursor: "pointer" }}>
+                  <td>
+                    <div style={{ minWidth: 0 }}>
+                      <p style={{ fontSize: 13, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 600 }}>
+                        {email.to}
+                      </p>
+                      <p style={{ fontSize: 12, color: "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 2, fontWeight: 400 }}>
+                        {email.subject}
+                      </p>
+                    </div>
+                  </td>
+                  <td>
+                    <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>{email.from}</span>
+                  </td>
+                  <td>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      <span className={`h-1.5 w-1.5 rounded-full ${getStatusDot(email.status)}`} />
+                      <span className={`text-[12px] capitalize ${getStatusColor(email.status)}`} style={{ fontWeight: 600 }}>
+                        {email.status}
+                      </span>
+                    </span>
+                  </td>
+                  <td style={{ textAlign: "right" }}>
+                    <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
+                      {formatDate(email.createdAt)}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {total > 50 && (
-        <div className="flex items-center justify-between mt-4">
-          <button
-            disabled={page === 1}
-            onClick={() => setPage(page - 1)}
-            className="rounded-lg border border-neutral-700 px-3 py-1.5 text-[12px] text-neutral-400 hover:text-white disabled:opacity-30"
-          >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 16 }}>
+          <button disabled={page === 1} onClick={() => setPage(page - 1)} className="btn" style={{ opacity: page === 1 ? 0.4 : 1 }}>
             Previous
           </button>
-          <span className="text-[12px] text-neutral-500">Page {page} of {Math.ceil(total / 50)}</span>
-          <button
-            disabled={page >= Math.ceil(total / 50)}
-            onClick={() => setPage(page + 1)}
-            className="rounded-lg border border-neutral-700 px-3 py-1.5 text-[12px] text-neutral-400 hover:text-white disabled:opacity-30"
-          >
+          <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
+            Page {page} of {Math.ceil(total / 50)}
+          </span>
+          <button disabled={page >= Math.ceil(total / 50)} onClick={() => setPage(page + 1)} className="btn" style={{ opacity: page >= Math.ceil(total / 50) ? 0.4 : 1 }}>
             Next
           </button>
         </div>

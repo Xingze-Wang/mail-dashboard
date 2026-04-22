@@ -1,13 +1,45 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
+import { requireSession } from "@/lib/auth-helpers";
+import { getRep } from "@/lib/assignment";
 
 // Status progression: clicked implies delivered, delivered implies sent
 const DELIVERED_STATUSES = ["delivered", "clicked", "complained"];
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const now = new Date();
   const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
   const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  // Per-sales scoping on all funnel counts. A regular rep sees only the
+  // emails they sent (filtered by `from` ilike their sender address);
+  // admin + senior still see the whole team. Inbound counts similarly
+  // scope to threads that rep originated.
+  const session = await requireSession(req);
+  const isPrivileged = session?.role === "admin" || session?.role === "senior";
+  let repFromPattern: string | null = null;
+  let threadIdScope: string[] | null = null;
+  if (!isPrivileged && session?.repId) {
+    const rep = await getRep(session.repId);
+    if (rep) {
+      repFromPattern = `%${rep.sender_email}%`;
+      const { data: myOutbound } = await supabase
+        .from("emails")
+        .select("thread_id")
+        .ilike("from", repFromPattern)
+        .not("thread_id", "is", null);
+      threadIdScope = (myOutbound ?? [])
+        .map((r) => r.thread_id as string | null)
+        .filter((t): t is string => !!t);
+    }
+  }
+
+  // Tiny helper: apply the rep `from` scope to an emails count query.
+  const scopedEmails = () => {
+    let q = supabase.from("emails").select("*", { count: "exact", head: true });
+    if (repFromPattern) q = q.ilike("from", repFromPattern);
+    return q;
+  };
 
   const [
     { count: totalSent },
@@ -20,27 +52,39 @@ export async function GET() {
     { count: last7DaysSent },
     { data: dailyEmails },
   ] = await Promise.all([
-    supabase.from("emails").select("*", { count: "exact", head: true }).neq("status", "queued"),
-    supabase.from("emails").select("*", { count: "exact", head: true }).in("status", DELIVERED_STATUSES),
-    supabase.from("emails").select("*", { count: "exact", head: true }).eq("status", "clicked"),
-    supabase.from("emails").select("*", { count: "exact", head: true }).eq("status", "bounced"),
-    supabase.from("emails").select("*", { count: "exact", head: true }).eq("status", "complained"),
-    supabase.from("inbound_emails").select("*", { count: "exact", head: true }),
-    supabase
-      .from("webhook_events")
-      .select("id, type, created_at, email:emails(to, subject)")
-      .order("created_at", { ascending: false })
-      .limit(100),
-    supabase
-      .from("emails")
-      .select("*", { count: "exact", head: true })
-      .neq("status", "queued")
-      .gte("created_at", sevenDaysAgo),
-    supabase
-      .from("emails")
-      .select("created_at, status")
-      .neq("status", "queued")
-      .gte("created_at", thirtyDaysAgo),
+    scopedEmails().neq("status", "queued"),
+    scopedEmails().in("status", DELIVERED_STATUSES),
+    scopedEmails().eq("status", "clicked"),
+    scopedEmails().eq("status", "bounced"),
+    scopedEmails().eq("status", "complained"),
+    // Inbound scope: when this rep has zero threads, we skip the query
+    // entirely and use {count:0} as a literal. Otherwise pass `.in()`.
+    (threadIdScope !== null && threadIdScope.length === 0)
+      ? Promise.resolve({ count: 0 })
+      : (() => {
+          let q = supabase.from("inbound_emails").select("*", { count: "exact", head: true });
+          if (threadIdScope !== null) q = q.in("thread_id", threadIdScope);
+          return q;
+        })(),
+    (async () => {
+      let q = supabase
+        .from("webhook_events")
+        .select("id, type, created_at, email:emails!inner(to, subject, from)")
+        .order("created_at", { ascending: false })
+        .limit(100);
+      if (repFromPattern) q = q.ilike("email.from", repFromPattern);
+      return q;
+    })(),
+    scopedEmails().neq("status", "queued").gte("created_at", sevenDaysAgo),
+    (() => {
+      let q = supabase
+        .from("emails")
+        .select("created_at, status")
+        .neq("status", "queued")
+        .gte("created_at", thirtyDaysAgo);
+      if (repFromPattern) q = q.ilike("from", repFromPattern);
+      return q;
+    })(),
   ]);
 
   // Aggregate daily stats
