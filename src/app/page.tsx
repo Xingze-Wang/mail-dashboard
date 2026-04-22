@@ -101,37 +101,48 @@ export default function OverviewPage() {
     fetch("/api/metrics/me")
       .then((r) => r.json())
       .then((d) => { if (!d.error) setMyMetrics(d); })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, [showPerRepOnly]);
 
   useEffect(() => {
+    // Only the admin/global-view branch needs /api/metrics. Sales reps
+    // render entirely from /api/metrics/me above; fetching /api/metrics
+    // here would flash the global funnel before showPerRepOnly resolves.
+    // Wait for `me` to populate so we know which branch to render.
+    if (me === null) return; // still loading session
+    if (showPerRepOnly) return; // sales path above handles loading
+
     fetch("/api/metrics")
       .then((res) => res.json())
       .then(setMetrics)
       .catch(console.error)
       .finally(() => setLoading(false));
 
-    // Sync from Resend in background — keep re-calling until all pages are imported
+    // Bounded /api/sync loop — max 10 iterations = 5s. Previously
+    // unbounded while(!complete), could churn forever on a stuck sync.
+    let cancelled = false;
     const runSync = async () => {
       try {
         let complete = false;
-        while (!complete) {
+        let iter = 0;
+        while (!complete && !cancelled && iter < 10) {
           const res = await fetch("/api/sync");
           const data = await res.json();
           complete = data.complete !== false;
           const metricsRes = await fetch("/api/metrics");
           const metricsData = await metricsRes.json();
-          if (metricsData) setMetrics(metricsData);
-          if (!complete) {
-            await new Promise((r) => setTimeout(r, 500));
-          }
+          if (metricsData && !cancelled) setMetrics(metricsData);
+          if (!complete) await new Promise((r) => setTimeout(r, 500));
+          iter++;
         }
       } catch {
-        // Sync failed, metrics already loaded from initial fetch
+        // non-fatal
       }
     };
     runSync();
-  }, []);
+    return () => { cancelled = true; };
+  }, [me, showPerRepOnly]);
 
   if (loading) {
     return (

@@ -28,9 +28,13 @@ async function checkAuth(req: NextRequest): Promise<boolean> {
   const secret = process.env.CRON_SECRET;
   const auth = req.headers.get("authorization");
   if (secret && auth === `Bearer ${secret}`) return true;
-  // Authenticated users (any role) can kick the queue from the pipeline UI.
+  // Admin/senior only. Previously any authenticated user could kick
+  // the queue, which processes leads across every rep (not just the
+  // caller's). That let sales trigger enrichment + assignment side
+  // effects on other reps' leads.
   const session = await verifySession(req.cookies.get(AUTH_COOKIE)?.value);
-  return session !== null;
+  if (!session) return false;
+  return session.role === "admin" || session.role === "senior";
 }
 
 async function processOne(row: Record<string, unknown>): Promise<boolean> {

@@ -8,6 +8,7 @@ import {
 } from "@/lib/assignment";
 import { normalizeSourceLabel } from "@/lib/sources";
 import { scoreWithGemini } from "@/lib/gemini-scorer";
+import { requireSession } from "@/lib/auth-helpers";
 
 /**
  * POST /api/discovery/[id]/promote
@@ -59,6 +60,14 @@ export async function POST(
   req: NextRequest,
   ctx: { params: Promise<{ id: string }> },
 ) {
+  // Must be an authenticated user. Previously unauthed callers could
+  // promote any discovery row into pipeline_leads with an attacker-
+  // chosen email — those would later be drafted + sent real outreach.
+  const session = await requireSession(req);
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const { id: rawId } = await ctx.params;
   const id = Number(rawId);
   if (!Number.isFinite(id) || id <= 0) {

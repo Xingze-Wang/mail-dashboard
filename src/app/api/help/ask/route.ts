@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { llmChat } from "@/lib/llm-proxy";
 import { QIJI_PROGRAM_FACTS } from "@/lib/qiji-facts";
 import { SALES_GUIDE } from "@/lib/sales-guide-corpus";
+import { requireSession } from "@/lib/auth-helpers";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -40,6 +41,9 @@ const SYSTEM = `你是 Qiji Pipeline 的销售助手 (Sales Copilot)。
 - 不要承诺超出 facts 的东西。`;
 
 export async function POST(req: NextRequest) {
+  const session = await requireSession(req);
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const body = await req.json().catch(() => ({}));
   const question = String(body.question ?? "").trim();
   const currentPath = String(body.currentPath ?? "").trim();

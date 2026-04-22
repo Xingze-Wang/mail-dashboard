@@ -20,6 +20,11 @@ export async function PATCH(
   const { id } = await params;
 
   try {
+    // Auth required up front. Previously a null session skipped the
+    // ownership check and the PATCH proceeded on any inbound row.
+    const session = await requireSession(req);
+    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
     const body = await req.json().catch(() => ({}));
     const { isRead } = body as { isRead?: boolean };
 
@@ -31,9 +36,8 @@ export async function PATCH(
     }
 
     // Ownership check (only for sales role).
-    const session = await requireSession(req);
-    const isPrivileged = session?.role === "admin" || session?.role === "senior";
-    if (!isPrivileged && session?.repId) {
+    const isPrivileged = session.role === "admin" || session.role === "senior";
+    if (!isPrivileged) {
       const rep = await getRep(session.repId);
       if (!rep?.sender_email) {
         return NextResponse.json({ error: "Not found" }, { status: 404 });

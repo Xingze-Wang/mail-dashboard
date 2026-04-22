@@ -5,6 +5,13 @@ import { requireSession } from "@/lib/auth-helpers";
 import { getRep } from "@/lib/assignment";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  // Auth required up front. Previously a null session fell through the
+  // ownership check entirely and returned the email body to any caller.
+  const session = await requireSession(req);
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const { id } = await params;
 
   const { data: email } = await supabase
@@ -17,21 +24,17 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  // Per-rep scoping: a sales user can only see emails they themselves
-  // sent. Admin + senior see everything (they triage across the team).
-  // We compare the row's `from` string against the acting rep's
-  // sender_email — that's the same contract used by /api/emails list
-  // scoping, so both endpoints agree on what "yours" means.
-  const session = await requireSession(req);
-  const isPrivileged = session?.role === "admin" || session?.role === "senior";
-  if (!isPrivileged && session?.repId) {
+  // Per-rep scoping: sales see only their own outbound. Admin + senior
+  // unrestricted.
+  const isPrivileged = session.role === "admin" || session.role === "senior";
+  if (!isPrivileged) {
     const rep = await getRep(session.repId);
     const fromStr = typeof email.from === "string" ? email.from.toLowerCase() : "";
     const mine = rep?.sender_email
       ? fromStr.includes(rep.sender_email.toLowerCase())
       : false;
     if (!mine) {
-      // Return 404 (not 403) so we don't leak which IDs exist in the DB.
+      // 404 (not 403) so we don't leak which IDs exist.
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
   }

@@ -443,7 +443,11 @@ export default function PipelinePage() {
   /* ── Channel counts ──────────────────────────────────────────────── */
 
   const channelCounts = useMemo(() => {
-    const arxivTotal = analytics?.channels.sources.find((s) => s.source === "arXiv")?.total ?? leads.length;
+    // Derive from the ACTUAL loaded `leads` array (which is already
+    // rep-scoped server-side for sales). Previously used
+    // analytics.channels.sources[].total which mixed scoped and
+    // unscoped aggregations and produced the "28 vs 718" mismatch.
+    const arxivTotal = leads.length;
     const hf = discoveryBySource.hf ?? 0;
     const gh = discoveryBySource.github ?? 0;
     const ph = discoveryBySource.ph ?? 0;
@@ -454,7 +458,7 @@ export default function PipelinePage() {
       github: gh,
       ph,
     };
-  }, [analytics, leads.length, discoveryBySource]);
+  }, [leads.length, discoveryBySource]);
 
   /* ── Filtered + sorted streams ───────────────────────────────────── */
 
@@ -934,12 +938,19 @@ export default function PipelinePage() {
           <div className="dx-stream-toolbar">
             <div className="dx-chip-group">
               {STATUS_CHIPS.map((s) => {
+                // Apply the same repFilter as the rendered list so chip
+                // counts match what sales actually sees. Previously
+                // counts used raw `leads` ignoring repFilter, so the
+                // chip showed "Ready 42" while the list had 6 rows.
+                const scopedLeads = repFilter === "all"
+                  ? leads
+                  : leads.filter((l) => l.assignedRepId === repFilter);
                 const count = (() => {
-                  if (s.key === "all") return leads.length;
-                  if (s.key === "drafting") return leads.filter((l) => l.status === "queued" || l.status === "drafting" || l.status === "new").length;
-                  if (s.key === "ripening") return leads.filter((l) => isRipening(l)).length;
-                  if (s.key === "ready") return leads.filter((l) => l.status === "ready" && !isRipening(l)).length;
-                  return leads.filter((l) => l.status === s.key).length;
+                  if (s.key === "all") return scopedLeads.length;
+                  if (s.key === "drafting") return scopedLeads.filter((l) => l.status === "queued" || l.status === "drafting" || l.status === "new").length;
+                  if (s.key === "ripening") return scopedLeads.filter((l) => isRipening(l)).length;
+                  if (s.key === "ready") return scopedLeads.filter((l) => l.status === "ready" && !isRipening(l)).length;
+                  return scopedLeads.filter((l) => l.status === s.key).length;
                 })();
                 return (
                   <button

@@ -72,12 +72,31 @@ export async function GET(req: NextRequest) {
   const dailyLeads = scopeRepId !== null
     ? (dailyLeadsRaw ?? []).filter((l) => (l as { assigned_rep_id?: number }).assigned_rep_id === scopeRepId)
     : (dailyLeadsRaw ?? []);
-  const wechat = wechatConversions ?? [];
+
+  // Scope the WeChat conversions + delivered recipients too. For a
+  // scoped session, "conversion" means MY recipients who added WeChat.
+  // Previously these were team-wide, so a sales rep saw the whole
+  // team's WeChat count as her numerator → misleading conversion rate.
+  let wechat = wechatConversions ?? [];
+  let scopedDelivered = deliveredRecipients;
+  if (scopeRepId !== null) {
+    const myRep = (reps ?? []).find((r) => r.id === scopeRepId);
+    const mySenderEmail = (myRep?.sender_email as string | undefined)?.toLowerCase().trim() ?? "";
+    const myRecipients = repBySenderEmail.get(mySenderEmail) ?? new Set<string>();
+    scopedDelivered = myRecipients;
+    // A WeChat conversion "belongs" to this rep if the query (= email
+    // the person added WeChat with) matches any of my recipients. This
+    // is the same join rule buildSourceBreakdown uses.
+    wechat = wechat.filter((w) => {
+      const q = (w.query as string | null | undefined)?.toLowerCase().trim();
+      return q && myRecipients.has(q);
+    });
+  }
   // Lower-cased set of every email address we've successfully delivered to.
   // This is the right denominator for ANY conversion-rate calc — using
   // pipeline_leads.status='sent' (~30 rows) instead would report rates 30×
   // too high because most historical sends never went through pipeline_leads.
-  const sentEmails: Set<string> = deliveredRecipients;
+  const sentEmails: Set<string> = scopedDelivered;
 
   // ── Channel stats ──
   const totalLeads = leads.length;

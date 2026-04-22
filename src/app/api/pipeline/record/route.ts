@@ -24,6 +24,15 @@ import { getSchoolInfo } from "@/lib/email-generator";
  */
 export async function POST(req: NextRequest) {
   try {
+    // Machine-to-machine endpoint — must be gated by CRON_SECRET.
+    // Previously unauthenticated, so anyone could POST and insert
+    // attacker-chosen leads / emails / arxiv rows into the DB.
+    const auth = req.headers.get("authorization") || "";
+    const expected = process.env.CRON_SECRET;
+    if (!expected || auth !== `Bearer ${expected}`) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const body = await req.json();
     const { paper, emailed, all_authors, compute, matched_directions, subject, body_html } = body;
 

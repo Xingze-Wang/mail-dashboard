@@ -15,6 +15,7 @@ import {
   assignRep,
   getRep,
 } from "@/lib/assignment";
+import { requireSession } from "@/lib/auth-helpers";
 
 /**
  * POST /api/pipeline/import
@@ -50,15 +51,16 @@ import {
  * Set PIPELINE_IMPORT_KEY env var to require auth.
  */
 export async function POST(req: NextRequest) {
-  // Auth check
+  // Auth: EITHER a valid user session OR a bearer token matching
+  // PIPELINE_IMPORT_KEY (for external scrapers). The prior "referer
+  // includes host" check was trivially spoofable — any authenticated
+  // browser tab or any attacker crafting a Referer header passed it.
   const importKey = process.env.PIPELINE_IMPORT_KEY;
-  if (importKey) {
-    const auth = req.headers.get("authorization");
-    const referer = req.headers.get("referer") || "";
-    const host = req.headers.get("host") || "__none__";
-    const isInternal = referer.includes(host);
-
-    if (!isInternal && auth !== `Bearer ${importKey}`) {
+  const auth = req.headers.get("authorization") || "";
+  const hasValidKey = !!importKey && auth === `Bearer ${importKey}`;
+  if (!hasValidKey) {
+    const session = await requireSession(req);
+    if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
   }

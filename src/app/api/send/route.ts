@@ -1,8 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { resend } from "@/lib/resend";
+import { requireAdmin } from "@/lib/auth-helpers";
 
+// Low-level send endpoint — bypasses all pipeline guards (age-gate,
+// blocklist, contact-guard), so admin-only. Everyday sales sends must
+// go through /api/pipeline/send.
 export async function POST(req: NextRequest) {
+  const gate = await requireAdmin(req);
+  if ("response" in gate) return gate.response;
+
   try {
     const body = await req.json();
     const { from, to, subject, html, text, templateId } = body;

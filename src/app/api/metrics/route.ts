@@ -147,7 +147,17 @@ export async function GET(req: NextRequest) {
     }));
   }
 
-  // Pipeline stats + WeChat
+  // Pipeline stats + WeChat — per-rep scoped for non-privileged users.
+  // Previously this block returned team-wide counts regardless of role,
+  // leaking other reps' numbers into the sales overview card.
+  let readyQ = supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("status", "ready");
+  let sentQ = supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("status", "sent");
+  let totalQ = supabase.from("pipeline_leads").select("*", { count: "exact", head: true });
+  if (!isPrivileged) {
+    readyQ = readyQ.eq("assigned_rep_id", session.repId);
+    sentQ = sentQ.eq("assigned_rep_id", session.repId);
+    totalQ = totalQ.eq("assigned_rep_id", session.repId);
+  }
   const [
     { count: pipelineReady },
     { count: pipelineSent },
@@ -155,11 +165,18 @@ export async function GET(req: NextRequest) {
     { count: wechatTotal },
     { data: recentWechat },
   ] = await Promise.all([
-    supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("status", "ready"),
-    supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("status", "sent"),
-    supabase.from("pipeline_leads").select("*", { count: "exact", head: true }),
-    supabase.from("brief_lookups").select("*", { count: "exact", head: true }).eq("added_wechat", true),
-    supabase.from("brief_lookups").select("query, arxiv_id, created_at").eq("added_wechat", true).order("created_at", { ascending: false }).limit(10),
+    readyQ,
+    sentQ,
+    totalQ,
+    // brief_lookups: admin sees global; non-priv gets 0 for now
+    // (accurate per-rep attribution would need to cross-reference every
+    // wechat query against this rep's delivered recipients — expensive).
+    isPrivileged
+      ? supabase.from("brief_lookups").select("*", { count: "exact", head: true }).eq("added_wechat", true)
+      : Promise.resolve({ count: 0 }),
+    isPrivileged
+      ? supabase.from("brief_lookups").select("query, arxiv_id, created_at").eq("added_wechat", true).order("created_at", { ascending: false }).limit(10)
+      : Promise.resolve({ data: [] as Array<{ query: string; arxiv_id: string; created_at: string }> }),
   ]);
 
   return NextResponse.json({

@@ -1,9 +1,13 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { resend } from "@/lib/resend";
+import { requireAdmin } from "@/lib/auth-helpers";
 
-// Import historical emails from Resend API
-export async function POST() {
+// Import historical emails from Resend API — admin-only.
+export async function POST(req: NextRequest) {
+  const gate = await requireAdmin(req);
+  if ("response" in gate) return gate.response;
+
   try {
     let imported = 0;
     let skipped = 0;
