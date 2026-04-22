@@ -229,6 +229,14 @@ export async function GET(req: NextRequest) {
     };
   });
 
+  // Defense in depth: for a non-privileged session, ensure the
+  // response only exposes THIS rep's data. repStats iterates every
+  // rep in sales_reps; for sales we filter down to just themselves
+  // so the Sales tab doesn't leak teammates' numbers (even if zero).
+  const visibleRepStats = scopeRepId !== null
+    ? repStats.filter((r) => r.rep.id === scopeRepId)
+    : repStats;
+
   return NextResponse.json({
     channels: {
       totalLeads,
@@ -242,7 +250,7 @@ export async function GET(req: NextRequest) {
       hIndexDist,
       sources: buildSourceBreakdown(leads, reps ?? [], wechat, discoveryCountsBySource, sentEmails),
     },
-    sales: { reps: repStats },
+    sales: { reps: visibleRepStats },
   });
 }
 

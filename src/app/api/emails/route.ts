@@ -74,7 +74,7 @@ export async function GET(req: NextRequest) {
     total = count || 0;
   }
 
-  const mapped = emails.map((e) => ({
+  let mapped = emails.map((e) => ({
     id: e.id,
     from: e.from,
     to: e.to,
@@ -87,5 +87,13 @@ export async function GET(req: NextRequest) {
     threadId: e.thread_id,
   }));
 
-  return NextResponse.json({ emails: mapped, total: total || 0, page, limit });
+  // Defense in depth: non-admin must never see an email that isn't
+  // theirs, even if the ilike filter above somehow missed. This is a
+  // paranoid catch-net — the query should already be scoped.
+  if (senderEmail) {
+    const needle = senderEmail.toLowerCase();
+    mapped = mapped.filter((e) => typeof e.from === "string" && e.from.toLowerCase().includes(needle));
+  }
+
+  return NextResponse.json({ emails: mapped, total: senderEmail ? mapped.length : (total || 0), page, limit });
 }

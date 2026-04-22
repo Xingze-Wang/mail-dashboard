@@ -139,6 +139,16 @@ export async function GET(req: NextRequest) {
 
   let mapped = (leads || []).map(mapLead);
 
+  // DEFENSE IN DEPTH: filter the response in memory too. If the .eq()
+  // above ever fails to apply (caching, bug, typo), this catch-net
+  // guarantees sales CANNOT see another rep's rows. Paranoia — the
+  // DB filter should already handle this, but the bug report said
+  // sales was seeing all leads, and this eliminates every remaining
+  // code path that could produce that outcome.
+  if (!isPrivileged) {
+    mapped = mapped.filter((l) => l.assignedRepId === session.repId);
+  }
+
   // Client-side category filter (category is derived, not a DB column)
   if (category) {
     mapped = mapped.filter((l) => l.category === category);
@@ -146,7 +156,7 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     leads: mapped,
-    total: category ? mapped.length : (total || 0),
+    total: !isPrivileged ? mapped.length : (category ? mapped.length : (total || 0)),
     page,
     limit,
   });

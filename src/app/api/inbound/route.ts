@@ -130,7 +130,7 @@ export async function GET(req: NextRequest) {
   const [{ data: emails }, { count: total }] = await Promise.all([listQuery, countQuery]);
 
   // Map snake_case DB fields to camelCase for frontend
-  const mapped = (emails || []).map((e) => ({
+  let mapped = (emails || []).map((e) => ({
     id: e.id,
     from: e.from,
     to: cleanToField(e.to),
@@ -143,5 +143,11 @@ export async function GET(req: NextRequest) {
     threadId: e.thread_id,
   }));
 
-  return NextResponse.json({ emails: mapped, total: total || 0, page, limit });
+  // Defense in depth: restrict to ids in the rep's thread scope.
+  if (threadIds) {
+    const scope = new Set(threadIds);
+    mapped = mapped.filter((m) => !!m.threadId && scope.has(m.threadId));
+  }
+
+  return NextResponse.json({ emails: mapped, total: threadIds ? mapped.length : (total || 0), page, limit });
 }
