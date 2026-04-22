@@ -114,6 +114,39 @@ def load_wechat_signals():
         return set()
 
 
+def load_corrections():
+    """
+    Map arxiv_id -> dict of correction signals from sales:
+      { 'bad_compute': N, 'good_lead': N, 'wrong_author': N, ... }
+    Returns {arxiv_id: counts_dict}.
+    """
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return {}
+    try:
+        from supabase import create_client
+        sb = create_client(SUPABASE_URL, SUPABASE_KEY)
+        # Join lead_corrections -> pipeline_leads to get arxiv_id.
+        # PostgREST embedding: lead_corrections?select=type,pipeline_leads(arxiv_id)
+        result = (
+            sb.table("lead_corrections")
+            .select("type,pipeline_leads(arxiv_id)")
+            .execute()
+        )
+        out = {}
+        for row in result.data or []:
+            ax = (row.get("pipeline_leads") or {}).get("arxiv_id")
+            t = row.get("type")
+            if not ax or not t:
+                continue
+            d = out.setdefault(ax, {})
+            d[t] = d.get(t, 0) + 1
+        print(f"  Loaded corrections for {len(out)} papers from Supabase")
+        return out
+    except Exception as e:
+        print(f"  Supabase corrections error: {e}")
+        return {}
+
+
 def load_lead_emails():
     """Map arxiv_id to author_email from pipeline_leads."""
     if not SUPABASE_URL or not SUPABASE_KEY:
@@ -137,17 +170,34 @@ def load_lead_emails():
 
 # --- Label assignment ---
 
-def assign_labels(jsonl_data, click_signals, wechat_ids, lead_emails):
+def assign_labels(jsonl_data, click_signals, wechat_ids, lead_emails, corrections=None):
     """
-    Assign training labels. Returns list of (text, label).
-    Label scale:
-      1.0 = WeChat added (strongest positive)
-      0.8 = email link clicked (showed active interest)
-      0.5 = Gemini said needs compute but no engagement data
-      0.0 = Gemini said no compute need
+    Assign training labels via WEIGHTED VOTE across multi-source signals.
+    No single source is ground truth — sales saying "bad_compute" doesn't
+    override an actual WeChat add, and Gemini's prior is the weakest signal.
+
+    Weights (signed):
+      WeChat added             +3   (strongest positive — actual conversion)
+      Email clicked            +1
+      Sales 'good_lead'        +1   (sales explicitly endorsed)
+      Gemini said needs compute +0.5 (model prior, weakest +)
+      Gemini said no compute   -0.5
+      Sales 'bad_compute'      -2   (strong sales negative)
+
+    Final label = 1 if weighted sum > 0 else 0.
+    Conflicts (e.g. sales said bad but WeChat converted) keep the lead as
+    a "hard example" — interesting precisely because it disagrees.
+
+    corrections: optional {arxiv_id: {type: count}} from load_corrections().
     """
     samples = []
-    stats = {"wechat": 0, "clicked": 0, "gemini_pos": 0, "gemini_neg": 0}
+    stats = {
+        "label_1": 0, "label_0": 0,
+        "wechat_signal": 0, "click_signal": 0,
+        "sales_good": 0, "sales_bad": 0,
+        "conflict_sales_bad_but_wechat": 0,
+    }
+    corrections = corrections or {}
 
     for d in jsonl_data:
         arxiv_id = d.get("arxiv_id", "")
@@ -156,28 +206,40 @@ def assign_labels(jsonl_data, click_signals, wechat_ids, lead_emails):
         text = f"{title} [SEP] {abstract}"
         gemini_label = d.get("label", 0)
 
-        if arxiv_id in wechat_ids:
-            label = 1.0
-            stats["wechat"] += 1
-        elif arxiv_id in lead_emails:
-            email = lead_emails[arxiv_id]
-            email_status = click_signals.get(email)
+        score = 0.0
+        wechat_hit = arxiv_id in wechat_ids
+        if wechat_hit:
+            score += 3.0
+            stats["wechat_signal"] += 1
+
+        if arxiv_id in lead_emails:
+            email_status = click_signals.get(lead_emails[arxiv_id])
             if email_status == "clicked":
-                label = 0.8
-                stats["clicked"] += 1
-            else:
-                label = 0.5 if gemini_label == 1 else 0.0
-                stats["gemini_pos" if gemini_label == 1 else "gemini_neg"] += 1
-        else:
-            label = 0.5 if gemini_label == 1 else 0.0
-            stats["gemini_pos" if gemini_label == 1 else "gemini_neg"] += 1
+                score += 1.0
+                stats["click_signal"] += 1
 
-        samples.append((text, label))
+        corr = corrections.get(arxiv_id, {})
+        if corr.get("good_lead", 0) > 0:
+            score += 1.0
+            stats["sales_good"] += 1
+        if corr.get("bad_compute", 0) > 0:
+            score -= 2.0
+            stats["sales_bad"] += 1
+            if wechat_hit:
+                stats["conflict_sales_bad_but_wechat"] += 1
 
-    print(f"\n  Label distribution:")
+        # Gemini prior — weakest signal, so we add it last
+        score += (0.5 if gemini_label == 1 else -0.5)
+
+        label = 1 if score > 0 else 0
+        stats["label_1" if label == 1 else "label_0"] += 1
+        samples.append((text, float(label)))
+
+    print(f"\n  Weighted-vote label stats:")
     for k, v in stats.items():
         print(f"     {k}: {v}")
-
+    if stats["conflict_sales_bad_but_wechat"] > 0:
+        print(f"  ⚠️  {stats['conflict_sales_bad_but_wechat']} conflicts: sales said bad_compute but recipient added on WeChat")
     return samples
 
 
@@ -368,13 +430,14 @@ def main():
     click_signals = load_click_signals()
     wechat_ids = load_wechat_signals()
     lead_emails = load_lead_emails()
+    corrections = load_corrections()
 
     if not jsonl_data:
         print("No training data found")
         sys.exit(1)
 
     print("\nAssigning labels...")
-    samples = assign_labels(jsonl_data, click_signals, wechat_ids, lead_emails)
+    samples = assign_labels(jsonl_data, click_signals, wechat_ids, lead_emails, corrections)
 
     train(samples, model_dir, jsonl_data)
 

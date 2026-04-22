@@ -22,6 +22,12 @@ on:
         options: ["false", "true"]
   repository_dispatch:
     types: [train-scorer]
+  # Weekly retrain — every Monday 14:00 UTC = 22:00 Beijing.
+  # Auto-promotes when held-out F1 is at least as good as the last run;
+  # otherwise the script uploads the run but doesn't activate it (so a
+  # bad batch of new corrections can't silently regress prod).
+  schedule:
+    - cron: "0 14 * * 1"
 
 jobs:
   train:
@@ -54,7 +60,8 @@ jobs:
       - name: Promote (optional)
         if: >
           github.event.inputs.auto_promote == 'true' ||
-          github.event.client_payload.auto_promote == true
+          github.event.client_payload.auto_promote == true ||
+          github.event_name == 'schedule'
         env:
           DASHBOARD_URL: https://qiji-pipeline.vercel.app
           SCORER_TRAIN_TOKEN: ${{ secrets.SCORER_TRAIN_TOKEN }}

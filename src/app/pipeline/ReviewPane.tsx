@@ -25,7 +25,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, Send, SkipForward, ArrowLeft } from "lucide-react";
+import { Loader2, Send, SkipForward, ArrowLeft, Flag, UserCheck, X } from "lucide-react";
 import { sanitizeHtml } from "@/lib/sanitize";
 import { Lead } from "./types";
 import { isAgeGated, leadAgeDays, MIN_AGE_DAYS } from "@/lib/policy";
@@ -409,6 +409,11 @@ export function ReviewPane({ leads, onExit, onSent, onSkipped, initialLeadId }: 
               </>
             )}
           </div>
+          <AuthorSwitcher
+            leadId={lead.id}
+            currentAuthor={lead.authorName}
+            authorsRaw={lead.authors}
+          />
           {lead.abstract ? (
             <div className="dx-review-abs">{lead.abstract}</div>
           ) : (
@@ -422,6 +427,9 @@ export function ReviewPane({ leads, onExit, onSent, onSkipped, initialLeadId }: 
 
         {/* RIGHT — editable draft */}
         <div className="dx-review-pane right">
+          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+            <FlagButton leadId={lead.id} onSkipped={() => onSkipped(lead)} />
+          </div>
           {!canEmail ? (
             <div style={{ color: "var(--dx-text-3)", fontSize: 13 }}>
               {lead.authorEmail
@@ -587,4 +595,351 @@ function approxEditDistance(a: string, b: string): number {
   let diff = 0;
   for (const v of counts.values()) diff += Math.abs(v);
   return Math.floor(diff / 2);
+}
+
+/* ===========================================================================
+ * AuthorSwitcher — dropdown of all authors from the paper, click to swap
+ * recipient. Useful when scraper picked the last-author PI but we should
+ * be emailing the first-author PhD student.
+ * ======================================================================== */
+
+function parseAuthorList(raw: string | null): string[] {
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+function AuthorSwitcher({
+  leadId,
+  currentAuthor,
+  authorsRaw,
+}: {
+  leadId: string;
+  currentAuthor: string | null;
+  authorsRaw: string | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const [switching, setSwitching] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [emailInput, setEmailInput] = useState("");
+  const [chosenName, setChosenName] = useState<string | null>(null);
+  const all = useMemo(() => parseAuthorList(authorsRaw), [authorsRaw]);
+  if (all.length <= 1) return null; // nothing to switch to
+
+  async function doSwitch(newAuthorName: string, newAuthorEmail?: string) {
+    setSwitching(newAuthorName);
+    setError(null);
+    try {
+      const r = await fetch("/api/lead/switch-author", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leadId, newAuthorName, newAuthorEmail: newAuthorEmail || undefined }),
+      });
+      const d = await r.json();
+      if (!r.ok) {
+        setError(d.error ?? "Switch failed");
+        return;
+      }
+      // Reload so the lead's freshly-cleared enrichment + new name show up
+      // in every place (sidebar count, list row, this pane).
+      window.location.reload();
+    } finally {
+      setSwitching(null);
+    }
+  }
+
+  return (
+    <div style={{ marginTop: 10 }}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 6,
+          padding: "4px 10px",
+          fontSize: 11,
+          fontWeight: 500,
+          borderRadius: 999,
+          border: "1px solid var(--dx-border-soft)",
+          background: open ? "var(--dx-blue-bg)" : "transparent",
+          color: open ? "var(--dx-blue)" : "var(--dx-text-2)",
+          cursor: "pointer",
+        }}
+      >
+        <UserCheck style={{ width: 12, height: 12 }} />
+        Switch to first author?
+        <span style={{ color: "var(--dx-text-3)" }}>({all.length} authors)</span>
+      </button>
+
+      {open && (
+        <div
+          style={{
+            marginTop: 8,
+            padding: 12,
+            background: "var(--dx-card)",
+            border: "1px solid var(--dx-border-soft)",
+            borderRadius: 8,
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+          }}
+        >
+          <div style={{ fontSize: 11, color: "var(--dx-text-3)", marginBottom: 2 }}>
+            Pick the right recipient. We&apos;ll re-target this lead and clear
+            enrichment so the next step picks up the new author&apos;s data.
+          </div>
+          {chosenName ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ fontSize: 12 }}>
+                Switching to <b>{chosenName}</b>. Optional — paste their email
+                if you have it (otherwise we keep the existing email and you
+                can edit before sending):
+              </div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <input
+                  type="email"
+                  placeholder="newauthor@school.edu (optional)"
+                  value={emailInput}
+                  onChange={(e) => setEmailInput(e.target.value)}
+                  style={{ flex: 1, padding: "6px 10px", fontSize: 12, border: "1px solid var(--dx-border-soft)", borderRadius: 6 }}
+                />
+                <button
+                  onClick={() => doSwitch(chosenName, emailInput.trim())}
+                  disabled={!!switching}
+                  className="dx-primary"
+                  style={{ fontSize: 12, padding: "6px 12px" }}
+                >
+                  {switching ? "Switching…" : "Confirm"}
+                </button>
+                <button
+                  onClick={() => { setChosenName(null); setEmailInput(""); }}
+                  className="dx-secondary"
+                  style={{ fontSize: 12, padding: "6px 10px" }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {all.map((author, i) => {
+                const isCurrent = currentAuthor && author.toLowerCase() === currentAuthor.toLowerCase();
+                return (
+                  <button
+                    key={author + i}
+                    onClick={() => !isCurrent && setChosenName(author)}
+                    disabled={!!isCurrent}
+                    style={{
+                      textAlign: "left",
+                      padding: "6px 10px",
+                      fontSize: 12,
+                      border: "1px solid " + (isCurrent ? "var(--dx-border-soft)" : "transparent"),
+                      borderRadius: 6,
+                      background: isCurrent ? "var(--dx-bg)" : "transparent",
+                      color: isCurrent ? "var(--dx-text-3)" : "var(--dx-text-1)",
+                      cursor: isCurrent ? "default" : "pointer",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                    }}
+                  >
+                    <span>
+                      {i === 0 && <span style={{ color: "var(--dx-blue)", fontWeight: 600, marginRight: 6 }}>1st</span>}
+                      {i === all.length - 1 && i !== 0 && <span style={{ color: "var(--dx-text-3)", fontSize: 10, marginRight: 6 }}>last</span>}
+                      {author}
+                    </span>
+                    {isCurrent && <span style={{ fontSize: 10, color: "var(--dx-text-3)" }}>current</span>}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {error && (
+            <div style={{ fontSize: 11, color: "#dc2626" }}>{error}</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ===========================================================================
+ * FlagButton — small "🚩" trigger that opens a modal for sales to flag
+ * this lead with one of 6 categories. Posts to /api/lead/correct.
+ * ======================================================================== */
+
+const FLAG_OPTIONS: { type: string; label: string; hint: string; skipsLead: boolean }[] = [
+  { type: "bad_compute",            label: "不该需要算力",        hint: "对比/综述/纯理论 — 把这种学到 scorer 里",       skipsLead: true  },
+  { type: "wrong_author",           label: "作者搞错了",          hint: "应该发给一作（直接用上面的 Switch 更快）",     skipsLead: false },
+  { type: "wrong_direction",        label: "方向标错了",          hint: "我们的方向分类不对",                          skipsLead: false },
+  { type: "low_quality_email",      label: "Email 写得不好",      hint: "草稿质量不够，feed 给 email scorer",           skipsLead: false },
+  { type: "right_lead_wrong_pitch", label: "Lead 对，话术不对",   hint: "Persuasion angle 错了，需要换方式",            skipsLead: false },
+  { type: "good_lead",              label: "👍 这是好 lead",       hint: "正样本；强化 scorer",                          skipsLead: false },
+];
+
+function FlagButton({ leadId, onSkipped }: { leadId: string; onSkipped: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [chosen, setChosen] = useState<typeof FLAG_OPTIONS[number] | null>(null);
+  const [reason, setReason] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [done, setDone] = useState(false);
+
+  async function submit() {
+    if (!chosen) return;
+    setSubmitting(true);
+    try {
+      const r = await fetch("/api/lead/correct", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          leadId,
+          type: chosen.type,
+          reason: reason.trim() || undefined,
+          skip: chosen.skipsLead,
+        }),
+      });
+      if (r.ok) {
+        setDone(true);
+        if (chosen.skipsLead) {
+          // briefly show success, then advance
+          setTimeout(() => { setOpen(false); setDone(false); setChosen(null); setReason(""); onSkipped(); }, 700);
+        } else {
+          setTimeout(() => { setOpen(false); setDone(false); setChosen(null); setReason(""); }, 900);
+        }
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <>
+      <button
+        onClick={() => setOpen(true)}
+        title="Flag this lead"
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 4,
+          padding: "4px 10px",
+          fontSize: 11,
+          color: "var(--dx-text-3)",
+          background: "transparent",
+          border: "1px solid var(--dx-border-soft)",
+          borderRadius: 999,
+          cursor: "pointer",
+        }}
+      >
+        <Flag style={{ width: 11, height: 11 }} />
+        Flag
+      </button>
+
+      {open && (
+        <div
+          onClick={() => !submitting && setOpen(false)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.4)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 50,
+            padding: 24,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "min(440px, 92vw)",
+              background: "var(--dx-card)",
+              borderRadius: 12,
+              border: "1px solid var(--dx-border-soft)",
+              padding: 18,
+              display: "flex",
+              flexDirection: "column",
+              gap: 12,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ fontSize: 14, fontWeight: 600 }}>
+                {done ? "✓ Saved" : chosen ? `Flag: ${chosen.label}` : "Flag this lead"}
+              </div>
+              <button
+                onClick={() => !submitting && setOpen(false)}
+                style={{ background: "transparent", border: 0, color: "var(--dx-text-3)", cursor: "pointer", padding: 4, lineHeight: 0 }}
+              >
+                <X style={{ width: 16, height: 16 }} />
+              </button>
+            </div>
+            {done ? (
+              <div style={{ fontSize: 12, color: "var(--dx-text-2)" }}>
+                Thanks — this signal will go into the next training run.
+              </div>
+            ) : !chosen ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {FLAG_OPTIONS.map((o) => (
+                  <button
+                    key={o.type}
+                    onClick={() => setChosen(o)}
+                    style={{
+                      textAlign: "left",
+                      padding: "8px 10px",
+                      fontSize: 12.5,
+                      border: "1px solid var(--dx-border-soft)",
+                      borderRadius: 6,
+                      background: "var(--dx-bg)",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <div style={{ fontWeight: 500 }}>{o.label}</div>
+                    <div style={{ fontSize: 11, color: "var(--dx-text-3)", marginTop: 2 }}>
+                      {o.hint}
+                      {o.skipsLead && <span style={{ marginLeft: 6, color: "#d97706" }}>· also skips lead</span>}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <>
+                <div style={{ fontSize: 11.5, color: "var(--dx-text-3)", lineHeight: 1.5 }}>{chosen.hint}</div>
+                <textarea
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  placeholder="Optional: more detail (≤500 chars)"
+                  rows={3}
+                  style={{
+                    width: "100%",
+                    padding: "8px 10px",
+                    fontSize: 12,
+                    border: "1px solid var(--dx-border-soft)",
+                    borderRadius: 6,
+                    boxSizing: "border-box",
+                    resize: "vertical",
+                  }}
+                />
+                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                  <button onClick={() => setChosen(null)} className="dx-secondary" style={{ fontSize: 12, padding: "6px 12px" }}>
+                    Back
+                  </button>
+                  <button
+                    onClick={submit}
+                    disabled={submitting}
+                    className="dx-primary"
+                    style={{ fontSize: 12, padding: "6px 14px", display: "inline-flex", alignItems: "center", gap: 6 }}
+                  >
+                    {submitting ? <Loader2 style={{ width: 13, height: 13 }} className="spin" /> : <Flag style={{ width: 13, height: 13 }} />}
+                    {submitting ? "Saving…" : chosen.skipsLead ? "Save & skip" : "Save"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </>
+  );
 }
