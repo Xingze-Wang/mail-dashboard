@@ -1099,7 +1099,13 @@ function CopilotModal({
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="问一个问题…  (⌘+Enter 发送)"
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                if (input.trim() && !busy) send(input);
+              }
+            }}
+            placeholder="问一个问题…  (Enter 发送, Shift+Enter 换行)"
             rows={2}
             style={{
               flex: 1,

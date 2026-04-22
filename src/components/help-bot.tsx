@@ -287,7 +287,14 @@ function HelpModal({ pathname, onClose }: { pathname: string; onClose: () => voi
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="问一个问题…  (⌘+Enter 发送)"
+            onKeyDown={(e) => {
+              // Enter sends; Shift+Enter inserts a newline (standard chat UX).
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                if (input.trim() && !busy) send(input);
+              }
+            }}
+            placeholder="问一个问题…  (Enter 发送, Shift+Enter 换行)"
             rows={2}
             style={{
               flex: 1, padding: "8px 10px", fontSize: 13, lineHeight: 1.5,
