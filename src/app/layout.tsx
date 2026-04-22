@@ -3,6 +3,7 @@ import { Newsreader, DM_Sans } from "next/font/google";
 import { headers } from "next/headers";
 import "./globals.css";
 import { Sidebar } from "@/components/sidebar";
+import { HelpBot } from "@/components/help-bot";
 import { ToasterProvider } from "@/components/ui/toaster";
 
 const newsreader = Newsreader({
@@ -37,10 +38,13 @@ export default async function RootLayout({
           {isAuthRoute ? (
             children
           ) : (
-            <div className="app-layout">
-              <Sidebar />
-              <div className="app-content">{children}</div>
-            </div>
+            <>
+              <div className="app-layout">
+                <Sidebar />
+                <div className="app-content">{children}</div>
+              </div>
+              <HelpBot />
+            </>
           )}
         </ToasterProvider>
       </body>

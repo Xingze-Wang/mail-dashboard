@@ -1,60 +1,136 @@
 // Static knowledge base about 奇绩算力计划 — used by /api/brief/ask to ground
 // the LLM's answers. Update this file when program terms change; no DB needed.
 //
-// Pattern is inline-RAG: we always ship the WHOLE corpus to the model (it's
-// short, and a vector DB is overkill at this size). When the corpus grows
-// past ~3-5 KB, switch to per-section retrieval.
+// IMPORTANT scope note for the LLM consuming this:
+//   - This sales pipeline is ONLY for the **Compute (算力)** program.
+//   - The Accelerator (创业营) program has DIFFERENT terms — 7% equity for
+//     $300k investment, biannual batches, in-person Beijing program, etc.
+//     Do NOT mix the two. If a recipient asks about the Accelerator
+//     specifically, redirect to https://miraclepl.us or hand off to the
+//     mentor team.
 
-export const QIJI_PROGRAM_FACTS = `# 奇绩算力计划 (Qiji Compute Program) — 销售须知
+export const QIJI_PROGRAM_FACTS = `# 奇绩算力 (Qiji Compute) — 销售知识库
 
-## 核心数字
-- **单项目最高额度**: 100 万元等值算力（约 8 卡 H100 连续跑 15 个月）
-- **通过率**: 约 1.5%（审核严格）
+⚠️ SCOPE: 这份知识库**只**关于「奇绩算力 / MiraclePlus Compute」程序。
+   不要用这里的内容回答关于「奇绩创业营 (Accelerator)」的提问 —
+   创业营是独立的程序（投资 + 股权 + 北京线下营），terms 完全不同。
+   如果被问到创业营，明确说"那是另一个产品，我帮你转给 mentor team"。
+
+## 核心数字 (官方 — miraclepl.us/compute)
+- **单项目最高额度**: 100 万元 RMB 等值算力（约等于 8 张 H800 连续跑 15 个月）
+- **硬件**: NVIDIA 系列高性能 GPU（未来可能扩展更多型号）
 - **费用**: 完全免费
-- **不占股**: 不要求股权
-- **不要求署名**: 不要求 paper 致谢
+- **股权**: 不要求
+- **署名**: 不强制要求 paper 致谢（双方同意可以带奇绩署名）
+- **审核周期**: 通常 2 个月左右
+- **申请方式**: 全年滚动开放，建议尽早申请
+- **使用期限**: 在批准期限内自由安排，可申请延期或扩容
+- **总申请量**: 4132 个项目（截至最新统计）
+- **已支持团队**: 60+ 国际团队
+- **算力规模**: 200+ Petaflops
 
-## 申请流程
-- 在线申请表（链接在邮件里，also https://compute.miracleplus.com/apply）
-- 通常 2 周内出结果
-- 通过后由对应行业方向的 mentor 跟进
-- 每月可以 review 用量、申请扩容
+## 谁可以申请 (官方)
+高校、科研院所、大型企业、创业公司、个人自由研究者。
+**全球开放** — 无论身处何地、业务是否在国内，符合条件即可申请。
+基础设施在北京海淀，**支持国际团队远程使用**。
 
-## 我们支持过的方向（70+ 项目）
+## 重点支持方向 (官方分类)
+1. **科研项目** — 探索 AI 模型能力边界（Scaling Law / 模型视觉学习 / AI Agent 能力等）
+2. **开源项目** — 关键 AI 课题开源
+3. **创业项目** — 早期技术型公司、有市场价值
+
+## 我们支持过的方向 (历史)
 - 多模态/视觉生成: 4D 重建生成、3D 资产/视频生成、多模态世界模型、低显存实时 3D 重建
 - 具身智能/机器人: 具身导航感知、多模态具身大模型、模块化力控、场景孪生仿真、世界模型+VLA、长程灵巧操作、具身 3D 空间理解
 - LLM/Agent: Agentic RL、Web Agent、长上下文推理、稀疏 MoE、记忆驱动 Agent
 - AI4S: 蛋白质设计、材料发现、贝叶斯主动学习
 - 持续学习、可解释性、Offline RL
 
-## 来自的学校（部分）
-MIT、Stanford、CMU、Berkeley、Princeton、Caltech、UW、UMich、Columbia、UChicago、Cambridge、Oxford、ETH、EPFL、HKU、HKUST、NUS、NTU、清华、北大、复旦、上交、浙大、南大、中科大、中科院、HIT、BIT、BJU、Fudan、Tsinghua-Berkeley、SUSTech 等
+## 我们的代表项目 (官方案例)
+- **科研类**: 中科院微生物所王军课题组 — 蛋白功能与互作大模型 → 多肽类药物开发
+- **开源类**: Mooncake (清华任峰/章明星) — 分布式 LLM 推理架构，已落地月之暗面 Kimi、阿里、蚂蚁
+- **创业类**: MidReal (System2 Research) — 长程推理 AI 小说平台，1 年 300 万用户
 
-## 常见问题及标准答复
+## 来自的学校 (部分)
+MIT、Stanford、CMU、Berkeley、Princeton、Caltech、UW、UMich、Columbia、UChicago、Cambridge、Oxford、ETH、EPFL、HKU、HKUST、NUS、NTU、清华、北大、复旦、上交、浙大、南大、中科大、中科院、HIT、BIT、SUSTech 等
+
+═══════════════════════════════════════════════════════════════
+## 官方 FAQ — Compute 部分（来自 miraclepl.us/cn/compute，原文）
+═══════════════════════════════════════════════════════════════
+
+**Q: 获得算力支持后需要承担什么义务？**
+A: 奇绩算力没有任何 KPI 或回报要求。项目方只需每 1–2 个月进行一次简单进度汇报，并严格遵守算力使用规范，不得转租或转售。若项目进入商业化阶段，奇绩希望优先参与加速投资与落地。
+
+**Q: 算力支持面向哪些对象？是否支持国际团队远程使用？**
+A: 奇绩算力面向高校、科研院所、大型企业、创业公司及个人自由研究者开放。无论身处何地、业务是否在国内，只要符合申请条件均可申请。算力部署在北京海淀，但支持国际团队远程使用。
+
+**Q: 申请时间、流程与结果如何？**
+A:
+- 申请时间：全年开放，滚动录取，建议尽早申请。
+- 筛选标准：科研能力、需求匹配度和项目潜力。优先支持高质量落地应用。
+- 审批流程：由奇绩团队负责，流程类似创业营投资。
+- 结果通知：全年滚动回复，审阅周期通常在两个月左右。
+- 再次申请：未录取可在后续轮次重新申请。
+
+**Q: 具体算力资源和分配方式是什么？**
+A:
+- 型号：NVIDIA 系列高性能卡（未来可能有其它类型 GPU 加入）。
+- 额度：最高可提供等值 100 万人民币算力（约 8 张 H800 × 15 个月）。
+- 单位：以"项目"为分配单位。
+- 方式：奇绩团队将结合项目需求沟通，最终决定分配方案。录取项目将获得专属算力平台免费额度，账户开通即用。
+
+**Q: 算力支持是否免费？期限多久？**
+A: 算力支持完全免费，并附带奇绩生态资源（如合伙人/校友 Office Hour、技术培训等）。使用期限年内，申请者可自由安排使用时间。支持额外申请延期或增加额度，若中途更换新项目，需获得奇绩团队同意。
+
+**Q: 算力支持后，奇绩是否要求成果体现或股权分配？**
+A: 假如形成开源项目或者论文，在双方同意的基础上，可以带上奇绩署名。奇绩不要求项目股权，若项目有商业化计划，奇绩希望有机会优先加速投资。
+
+**Q: 项目进展不理想会被中止或影响后续合作吗？**
+A: 不会。即使未达预期目标，也不影响后续算力或创业营申请。奇绩不会因进展缓慢而中途终止支持。
+
+**Q: 科研项目是否要求创业?**
+A: 不要求。我们希望支持技术前沿的自由探索，即使纯科研项目无商业化计划，也不影响算力申请或算力使用。
+
+═══════════════════════════════════════════════════════════════
+## 内部销售话术 (非官方 — sales 应对建议)
+═══════════════════════════════════════════════════════════════
+
 Q: 你们和云厂商代金券有什么不同？
-A: 我们更针对 frontier 研究场景，包括对 8x H100 这种紧缺机型的承诺、长时间连续运行的能力、专门的 mentor 跟进。云代金券通常 quota 限制更严，且不针对前沿方法做适配。
-
-Q: 我可以拿这笔算力做哪些限制？
-A: 不限制具体研究方向，只要符合「前沿、有创新性」。不能用于挖矿/纯商业产品训练。
-
-Q: 论文必须发在哪些会议吗？
-A: 不要求。我们看研究本身的创新性，不限定会议。
+A: 我们针对 frontier 研究场景，包括对 8 卡 H800 这种紧缺机型的长时间承诺、专门 mentor 跟进、以及奇绩生态资源（合伙人/校友 Office Hour、技术培训）。云代金券通常 quota 限制更严，且不针对前沿方法做适配。
 
 Q: 这个算力可以共享给我组里的学弟学妹吗？
-A: 一般不行 — 申请是 per-PI / per-project 维度的。可以让学弟学妹另外申请。
+A: 申请是 per-project 维度的，主要使用人需要相对固定。组内的合作者没问题，但学弟学妹做自己独立的 idea 建议另外申请。
 
 Q: 拿这个会不会影响我现有的 funding（NSF、industry grant 等）？
 A: 不会。我们是纯算力赞助，不替代任何 funding，也不做 IP claim。
 
 Q: 我现在还没发表过 paper，可以申请吗？
-A: 可以。我们看 idea 和 progress，不只看已发表 paper。如果有 preprint / Github 项目就更好。
+A: 可以。我们看 idea 和 progress，不只看已发表 paper。如果有 preprint / GitHub 项目就更好。
 
-## 销售应对原则
-1. 永远先认真听对方说研究/瓶颈/想法。不要一上来就推销算力。
+Q: 我可以拿这笔算力做什么？有什么限制？
+A: 不限制研究方向，只要符合「前沿、有创新性」。不能用于挖矿、转租转售、或纯商业产品训练。
+
+Q: 我能见 NVIDIA 哪种卡？什么时候能拿到？
+A: 目前主要是 H800（未来可能扩展），录取后开通专属平台账户立即可用。审批通常 2 个月左右。
+
+═══════════════════════════════════════════════════════════════
+## 销售应对原则 (内部规范)
+═══════════════════════════════════════════════════════════════
+1. 永远先听对方研究/瓶颈/想法，不要一上来就推销。
 2. 提到我们时用「奇绩」或「Miracle Plus」，不要说「我们公司」。
-3. 不要承诺超出上面写明的内容（例如不要说「100 万一定批」）。
-4. 如果对方问的问题超出你能力范围，明确说「这个我帮你转给我们的 mentor team 详细回答」，不要瞎编。
-5. 对资深 PI：用 ethos（背书+portfolio）。
-   对年轻 PhD：用 pathos（认可工作 + enable 你做更大的事）。
-   对 industry researcher：用 logos（具体数字 + ROI）。
+3. 不要承诺超出官方 facts 的内容（例如不要说"100 万一定批"）。
+4. 如果问题超出你能力范围 → 明确说"这个我帮你转给 mentor team"，不要瞎编。
+5. **绝对不要用算力 program 的 terms 回答创业营问题**（不要 quote $300k / 7% 股权 / 北京线下）— 那是另一个产品。
+6. Persuasion angle:
+   - 资深 PI → ethos（背书 + portfolio）
+   - 年轻 PhD → pathos（认可工作 + enable 你做更大的事）
+   - Industry researcher → logos（具体数字 + ROI）
+
+═══════════════════════════════════════════════════════════════
+## 不在你回答范围里的话题（明确拒答 / 转交）
+═══════════════════════════════════════════════════════════════
+- 创业营 (Accelerator) terms / equity / batch 时间 → "那是另一个程序，我帮你转 mentor"
+- 具体某个 award 的截止日 / 名额数字 → "以官网最新公告为准，我帮你确认"
+- 任何法律 / 合同 / IP 细节 → "我们 partner team 来跟你谈"
+- 与已 portfolio 公司的潜在 conflict → "这个让我先和 partner 确认"
 `;
