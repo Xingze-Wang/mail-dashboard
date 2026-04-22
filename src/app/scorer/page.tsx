@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Star, TrendingUp, BarChart3, GitCompare, AlertTriangle, Sparkles, Target, Users2, Loader2 } from "lucide-react";
-import { EmailQualityTab, ConversionTab, MatchTab, TechMetric, LeadTrainWorkbench } from "./_tabs";
+import { EmailQualityTab, ConversionTab, MatchTab, TechMetric, LeadTrainWorkbench, CitationBackfillCard } from "./_tabs";
 import {
   BarChart, Bar, LineChart, Line,
   XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell,
@@ -551,6 +551,7 @@ function LeadQualityView({
         </>
       )}
 
+      <CitationBackfillCard />
       <LeadTrainWorkbench />
     </div>
   );

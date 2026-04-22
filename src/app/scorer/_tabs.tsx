@@ -2,7 +2,7 @@
 // established Lead-quality view. Each tab fetches its own endpoint lazily.
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   BarChart, Bar, LineChart, Line,
   XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
@@ -977,3 +977,145 @@ function RuleInput({ label, value, onChange, step, min, max }: { label: string; 
   );
 }
 
+
+/* ── Citation backfill — fills citation_count / h_index for old leads ── */
+
+interface BackfillResult {
+  processed: number;
+  updated: number;
+  missed: number;
+  errored: number;
+  remaining: number;
+  samples: { id: string; author: string; cite: number | null; h: number | null }[];
+}
+
+export function CitationBackfillCard() {
+  const [running, setRunning] = useState(false);
+  const [auto, setAuto] = useState(false);
+  const [last, setLast] = useState<BackfillResult | null>(null);
+  const [coverage, setCoverage] = useState<{ total: number; withCite: number; pending: number } | null>(null);
+  const [log, setLog] = useState<string[]>([]);
+  const stopRef = useRef(false);
+
+  const reloadCoverage = useCallback(async () => {
+    // Cheap probe via /api/scorer/conversion (already returns withLeadData / totalSent)
+    // — but we want pipeline_leads totals, so use a dedicated check via list.
+    try {
+      const r = await fetch("/api/scorer/training-data", { cache: "no-store" });
+      const d = await r.json();
+      // If training-data isn't ready, fall back to last result.
+      if (d?.signals) {
+        // No direct "leads with citation" — synthesize from history.
+        // Better: just rely on what backfill calls return.
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => { reloadCoverage(); }, [reloadCoverage]);
+
+  async function runOnce(batchSize: number): Promise<BackfillResult | null> {
+    const r = await fetch("/api/scorer/backfill-citations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ batchSize }),
+    });
+    const d = await r.json();
+    if (!r.ok) {
+      setLog((p) => [`❌ ${d.error ?? "Failed"}`, ...p].slice(0, 8));
+      return null;
+    }
+    setLast(d);
+    setLog((p) => [
+      `✓ batch: +${d.updated} filled, ${d.missed} S2 missed, ${d.errored} errored — ${d.remaining} remaining`,
+      ...p,
+    ].slice(0, 8));
+    setCoverage((c) => c ? { ...c, pending: d.remaining } : null);
+    return d;
+  }
+
+  async function runOne() {
+    setRunning(true);
+    try { await runOnce(20); } finally { setRunning(false); }
+  }
+
+  async function runUntilDone() {
+    setRunning(true);
+    setAuto(true);
+    stopRef.current = false;
+    try {
+      let safety = 30; // hard stop after ~30 batches (~600 leads)
+      while (safety-- > 0 && !stopRef.current) {
+        const r = await runOnce(30);
+        if (!r) break;
+        if (r.remaining === 0) break;
+        if (r.processed === 0) break;
+        // Tiny breather to be polite to Semantic Scholar (which the route also rate-limits internally).
+        await new Promise((res) => setTimeout(res, 1200));
+      }
+    } finally {
+      setRunning(false);
+      setAuto(false);
+    }
+  }
+
+  function stopAuto() { stopRef.current = true; }
+
+  return (
+    <div className="tech-card" style={{ marginTop: 20 }}>
+      <div className="tech-header">
+        <div className="tech-title">
+          <Cpu style={{ width: 13, height: 13 }} /> Citation backfill (Semantic Scholar)
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={runOne} disabled={running} className="btn" style={{ fontSize: 12, display: "inline-flex", alignItems: "center", gap: 6 }}>
+            {running && !auto ? <Loader2 style={{ width: 13, height: 13 }} className="spin" /> : <Play style={{ width: 13, height: 13 }} />}
+            One batch (20)
+          </button>
+          {auto ? (
+            <button onClick={stopAuto} className="btn" style={{ fontSize: 12, color: "#dc2626" }}>
+              Stop
+            </button>
+          ) : (
+            <button onClick={runUntilDone} disabled={running} className="btn btn-primary" style={{ fontSize: 12, display: "inline-flex", alignItems: "center", gap: 6 }}>
+              {running ? <Loader2 style={{ width: 13, height: 13 }} className="spin" /> : <Zap style={{ width: 13, height: 13 }} />}
+              Backfill all
+            </button>
+          )}
+        </div>
+      </div>
+      <p style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 10 }}>
+        Walks every lead with an author name but no citation count, asks Semantic Scholar for h-index + citation count, fills in. Each batch is ~20 leads × ~3-5s = ~60-100s. Click <b>Backfill all</b> to keep firing batches until the queue is empty (auto stops on the 0 remaining).
+        {coverage && (
+          <span style={{ display: "block", marginTop: 4, color: "var(--text)" }}>
+            Coverage: <b>{coverage.withCite}/{coverage.total}</b> have citations · <b>{coverage.pending}</b> still need backfill
+          </span>
+        )}
+      </p>
+      {last && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginBottom: 10, fontSize: 12 }}>
+          <Stat label="Last batch updated" value={String(last.updated)} />
+          <Stat label="S2 missed" value={String(last.missed)} />
+          <Stat label="Errored" value={String(last.errored)} tone={last.errored > 0 ? "alert" : undefined} />
+          <Stat label="Remaining" value={String(last.remaining)} emphasis={last.remaining === 0} />
+        </div>
+      )}
+      {log.length > 0 && (
+        <div style={{ fontSize: 11, fontFamily: "ui-monospace, monospace", color: "var(--text-secondary)", lineHeight: 1.6, maxHeight: 140, overflowY: "auto", padding: 8, background: "var(--bg)", borderRadius: 6 }}>
+          {log.map((line, i) => <div key={i}>{line}</div>)}
+        </div>
+      )}
+      {last && last.samples.length > 0 && (
+        <details style={{ marginTop: 10, fontSize: 11.5, color: "var(--text-secondary)" }}>
+          <summary style={{ cursor: "pointer", color: "var(--text-tertiary)" }}>last batch samples</summary>
+          <ul style={{ marginTop: 6, paddingLeft: 18 }}>
+            {last.samples.map((s) => (
+              <li key={s.id} style={{ fontFamily: "ui-monospace, monospace" }}>
+                {s.author}: {s.cite ?? "—"} cites, h-index {s.h ?? "—"}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
+}
