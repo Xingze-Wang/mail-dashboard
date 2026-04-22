@@ -89,7 +89,12 @@ function defaultLeoDirections(): Record<string, number> {
 export function defaultConfig(): AssignmentConfig {
   return {
     strong_criteria: {
-      min_citation: 2000,
+      // New composite scheme: tier-1 +2000, tier-2 +1000, score-bonus +500.
+      // Bar at 5000 effective citations means:
+      //   tier-1 author needs 3000+ raw cites
+      //   tier-2 author needs 4000+ raw cites
+      //   unknown school needs 5000+ raw cites
+      min_citation: 5000,
       min_citation_unverified: 5000,
       max_school_tier: 2,
       min_local_score: 0.85,
@@ -249,6 +254,30 @@ function isOverseas(email: string | null | undefined): boolean {
  *     - schoolTier verified AND cite > min_citation                (verified non-top + high cite)
  *     - schoolTier unknown AND cite > min_citation_unverified      (unknown school, very high cite)
  */
+/**
+ * Composite "strength score" classifier:
+ *   - Tier-1 school adds 2000 citation-equivalent (top schools = strong prior)
+ *   - Tier-2 school adds 1000
+ *   - Tier-3 / unknown adds 0
+ *   - high local_score (>= min_local_score) adds 500
+ *   - effective_citations = real citations + school bonus + score bonus
+ *   - strong if effective_citations > min_citation (default 5000)
+ *
+ * This means: a top-school PhD with 3000 cites is strong (3000+2000=5000),
+ * a tier-2 unknown with 4500 cites is strong (4500+1000=5500), an
+ * unknown-school researcher needs 5000 raw cites alone. Score >= threshold
+ * is just a small +500 — it doesn't make a no-cite no-school person strong.
+ *
+ * The 4 config knobs are still honored for backward compat:
+ *   - min_citation                → strong threshold (default 5000)
+ *   - max_school_tier (1 or 2)    → max tier that gets a bonus
+ *   - min_citation_unverified     → still respected as a fallback path
+ *                                   (raw cites alone with no school info)
+ *   - min_local_score             → triggers the +500 score bonus
+ */
+const TIER_CITATION_BONUS: Record<number, number> = { 1: 2000, 2: 1000, 3: 0 };
+const HIGH_SCORE_BONUS = 500;
+
 export function classifyLead(
   config: AssignmentConfig,
   lead: {
@@ -257,16 +286,31 @@ export function classifyLead(
     hIndex?: number | null;
     schoolTier: number | null;
     authorEmail?: string;
-    /** Accepted for future-compat but not used in tier classification. */
     localScore?: number | null;
   },
 ): "strong" | "normal" {
-  const { min_citation, min_citation_unverified, max_school_tier } = config.strong_criteria;
+  const { min_citation, min_citation_unverified, max_school_tier, min_local_score } = config.strong_criteria;
   const tier = lead.schoolTier;
   const cite = lead.citationCount ?? 0;
+  const score = lead.localScore ?? 0;
 
-  if (tier !== null && tier !== undefined && tier >= 1 && tier <= max_school_tier) return "strong";
-  if (tier !== null && tier !== undefined && cite > min_citation) return "strong";
+  // School bonus only applies up to max_school_tier (configurable cap so
+  // admin can disable tier-2 bonus by setting max_school_tier=1).
+  let schoolBonus = 0;
+  if (tier !== null && tier !== undefined && tier <= max_school_tier) {
+    schoolBonus = TIER_CITATION_BONUS[tier] ?? 0;
+  }
+
+  // Score bonus — only fires when sufficiently high. Doesn't lift a zero-cite
+  // unknown-school person to strong by itself.
+  const scoreBonus = score >= min_local_score ? HIGH_SCORE_BONUS : 0;
+
+  const effective = cite + schoolBonus + scoreBonus;
+  if (effective > min_citation) return "strong";
+
+  // Legacy fallback: pure-citations path for the no-school-info case
+  // (kept so changing the bonus model doesn't accidentally drop a known-
+  // famous unknown-school researcher).
   if ((tier === null || tier === undefined) && cite > min_citation_unverified) return "strong";
 
   return "normal";
