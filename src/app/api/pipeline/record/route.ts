@@ -25,7 +25,7 @@ import { getSchoolInfo } from "@/lib/email-generator";
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { paper, emailed, all_authors, compute, matched_directions, subject } = body;
+    const { paper, emailed, all_authors, compute, matched_directions, subject, body_html } = body;
 
     if (!paper?.arxiv_id || !emailed?.email) {
       return NextResponse.json({ error: "paper.arxiv_id and emailed.email required" }, { status: 400 });
@@ -138,6 +138,12 @@ export async function POST(req: NextRequest) {
         compute_reason: compute?.reason || null,
         matched_directions: JSON.stringify(matched_directions || []),
         draft_subject: subject || null,
+        // Persist the sent HTML under both fields so the drift / judge-vs-human
+        // view has `draft_original_html` to judge and `draft_html` to diff
+        // against edits. Python sends the same content for both since this
+        // flow has no sales-edit step — if a later flow adds edits, split them.
+        draft_html: body_html || null,
+        draft_original_html: body_html || null,
         status: "sent",
         sent_at: new Date().toISOString(),
         source: "python_script",
