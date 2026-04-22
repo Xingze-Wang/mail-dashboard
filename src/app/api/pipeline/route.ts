@@ -159,6 +159,8 @@ export async function GET(req: NextRequest) {
     total: !isPrivileged ? mapped.length : (category ? mapped.length : (total || 0)),
     page,
     limit,
+    // Canary for verifying deploy/version. If missing, this code isn't live.
+    _scope: { role: session.role, isPrivileged, effectiveRepId, build: "scope-v3-2026-04-23" },
   });
 }
 
