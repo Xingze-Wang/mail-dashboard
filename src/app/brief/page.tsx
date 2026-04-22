@@ -18,6 +18,9 @@ import {
   RefreshCw,
   MessageCircle,
   Sparkles,
+  Zap,
+  X,
+  Loader2,
 } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 
@@ -176,6 +179,8 @@ function DetailView({
     coreInnovation: string;
     questions: string[];
     approach: string;
+    persuasionAngle?: "ethos" | "logos" | "pathos";
+    angleHint?: string;
   } | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(true);
   const [wechatMarked, setWechatMarked] = useState(false);
@@ -196,6 +201,8 @@ function DetailView({
             coreInnovation: d.coreInnovation,
             questions: d.questions,
             approach: d.approach,
+            persuasionAngle: d.persuasionAngle,
+            angleHint: d.angleHint,
           });
         } else if (d.summary) {
           setStructured({ paper: "", mainIdea: d.summary, coreInnovation: "", questions: [], approach: "" });
@@ -372,6 +379,9 @@ function DetailView({
                   {structured.paper}
                 </div>
               )}
+              {structured.angleHint && structured.persuasionAngle && (
+                <PersuasionCallout angle={structured.persuasionAngle} hint={structured.angleHint} />
+              )}
               {structured.mainIdea && (
                 <BriefSection
                   label="主要想法"
@@ -541,6 +551,8 @@ function DetailView({
           )}
         </div>
       </div>
+
+      <CopilotButton leadId={brief.id} authorName={brief.personName} />
     </div>
   );
 }
@@ -820,4 +832,311 @@ function briefToPlain(s: {
     "",
     `【怎么切入】${s.approach}`,
   ].join("\n");
+}
+
+const ANGLE_META: Record<"ethos" | "logos" | "pathos", { label: string; emoji: string; bg: string; border: string; color: string; sub: string }> = {
+  ethos:  { label: "Ethos",  emoji: "🏛", bg: "#FAF5FF", border: "#E9D5FF", color: "#6B21A8", sub: "权威/背书" },
+  logos:  { label: "Logos",  emoji: "📊", bg: "#EFF6FF", border: "#BFDBFE", color: "#1E40AF", sub: "理性/数据" },
+  pathos: { label: "Pathos", emoji: "❤️", bg: "#FFF1F2", border: "#FECDD3", color: "#9F1239", sub: "共情/赋能" },
+};
+
+function PersuasionCallout({ angle, hint }: { angle: "ethos" | "logos" | "pathos"; hint: string }) {
+  const m = ANGLE_META[angle];
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "flex-start",
+        gap: 10,
+        padding: "8px 12px",
+        background: m.bg,
+        border: `1px solid ${m.border}`,
+        borderRadius: 8,
+        fontSize: 12.5,
+        lineHeight: 1.5,
+      }}
+    >
+      <span style={{ fontSize: 16, lineHeight: 1, marginTop: 1 }}>{m.emoji}</span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 2 }}>
+          <span style={{ fontWeight: 600, color: m.color, fontSize: 11, letterSpacing: "0.04em", textTransform: "uppercase" }}>
+            {m.label}
+          </span>
+          <span style={{ fontSize: 10.5, color: m.color, opacity: 0.7 }}>{m.sub}</span>
+        </div>
+        <div style={{ color: "var(--text)" }}>{hint}</div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Sales Copilot — floating Ask button + modal Q&A ────────────────── */
+
+interface CopilotMessage {
+  id: number;
+  role: "user" | "assistant";
+  text: string;
+}
+
+const SUGGESTED_QUESTIONS = [
+  "对方问算力可以挪给学弟学妹用，怎么答？",
+  "怎么回应「我已经有 NSF grant 了」这种话？",
+  "对方问通过率为什么这么低，怎么解释？",
+  "如果对方说他们组没发过 paper 还能申请吗？",
+];
+
+function CopilotButton({ leadId, authorName }: { leadId: string; authorName: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        onClick={() => setOpen(true)}
+        title="Sales copilot — 问问题"
+        style={{
+          position: "fixed",
+          bottom: 24,
+          right: 24,
+          width: 52,
+          height: 52,
+          borderRadius: "50%",
+          background: "linear-gradient(135deg, #3B82F6 0%, #8B5CF6 100%)",
+          color: "white",
+          border: "none",
+          cursor: "pointer",
+          boxShadow: "0 8px 24px rgba(59,130,246,0.35)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 40,
+          transition: "transform 150ms",
+        }}
+        onMouseEnter={(e) => (e.currentTarget.style.transform = "scale(1.05)")}
+        onMouseLeave={(e) => (e.currentTarget.style.transform = "scale(1)")}
+      >
+        <Sparkles style={{ width: 22, height: 22 }} />
+      </button>
+      {open && <CopilotModal leadId={leadId} authorName={authorName} onClose={() => setOpen(false)} />}
+    </>
+  );
+}
+
+function CopilotModal({
+  leadId,
+  authorName,
+  onClose,
+}: {
+  leadId: string;
+  authorName: string;
+  onClose: () => void;
+}) {
+  const [messages, setMessages] = useState<CopilotMessage[]>([]);
+  const [input, setInput] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function send(question: string) {
+    const q = question.trim();
+    if (!q || busy) return;
+    setErr(null);
+    const next: CopilotMessage[] = [
+      ...messages,
+      { id: Date.now(), role: "user", text: q },
+    ];
+    setMessages(next);
+    setInput("");
+    setBusy(true);
+    try {
+      const r = await fetch("/api/brief/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leadId, question: q }),
+      });
+      const d = await r.json();
+      if (!r.ok) {
+        setErr(d.error ?? "Failed");
+      } else {
+        setMessages([...next, { id: Date.now() + 1, role: "assistant", text: d.answer ?? "" }]);
+      }
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Close on Escape
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+        e.preventDefault();
+        if (input.trim() && !busy) send(input);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [input, busy]);
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.4)",
+        display: "flex",
+        alignItems: "flex-end",
+        justifyContent: "flex-end",
+        zIndex: 50,
+        padding: 24,
+      }}
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "min(440px, 92vw)",
+          height: "min(640px, 80vh)",
+          background: "var(--card)",
+          borderRadius: 14,
+          border: "1px solid var(--border)",
+          boxShadow: "0 20px 60px rgba(0,0,0,0.18)",
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+        }}
+      >
+        {/* header */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "14px 16px",
+            borderBottom: "1px solid var(--border-light)",
+            background: "linear-gradient(180deg, rgba(59,130,246,0.04) 0%, transparent 100%)",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Sparkles style={{ width: 16, height: 16, color: "#3B82F6" }} />
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>Sales Copilot</div>
+              <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>关于 {authorName} 的对话助手</div>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            title="Close (Esc)"
+            style={{ background: "transparent", border: 0, color: "var(--text-tertiary)", cursor: "pointer", padding: 4, borderRadius: 4, lineHeight: 0 }}
+          >
+            <X style={{ width: 18, height: 18 }} />
+          </button>
+        </div>
+
+        {/* messages */}
+        <div style={{ flex: 1, overflowY: "auto", padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+          {messages.length === 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <p style={{ fontSize: 12.5, color: "var(--text-tertiary)", lineHeight: 1.55 }}>
+                问一个问题，我会基于这位研究者的 paper 上下文 + 奇绩程序的 facts 给你可以照着说的中文话术。
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {SUGGESTED_QUESTIONS.map((q) => (
+                  <button
+                    key={q}
+                    onClick={() => send(q)}
+                    style={{
+                      fontSize: 12,
+                      textAlign: "left",
+                      padding: "8px 10px",
+                      background: "var(--bg)",
+                      border: "1px solid var(--border-light)",
+                      borderRadius: 6,
+                      cursor: "pointer",
+                      color: "var(--text-secondary)",
+                    }}
+                  >
+                    {q}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {messages.map((m) => (
+            <div
+              key={m.id}
+              style={{
+                alignSelf: m.role === "user" ? "flex-end" : "flex-start",
+                maxWidth: "85%",
+                padding: "8px 12px",
+                fontSize: 13,
+                lineHeight: 1.55,
+                borderRadius: 10,
+                background: m.role === "user" ? "#3B82F6" : "var(--bg)",
+                color: m.role === "user" ? "white" : "var(--text)",
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+              }}
+            >
+              {m.text}
+            </div>
+          ))}
+          {busy && (
+            <div style={{ alignSelf: "flex-start", display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-tertiary)", padding: "6px 10px" }}>
+              <Loader2 style={{ width: 13, height: 13 }} className="spin" />
+              thinking…
+            </div>
+          )}
+          {err && (
+            <div style={{ alignSelf: "flex-start", padding: "8px 10px", fontSize: 12, color: "#dc2626", background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 6 }}>
+              {err}
+            </div>
+          )}
+        </div>
+
+        {/* input */}
+        <div style={{ padding: 10, borderTop: "1px solid var(--border-light)", display: "flex", gap: 6 }}>
+          <textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="问一个问题…  (⌘+Enter 发送)"
+            rows={2}
+            style={{
+              flex: 1,
+              padding: "8px 10px",
+              fontSize: 13,
+              lineHeight: 1.5,
+              border: "1px solid var(--border)",
+              borderRadius: 6,
+              background: "var(--card)",
+              color: "var(--text)",
+              resize: "none",
+              boxSizing: "border-box",
+              outline: "none",
+              fontFamily: "inherit",
+            }}
+          />
+          <button
+            onClick={() => send(input)}
+            disabled={busy || !input.trim()}
+            style={{
+              padding: "0 14px",
+              background: input.trim() && !busy ? "#3B82F6" : "var(--bg)",
+              color: input.trim() && !busy ? "white" : "var(--text-tertiary)",
+              border: 0,
+              borderRadius: 6,
+              cursor: input.trim() && !busy ? "pointer" : "not-allowed",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+              fontSize: 12,
+            }}
+          >
+            <Zap style={{ width: 13, height: 13 }} />
+            Ask
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }

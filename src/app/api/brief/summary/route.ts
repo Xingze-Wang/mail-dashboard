@@ -27,6 +27,8 @@ interface StructuredBrief {
   coreInnovation: string;
   questions: string[];
   approach: string;
+  persuasionAngle: "ethos" | "logos" | "pathos";
+  angleHint: string;
 }
 
 export async function GET(req: NextRequest) {
@@ -151,7 +153,12 @@ function buildPrompt(info: Record<string, unknown>): string {
     "问题 2：问他下一步想做什么 / 现在的瓶颈 / 如果 scale up 会遇到什么",
     "问题 3：问一个关于实验局限或 reviewer 可能 push 的点（从实验章节推断）"
   ],
-  "approach": "2-3 句话，销售怎么开场。基于问题 1 自然切入，最后过渡到算力合作。不要直接说'我们有算力'，要先让对方觉得你懂他研究。"
+  "approach": "2-3 句话，销售怎么开场。基于问题 1 自然切入，最后过渡到算力合作。不要直接说'我们有算力'，要先让对方觉得你懂他研究。",
+  "persuasionAngle": "ethos | logos | pathos —— 选最适合打动这个研究者的角度。判断标准：
+    - ethos（权威/背书）：资深 PI、知名实验室、有 industry 经验的人。强调奇绩 portfolio、谁在用我们。
+    - logos（理性/数据）：industry researcher、追求 ROI 的人、reviewer 风格的论文。强调具体数字（100万额度、1.5%通过率、免费、不占股）。
+    - pathos（共情/赋能）：年轻 PhD、做创新性强但资源紧的工作、第一作者新人。强调'你的工作很重要，我们想 enable'。",
+  "angleHint": "一句话告诉销售用什么策略和这个人聊。例：'资深 PI，重点提奇绩支持过的同领域 portfolio'，或'年轻 PhD，先认可 idea 的独特性再谈算力'。≤30 字。"
 }
 
 只返回 JSON，不要任何其它文字。不要 markdown 包裹。`;
@@ -171,12 +178,19 @@ function parseBrief(raw: string): StructuredBrief | null {
     if (!obj.paper || !obj.mainIdea || !obj.coreInnovation || questions.length === 0 || !obj.approach) {
       return null;
     }
+    // Persuasion fields are optional — fall back to logos + neutral hint
+    // so old prompts and missing fields don't break the response.
+    const angleRaw = String(obj.persuasionAngle ?? obj.persuasion_angle ?? "logos").toLowerCase();
+    const persuasionAngle: StructuredBrief["persuasionAngle"] =
+      angleRaw === "ethos" || angleRaw === "pathos" ? angleRaw : "logos";
     return {
       paper: String(obj.paper),
       mainIdea: String(obj.mainIdea),
       coreInnovation: String(obj.coreInnovation),
       questions,
       approach: String(obj.approach),
+      persuasionAngle,
+      angleHint: String(obj.angleHint ?? obj.angle_hint ?? "").slice(0, 120),
     };
   } catch {
     return null;
@@ -199,5 +213,7 @@ function fallbackBrief(info: Record<string, unknown>): StructuredBrief {
       directions ? `在 ${directions} 方向上，这篇 insight 是否能迁移到相关任务？` : "这个方法在相关任务上迁移得如何？",
     ],
     approach: "先针对论文里某个具体发现问一个问题，让对方知道你读过，再引到「如果有更多算力你会做什么」，自然过渡到算力申请。",
+    persuasionAngle: "logos",
+    angleHint: "默认走 logos：先讲数字（100万、免费、不占股），再过渡到算力支持。",
   };
 }
