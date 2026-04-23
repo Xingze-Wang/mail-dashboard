@@ -327,24 +327,36 @@ export function ReviewPane({ leads, onExit, onSent, onSkipped, initialLeadId }: 
   const doSkip = useCallback(async () => {
     if (!lead || skipping) return;
     setSkipping(true);
+    setError(null);
     try {
       // Persist any in-flight edits before skipping — sales could un-skip
-      // this lead later and we don't want their rewrites thrown away. Same
-      // dual-path logic as send: if they didn't touch it, leave draftHtml
-      // untouched to preserve the original <a> + signature styling.
+      // this lead later and we don't want their rewrites thrown away.
+      // Dual-path, same as send: if they didn't touch the body, leave
+      // draftHtml untouched so the original <a href="申请"> + signature
+      // #333 color survive. If they DID edit, send what they typed
+      // wrapped by plainToHtml (which re-adds the body style + re-links
+      // 申请 to APPLY_URL_CTA so the CTA survives the textarea trip).
       const payload: Record<string, unknown> = { status: "skipped" };
       if (isEdited) {
         payload.draftSubject = subject;
         payload.draftHtml = plainToHtml(body);
       }
-      await fetch(`/api/pipeline/${lead.id}`, {
+      const res = await fetch(`/api/pipeline/${lead.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      // Same as send: parent refetch drops this lead from ready[], so the
-      // next one slides into the current idx — don't advance() manually.
+      if (!res.ok) {
+        // Previously this just swallowed the failure — the edit was
+        // thrown away and the UI acted like skip worked. Now surface
+        // the error and leave the lead in 'ready' so sales can retry.
+        const data = await res.json().catch(() => ({}));
+        setError(`Skip failed: ${data.error ?? `HTTP ${res.status}`}. Edits NOT saved.`);
+        return;
+      }
       onSkipped(lead);
+    } catch (e) {
+      setError(`Skip failed: ${e instanceof Error ? e.message : "Network error"}. Edits NOT saved.`);
     } finally {
       setSkipping(false);
     }
