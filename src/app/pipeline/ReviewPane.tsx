@@ -329,38 +329,39 @@ export function ReviewPane({ leads, onExit, onSent, onSkipped, initialLeadId }: 
     setSkipping(true);
     setError(null);
     try {
-      // Persist any in-flight edits before skipping — sales could un-skip
-      // this lead later and we don't want their rewrites thrown away.
-      // Dual-path, same as send: if they didn't touch the body, leave
-      // draftHtml untouched so the original <a href="申请"> + signature
-      // #333 color survive. If they DID edit, send what they typed
-      // wrapped by plainToHtml (which re-adds the body style + re-links
-      // 申请 to APPLY_URL_CTA so the CTA survives the textarea trip).
-      const payload: Record<string, unknown> = { status: "skipped" };
+      // Skip = "save my edits (if any) and move on." It does NOT flip
+      // status=skipped — the lead stays in 'ready' so sales can come
+      // back to it. Terminal rejection is handled by Flag (soft→note
+      // only, hard→blocklist + skip). That's why this payload omits
+      // status entirely when there's nothing to save, and includes
+      // only the edited draft fields otherwise.
       if (isEdited) {
-        payload.draftSubject = subject;
-        payload.draftHtml = plainToHtml(body);
+        const res = await fetch(`/api/pipeline/${lead.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            draftSubject: subject,
+            draftHtml: plainToHtml(body),
+          }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          setError(`Save failed: ${data.error ?? `HTTP ${res.status}`}. Edits NOT saved.`);
+          return;
+        }
       }
-      const res = await fetch(`/api/pipeline/${lead.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) {
-        // Previously this just swallowed the failure — the edit was
-        // thrown away and the UI acted like skip worked. Now surface
-        // the error and leave the lead in 'ready' so sales can retry.
-        const data = await res.json().catch(() => ({}));
-        setError(`Skip failed: ${data.error ?? `HTTP ${res.status}`}. Edits NOT saved.`);
-        return;
-      }
+      // Move to next lead. Since status stays 'ready', the parent's
+      // refetch won't drop this lead from the ready[] slice — so we
+      // DO need to advance() manually here (unlike Send, which relies
+      // on server-side status change to naturally drop it).
       onSkipped(lead);
+      advance();
     } catch (e) {
-      setError(`Skip failed: ${e instanceof Error ? e.message : "Network error"}. Edits NOT saved.`);
+      setError(`Save failed: ${e instanceof Error ? e.message : "Network error"}. Edits NOT saved.`);
     } finally {
       setSkipping(false);
     }
-  }, [lead, skipping, isEdited, subject, body, onSkipped]);
+  }, [lead, skipping, isEdited, subject, body, onSkipped, advance]);
 
   // Keyboard shortcuts. We attach to window so they fire even when focus
   // is in the textarea — but Cmd/Ctrl+Enter is the only "active" shortcut
@@ -474,7 +475,7 @@ export function ReviewPane({ leads, onExit, onSent, onSkipped, initialLeadId }: 
           disabled={skipping || sending}
         >
           <SkipForward />
-          Skip
+          {isEdited ? "Save & next" : "Next"}
         </button>
         <button
           type="button"

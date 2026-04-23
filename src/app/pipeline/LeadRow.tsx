@@ -242,9 +242,27 @@ function LeadRowInner({
       {/* Title */}
       <h3 className="dx-card-title">{lead.title}</h3>
 
-      {/* Author row */}
+      {/* Author row — shows the TARGETED recipient, with a compact
+          "+N more" when the paper has co-authors. Sales sees all names
+          inline to spot "wait, should we be emailing X instead?" */}
       <div className="dx-author-row">
         <span className="dx-au-name">{lead.authorName || "Unknown"}</span>
+        {(() => {
+          const parts = (lead.authors || "")
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean);
+          const current = (lead.authorName || "").toLowerCase();
+          const others = parts.filter((n) => n.toLowerCase() !== current);
+          if (others.length === 0) return null;
+          const preview = others.slice(0, 3).join(", ");
+          const more = others.length > 3 ? ` +${others.length - 3}` : "";
+          return (
+            <span style={{ fontSize: 11, color: "var(--dx-text-3)", marginLeft: 6 }} title={others.join(", ")}>
+              w/ {preview}{more}
+            </span>
+          );
+        })()}
         {lead.schoolName && (
           <>
             <span className="dx-au-sep">·</span>
