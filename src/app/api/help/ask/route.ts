@@ -4,109 +4,100 @@ import { QIJI_PROGRAM_FACTS } from "@/lib/qiji-facts";
 import { SALES_GUIDE } from "@/lib/sales-guide-corpus";
 import { requireSession } from "@/lib/auth-helpers";
 import { supabase } from "@/lib/db";
+import { TOOLS_PROMPT, ACTION_TOOL_NAMES } from "@/lib/helper-tools";
+import type { ToolProposal } from "@/lib/helper-tools";
+import {
+  runReadTool,
+  extractReadToolCalls,
+  stripReadToolCalls,
+} from "@/lib/helper-read-tools";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 30;
+export const maxDuration = 60;  // agent loop may take 2 LLM round-trips
 
 /**
  * POST /api/help/ask
- * Body: {
- *   question: string,
- *   currentPath?: string,
- *   history?: {role, text}[],      // fallback when no conversationId
- *   conversationId?: string,       // persists messages if provided
- * }
  *
- * Sales Helper — answers app + script questions AND can emit
- * tool proposals for destructive actions (batch-send, skip, etc).
+ * Agent loop:
+ *   1. LLM turn 1: sees user question + tools catalog. May emit
+ *      ```lookup ...``` blocks (read-only, auto-run) and/or a
+ *      ```tool ...``` proposal (destructive, user must confirm).
+ *   2. If lookup blocks present, we execute them server-side and
+ *      feed results back in a 2nd prompt. LLM produces final answer.
+ *   3. Up to MAX_ITERATIONS rounds, then force a final answer.
  *
- * Tool-use pattern:
- *   - LLM is told about available tools via the system prompt.
- *   - When the user asks for an action ("send top 20 strong leads"),
- *     the LLM returns JSON with a `tool_proposal` field instead of
- *     (or alongside) prose.
- *   - Client renders a confirm card; user clicks Confirm → POST to
- *     /api/help/execute which actually performs the action.
- *   - NO action is taken server-side from this endpoint. This endpoint
- *     only SUGGESTS. That way a hallucinated "send 1000 emails"
- *     response can never actually send anything without a human click.
- *
- * Persistence:
- *   - If `conversationId` is provided AND owned by the session's rep,
- *     both the user message and the assistant reply are appended to
- *     helper_messages and the conversation's updated_at is bumped.
- *   - If not provided, the endpoint behaves ephemerally (no DB writes)
- *     — same as before this change, so existing callers keep working.
+ * Persistence unchanged: if conversationId provided and owned by
+ * session's rep, messages + tool_proposal are stored.
  */
 
-const SYSTEM = `你是 Qiji Pipeline 的销售助手 (Sales Copilot)。
+const MAX_ITERATIONS = 3;
 
-你的工作分三类：
-1. **怎么用 app** — 用户问"X 在哪里"/"怎么 Y" → 看 Sales Guide 回答, 给具体路径
-2. **对方问什么怎么答** — 用户问"对方问 X 我怎么回" → 看 Qiji Compute facts, 给可以照着说的中文话术
-3. **执行操作** — 用户说"发前20个强 lead" / "把这个 lead skip" 之类的指令 → 你可以**建议**一个操作, UI 会弹确认卡让用户决定是否执行
+const SYSTEM_BASE = `你是 Qiji Pipeline 的销售助手 (Sales Copilot)。
+
+你的工作分三类:
+1. **怎么用 app** — 用户问"X 在哪里"/"怎么 Y" → 看 Sales Guide 回答, 给具体路径.
+2. **对方问什么怎么答** — 用户问"对方问 X 我怎么回" → 看 Qiji Compute facts, 给可以照着说的中文话术.
+3. **执行操作** — 用户说"发 N 个 lead"/"skip 那条"/"重写草稿" → 用工具 (见下).
 
 ## 回答风格
-- 中文, 口语化, 短
-- 直接给答案 + 1-2 句铺垫, 不要长篇大论
-- 多种答法用 1./2./3. 列出
-- 不要 markdown 标题
-- 引用 UI 元素时用粗体 (**Pipeline** **Review** **Send** 等)
+- 中文, 口语化, 短.
+- 直接给答案 + 1-2 句铺垫.
+- 不要 markdown 标题.
+- 引用 UI 元素用粗体 (**Pipeline** **Review** **Send**).
 
 ## 绝对原则
-- 这是「奇绩算力 (Compute)」program。**严禁**回答「奇绩创业营 (Accelerator)」相关问题（投资金额/股权比例/batch 时间/北京线下营等）。
-  → 被问到创业营时回答："那是另一个程序，我帮你转给 mentor team 详细聊。"
-- 不要瞎编数字、政策、流程。不确定就说"这个我也不太确定，找 Xingze 确认"。
-- 不要承诺超出 facts 的东西。
-
-## 工具 (仅在用户明确要求执行操作时使用)
-
-你的回答可以是纯文本，或者是一个包含 tool_proposal 的 JSON 块。决定规则：
-- 用户问问题 (怎么做/怎么答/什么是 X) → 纯文本
-- 用户说"发 N 个 lead" / "skip 这个" / "flag 这个" → 在回答末尾加 tool_proposal
-
-**格式**: 当需要建议一个操作时，你的回答最后一行必须是：
-
-\`\`\`tool
-{"action": "batch_send", "limit": 20}
-\`\`\`
-
-可用 actions:
-- batch_send — 批量发邮件. 参数: { limit: number (最多50), override?: boolean }.
-  默认会先挑非 gated 的 lead (>=7天), 不够再用 gated lead 补 (这些会吃每日 200 override 额度).
-  只有当用户明确说"全部 override"/"现在发 (7d内也发)"时, 才加 override: true — 会全部当 override 发.
-- skip_lead — 跳过一个 lead. 参数: { lead_id: string }
-- flag_lead — 标记一个 lead. 参数: { lead_id: string, type: "bad_compute"|"wrong_author"|"wrong_direction"|"low_quality_email"|"right_lead_wrong_pitch"|"good_lead", severity: "soft"|"hard", reason?: string }
-
-**重要**: 你只提议, 不执行. UI 会显示确认卡, 用户点 Confirm 才真发.
-如果用户的指令模糊 (比如"发一些"没说数量), 先问清楚, 不要猜数字.`;
-
-type HistMsg = { role: "user" | "assistant"; text: string };
-
-interface ToolProposal {
-  action: string;
-  [key: string]: unknown;
-}
+- 这是「奇绩算力 (Compute)」program. **严禁**回答「奇绩创业营 (Accelerator)」相关问题.
+- 不要瞎编数字. 不确定就说"这个我也不太确定, 找 Xingze 确认".
+`;
 
 function extractToolProposal(text: string): { cleaned: string; proposal: ToolProposal | null } {
-  // Look for fenced ```tool ... ``` block at the tail. If missing, return text as-is.
   const m = text.match(/```tool\s*\n([\s\S]*?)\n```/);
   if (!m) return { cleaned: text, proposal: null };
   let proposal: ToolProposal | null = null;
   try {
     const parsed = JSON.parse(m[1].trim());
     if (parsed && typeof parsed === "object" && typeof parsed.action === "string") {
-      // Clamp batch_send limit
+      if (!ACTION_TOOL_NAMES.has(parsed.action)) {
+        // Unknown action — drop it.
+        return { cleaned: text.replace(/```tool\s*\n[\s\S]*?\n```/, "").trim(), proposal: null };
+      }
       if (parsed.action === "batch_send" && typeof parsed.limit === "number") {
         parsed.limit = Math.max(1, Math.min(50, Math.floor(parsed.limit)));
       }
+      if (parsed.action === "bulk_flag" && Array.isArray(parsed.lead_ids)) {
+        parsed.lead_ids = parsed.lead_ids.slice(0, 20);
+      }
       proposal = parsed;
     }
-  } catch {
-    // bad JSON — treat as no proposal
-  }
+  } catch { /* bad JSON */ }
   const cleaned = text.replace(/```tool\s*\n[\s\S]*?\n```/, "").trim();
   return { cleaned, proposal };
+}
+
+type HistMsg = { role: "user" | "assistant"; text: string };
+
+async function callLLM(system: string, user: string): Promise<{ text: string; model: string }> {
+  try {
+    const r = await llmChat({
+      model: "gemini-3-flash",
+      system,
+      user,
+      temperature: 0.4,
+      max_tokens: 1500,
+      timeoutMs: 25_000,
+    });
+    return { text: r.text.trim(), model: "gemini-3-flash" };
+  } catch {
+    const r = await llmChat({
+      model: "gemini-3-pro",
+      system,
+      user,
+      temperature: 0.4,
+      max_tokens: 1500,
+      timeoutMs: 25_000,
+    });
+    return { text: r.text.trim(), model: "gemini-3-pro" };
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -120,10 +111,9 @@ export async function POST(req: NextRequest) {
   const conversationId = typeof body.conversationId === "string" ? body.conversationId : null;
 
   if (!question) return NextResponse.json({ error: "question required" }, { status: 400 });
-  if (question.length > 500) return NextResponse.json({ error: "question too long (max 500 chars)" }, { status: 400 });
+  if (question.length > 500) return NextResponse.json({ error: "question too long" }, { status: 400 });
 
-  // Verify + fetch history from persisted conversation if provided.
-  // Otherwise fall back to the inline history sent by the client.
+  // Resolve history from persisted conversation if given.
   let history: HistMsg[] = inlineHistory;
   if (conversationId) {
     const { data: conv } = await supabase
@@ -150,69 +140,115 @@ export async function POST(req: NextRequest) {
         `${m.role === "user" ? "用户" : "助手"}: ${String(m.text).slice(0, 600)}`
       ).join("\n") + "\n"
     : "";
+  const pathHint = currentPath ? `\n用户当前在页面: ${currentPath}\n` : "";
 
-  const pathHint = currentPath
-    ? `\n用户当前在页面: ${currentPath}\n（"这里"/"这个页面"指的是这个路径。）\n`
-    : "";
-
-  const user = `## Sales Guide
-${SALES_GUIDE}
+  const system = SYSTEM_BASE + "\n" + TOOLS_PROMPT;
+  let userPrompt = `## Sales Guide
+${SALES_GUIDE.slice(0, 4000)}
 
 ## Qiji Compute Facts
-${QIJI_PROGRAM_FACTS}
+${QIJI_PROGRAM_FACTS.slice(0, 4000)}
 ${pathHint}${historyText}
 ## 用户问题
 ${question}
 
-请回答。`;
+请回答 (必要时调用工具).`;
 
-  let answer = "";
+  // Track the tool calls we ran this turn for UI breadcrumbs.
+  const toolTrail: Array<{ tool: string; args: Record<string, unknown>; result: Record<string, unknown> }> = [];
+  let finalText = "";
   let model = "";
-  try {
-    const r = await llmChat({
-      model: "gemini-3-flash",
-      system: SYSTEM,
-      user,
-      temperature: 0.4,
-      max_tokens: 1000,
-      timeoutMs: 25_000,
-    });
-    answer = r.text.trim();
-    model = "gemini-3-flash";
-  } catch {
-    try {
-      const r = await llmChat({
-        model: "gemini-3-pro",
-        system: SYSTEM,
-        user,
-        temperature: 0.4,
-        max_tokens: 1000,
-        timeoutMs: 25_000,
+
+  for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
+    const { text, model: mdl } = await callLLM(system, userPrompt);
+    model = mdl;
+    const toolCalls = extractReadToolCalls(text);
+
+    if (toolCalls.length === 0) {
+      finalText = text;
+      break;
+    }
+
+    // Run each lookup server-side, then re-prompt with results.
+    const results = await Promise.all(toolCalls.map((c) => runReadTool(session, c)));
+    for (let i = 0; i < toolCalls.length; i++) {
+      toolTrail.push({
+        tool: toolCalls[i].tool,
+        args: toolCalls[i].args,
+        result: results[i].result,
       });
-      answer = r.text.trim();
-      model = "gemini-3-pro";
-    } catch (e2) {
-      return NextResponse.json(
-        { error: `LLM unavailable: ${e2 instanceof Error ? e2.message : String(e2)}` },
-        { status: 502 },
+    }
+
+    // Build a 2nd-pass prompt feeding the results back.
+    const lookupSummary = results.map((r, i) => {
+      const call = toolCalls[i];
+      // Clamp result payload to avoid runaway context.
+      const trimmed = JSON.stringify(r.result).slice(0, 4000);
+      return `### ${call.tool}(${JSON.stringify(call.args)}) →\n${trimmed}`;
+    }).join("\n\n");
+
+    userPrompt = `${userPrompt}
+
+## 工具查询结果 (round ${iter + 1})
+${lookupSummary}
+
+基于上面的真实数据回答用户. 如果需要再查, 继续 lookup; 如果要建议操作, 输出 \`\`\`tool\`\`\` 块; 否则给最终回答.`;
+
+    // Last iteration safety: if we're about to exit and still have
+    // lookups, force a final answer.
+    if (iter === MAX_ITERATIONS - 1) {
+      const { text: final, model: mdl2 } = await callLLM(
+        system,
+        userPrompt + "\n\n这是最后一轮，必须给最终回答, 不要再调用 lookup.",
       );
+      finalText = stripReadToolCalls(final);
+      model = mdl2;
+      break;
     }
   }
 
-  const { cleaned, proposal } = extractToolProposal(answer);
+  if (!finalText) finalText = "(no answer)";
+  // In case the model leaked a lookup into the final answer, strip it.
+  finalText = stripReadToolCalls(finalText);
 
-  // Persist if conversationId given.
+  const { cleaned, proposal } = extractToolProposal(finalText);
+
+  // Persist.
   if (conversationId) {
-    const now = new Date().toISOString();
     await supabase.from("helper_messages").insert([
       { conversation_id: conversationId, role: "user", text: question },
       { conversation_id: conversationId, role: "assistant", text: cleaned, tool_proposal: proposal },
     ]);
     await supabase
       .from("helper_conversations")
-      .update({ updated_at: now, title: history.length === 0 ? question.slice(0, 120) : undefined })
+      .update({
+        updated_at: new Date().toISOString(),
+        ...(history.length === 0 ? { title: question.slice(0, 120) } : {}),
+      })
       .eq("id", conversationId);
   }
 
-  return NextResponse.json({ answer: cleaned, proposal, model });
+  return NextResponse.json({
+    answer: cleaned,
+    proposal,
+    model,
+    toolTrail: toolTrail.map((t) => ({
+      tool: t.tool,
+      args: t.args,
+      // Don't ship the full result to the client — just a short summary
+      // ("listed 5 leads", "got stats") to render as a breadcrumb.
+      summary: summarizeToolResult(t.tool, t.result),
+    })),
+  });
+}
+
+function summarizeToolResult(tool: string, result: Record<string, unknown>): string {
+  if (result.error) return `error: ${String(result.error).slice(0, 80)}`;
+  if (tool === "list_leads" && Array.isArray(result.leads)) {
+    return `${result.leads.length} leads`;
+  }
+  if (tool === "get_lead") return "lead details";
+  if (tool === "get_my_stats") return "stats";
+  if (tool === "get_rep_info") return "rep info";
+  return "ok";
 }

@@ -25,6 +25,11 @@ interface Msg {
   text: string;
   proposal?: ToolProposal | null;
   toolResult?: { ok: boolean; detail?: Record<string, unknown> } | null;
+  // Breadcrumbs for read-only tools the helper invoked while composing
+  // this message (e.g., [list_leads: 5 leads, get_my_stats: stats]).
+  // Rendered as a muted strip above the bubble so sales can see what
+  // data the helper looked at.
+  toolTrail?: Array<{ tool: string; summary: string }>;
 }
 
 /** Shape of the window global that ReviewPane publishes when a lead is on
@@ -242,6 +247,7 @@ function HelpModal({ pathname, onClose }: { pathname: string; onClose: () => voi
           role: "assistant",
           text: d.answer ?? "",
           proposal: d.proposal ?? null,
+          toolTrail: Array.isArray(d.toolTrail) ? d.toolTrail : undefined,
         }]);
       }
     } catch (e) {
@@ -275,6 +281,14 @@ function HelpModal({ pathname, onClose }: { pathname: string; onClose: () => voi
         },
       ]);
       if (!r.ok) setErr(d.error ?? "Execute failed");
+      // review_next is a frontend navigate — server returns the path;
+      // we redirect. Small delay so sales sees the "Executed" strip first.
+      if (r.ok && proposal.action === "review_next") {
+        const nav = (d.detail as { navigate?: string } | undefined)?.navigate;
+        if (nav && typeof window !== "undefined") {
+          setTimeout(() => { window.location.href = nav; }, 400);
+        }
+      }
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -552,6 +566,23 @@ function HelpModal({ pathname, onClose }: { pathname: string; onClose: () => voi
             }
             return (
               <div key={m.id} style={{ alignSelf: "stretch", display: "flex", flexDirection: "column", gap: 6 }}>
+                {/* Tool trail — shown above the assistant bubble so sales
+                    knows the helper actually looked at real data before
+                    answering. Silent on user bubbles. */}
+                {m.role === "assistant" && m.toolTrail && m.toolTrail.length > 0 && (
+                  <div
+                    style={{
+                      alignSelf: "flex-start",
+                      fontSize: 10.5,
+                      color: "var(--text-tertiary, #9ca3af)",
+                      fontFamily: "ui-monospace, monospace",
+                      paddingLeft: 2,
+                    }}
+                    title={m.toolTrail.map((t) => `${t.tool}: ${t.summary}`).join("\n")}
+                  >
+                    ↳ {m.toolTrail.map((t) => `${t.tool} (${t.summary})`).join(" · ")}
+                  </div>
+                )}
                 <div
                   style={{
                     alignSelf: m.role === "user" ? "flex-end" : "flex-start",
@@ -702,6 +733,17 @@ function ProposalCard({
     summary = `Flag lead ${String(proposal.lead_id ?? "?").slice(0, 8)} — type=${proposal.type} severity=${sev}`;
     confirmLabel = sev === "HARD (加入 blocklist)" ? "Block & skip" : "Flag";
     dangerous = sev.startsWith("HARD");
+  } else if (a === "bulk_flag") {
+    const ids = Array.isArray(proposal.lead_ids) ? proposal.lead_ids : [];
+    summary = `批量 flag ${ids.length} 个 lead — type=${proposal.type} (soft only)`;
+    confirmLabel = `Flag ${ids.length}`;
+  } else if (a === "redraft_lead") {
+    const dir = proposal.direction ? ` (方向: ${proposal.direction})` : "";
+    summary = `重写 lead ${String(proposal.lead_id ?? "?").slice(0, 8)} 的草稿${dir}`;
+    confirmLabel = "Redraft";
+  } else if (a === "review_next") {
+    summary = "打开 Review 模式查看下一个 ready lead";
+    confirmLabel = "Go";
   } else {
     summary = `未知操作: ${a}`;
     confirmLabel = "Execute";

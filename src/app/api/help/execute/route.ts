@@ -161,6 +161,101 @@ async function doFlag(
   return { ok: res.ok, detail };
 }
 
+async function doBulkFlag(
+  session: { repId: number; role: string },
+  params: Record<string, unknown>,
+  reqOrigin: string,
+  cookie: string,
+): Promise<{ ok: boolean; detail: Record<string, unknown> }> {
+  const ids = Array.isArray(params.lead_ids) ? params.lead_ids.filter((x) => typeof x === "string").slice(0, 20) as string[] : [];
+  const type = typeof params.type === "string" ? params.type : null;
+  // Bulk flag is SOFT only. Hard flags have to be one-by-one so each
+  // block decision is explicit.
+  const reason = typeof params.reason === "string" ? params.reason.slice(0, 500) : null;
+  if (ids.length === 0 || !type) {
+    return { ok: false, detail: { error: "lead_ids + type required" } };
+  }
+  let ok = 0, fail = 0;
+  const errors: string[] = [];
+  for (const leadId of ids) {
+    const r = await fetch(`${reqOrigin}/api/lead/correct`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", cookie },
+      body: JSON.stringify({ leadId, type, severity: "soft", reason }),
+    });
+    if (r.ok) ok++;
+    else {
+      fail++;
+      const d = await r.json().catch(() => ({}));
+      errors.push(`${leadId.slice(0, 8)}: ${d.error ?? r.status}`);
+    }
+  }
+  return { ok: fail === 0, detail: { flagged: ok, failed: fail, errors } };
+}
+
+async function doRedraft(
+  session: { repId: number; role: string },
+  params: Record<string, unknown>,
+  reqOrigin: string,
+  cookie: string,
+): Promise<{ ok: boolean; detail: Record<string, unknown> }> {
+  const leadId = typeof params.lead_id === "string" ? params.lead_id : null;
+  const direction = typeof params.direction === "string" ? params.direction.slice(0, 200) : null;
+  if (!leadId) return { ok: false, detail: { error: "lead_id required" } };
+
+  // Load the lead (ownership enforced by the /api/pipeline/[id] GET).
+  const leadRes = await fetch(`${reqOrigin}/api/pipeline/${leadId}`, {
+    headers: { cookie },
+  });
+  if (!leadRes.ok) {
+    const d = await leadRes.json().catch(() => ({}));
+    return { ok: false, detail: { error: d.error ?? `lead fetch ${leadRes.status}` } };
+  }
+  const lead = await leadRes.json();
+  if (!lead?.title || !lead?.abstract) {
+    return { ok: false, detail: { error: "lead missing title/abstract" } };
+  }
+
+  // Call our internal LLM proxy to regenerate the draft.
+  // We reuse the same intro-generation prompt the scanner uses —
+  // /api/scorer/rubric exposes it, but simpler to just run llmChat
+  // inline here with a short prompt.
+  const { llmChat } = await import("@/lib/llm-proxy");
+  const system = `你是奇绩算力的邮件撰稿助手. 给定一篇 arXiv 论文和一个"方向" (如"更短", "更直接", "提到算力具体额度"), 重写邮件正文. 返回 HTML <p> 段落, 不要 markdown.`;
+  const user = `论文标题: ${lead.title}
+摘要: ${(lead.abstract as string).slice(0, 800)}
+作者: ${lead.authorName ?? ""}
+原方向: ${direction ?? "(no direction given — just tighten and clarify)"}
+
+只返回新的 HTML 邮件正文 (3 段, 用 <p>...</p>). 开头称呼用 "${lead.firstName ?? lead.authorName ?? "你"}你好,".`;
+  let newHtml = "";
+  try {
+    const r = await llmChat({ model: "gemini-3-flash", system, user, temperature: 0.5, max_tokens: 900, timeoutMs: 25_000 });
+    newHtml = r.text.trim();
+  } catch (e) {
+    return { ok: false, detail: { error: `redraft LLM failed: ${e instanceof Error ? e.message : String(e)}` } };
+  }
+  if (!newHtml.includes("<p>")) newHtml = `<p>${newHtml.replace(/\n+/g, "</p>\n<p>")}</p>`;
+
+  // Save via PATCH /api/pipeline/[id].
+  const patchRes = await fetch(`${reqOrigin}/api/pipeline/${leadId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", cookie },
+    body: JSON.stringify({ draftHtml: newHtml }),
+  });
+  if (!patchRes.ok) {
+    const d = await patchRes.json().catch(() => ({}));
+    return { ok: false, detail: { error: d.error ?? "patch failed" } };
+  }
+  return { ok: true, detail: { redrafted: true, preview: newHtml.slice(0, 200) } };
+}
+
+async function doReviewNext(): Promise<{ ok: boolean; detail: Record<string, unknown> }> {
+  // review_next is a frontend-only action (navigate to Review mode).
+  // Server-side it's a no-op that just confirms back; the UI handles the actual navigation on receipt.
+  return { ok: true, detail: { navigate: "/pipeline#mode=review" } };
+}
+
 export async function POST(req: NextRequest) {
   const session = await requireSession(req);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -200,6 +295,15 @@ export async function POST(req: NextRequest) {
         break;
       case "flag_lead":
         result = await doFlag(session, proposal, origin, cookie);
+        break;
+      case "bulk_flag":
+        result = await doBulkFlag(session, proposal, origin, cookie);
+        break;
+      case "redraft_lead":
+        result = await doRedraft(session, proposal, origin, cookie);
+        break;
+      case "review_next":
+        result = await doReviewNext();
         break;
       default:
         result = { ok: false, detail: { error: `Unknown action: ${proposal.action}` } };

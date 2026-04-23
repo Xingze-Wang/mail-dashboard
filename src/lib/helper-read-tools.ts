@@ -1,0 +1,174 @@
+/**
+ * Server-side read-tool runner for the Sales Helper.
+ *
+ * These are called inside /api/help/ask after the LLM returns a
+ * response containing one or more ```lookup {...}``` blocks. The
+ * results get fed back into the LLM as part of a 2nd-pass prompt,
+ * so the LLM can produce a grounded answer.
+ *
+ * Read tools DON'T mutate anything — they just narrow the data
+ * the LLM sees. So we can auto-run without user confirmation.
+ *
+ * Scoping: every tool respects `session.repId` for non-admin
+ * callers. An admin can pass `repId` in args to inspect a specific
+ * rep's data.
+ */
+
+import { supabase } from "@/lib/db";
+import { DAILY_OVERRIDE_CAP, countOverridesTodayByRep } from "@/lib/override-quota";
+import type { ToolCall } from "@/lib/helper-tools";
+
+type Session = { repId: number; role: string; repName?: string; email?: string };
+
+function scopeRepId(session: Session, args: Record<string, unknown>): number | null {
+  if (session.role === "admin") {
+    const r = Number(args.repId);
+    return Number.isFinite(r) ? r : null;
+  }
+  return session.repId;
+}
+
+async function listLeads(session: Session, args: Record<string, unknown>) {
+  const status = typeof args.status === "string" ? args.status : null;
+  const query = typeof args.query === "string" ? args.query.trim() : null;
+  const limit = Math.max(1, Math.min(20, Number(args.limit) || 10));
+
+  let q = supabase
+    .from("pipeline_leads")
+    .select("id, title, author_name, author_email, lead_tier, status, created_at, published_at, assigned_rep_id")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  const r = scopeRepId(session, args);
+  if (r !== null) q = q.eq("assigned_rep_id", r);
+  if (status) q = q.eq("status", status);
+
+  if (query) {
+    if (/[,()]/.test(query)) return { error: "query contains invalid characters" };
+    q = q.or(`title.ilike.%${query}%,author_name.ilike.%${query}%,author_email.ilike.%${query}%`);
+  }
+
+  const { data, error } = await q;
+  if (error) return { error: error.message };
+  return {
+    leads: (data ?? []).map((l) => ({
+      id: l.id,
+      title: l.title,
+      author_name: l.author_name,
+      author_email: l.author_email,
+      lead_tier: l.lead_tier,
+      status: l.status,
+      created_at: l.created_at,
+      published_at: l.published_at,
+      assigned_rep_id: l.assigned_rep_id,
+    })),
+  };
+}
+
+async function getLead(session: Session, args: Record<string, unknown>) {
+  const leadId = typeof args.lead_id === "string" ? args.lead_id : null;
+  if (!leadId) return { error: "lead_id required" };
+  const { data, error } = await supabase
+    .from("pipeline_leads")
+    .select("*")
+    .eq("id", leadId)
+    .maybeSingle();
+  if (error) return { error: error.message };
+  if (!data) return { error: "Lead not found" };
+  if (session.role !== "admin" && data.assigned_rep_id !== session.repId) {
+    return { error: "Lead not found" };
+  }
+  const { draft_html: _html, ...rest } = data;
+  return { lead: rest };
+}
+
+async function getMyStats(session: Session) {
+  const repId = session.repId;
+  const [
+    { count: assigned },
+    { count: ready },
+    { count: sent },
+    { count: replied },
+    { count: wechat },
+  ] = await Promise.all([
+    supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId),
+    supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).eq("status", "ready"),
+    supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).eq("status", "sent"),
+    supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).eq("status", "replied"),
+    supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).eq("status", "wechat_added"),
+  ]);
+  const overrideUsed = (await countOverridesTodayByRep(repId)) ?? 0;
+  return {
+    stats: {
+      assigned: assigned ?? 0,
+      ready: ready ?? 0,
+      sent: sent ?? 0,
+      replied: replied ?? 0,
+      wechat: wechat ?? 0,
+      override_used_today: overrideUsed,
+      override_cap: DAILY_OVERRIDE_CAP,
+      override_remaining: Math.max(0, DAILY_OVERRIDE_CAP - overrideUsed),
+    },
+  };
+}
+
+function getRepInfo(session: Session) {
+  return {
+    rep: {
+      id: session.repId,
+      name: session.repName ?? null,
+      email: session.email ?? null,
+      role: session.role,
+    },
+  };
+}
+
+/**
+ * Run a single read-tool call. Returns { tool, result }.
+ * Never throws — errors go in the result payload.
+ */
+export async function runReadTool(
+  session: Session,
+  call: ToolCall,
+): Promise<{ tool: string; result: Record<string, unknown> }> {
+  const args = call.args ?? {};
+  try {
+    switch (call.tool) {
+      case "list_leads":
+        return { tool: call.tool, result: await listLeads(session, args) };
+      case "get_lead":
+        return { tool: call.tool, result: await getLead(session, args) };
+      case "get_my_stats":
+        return { tool: call.tool, result: await getMyStats(session) };
+      case "get_rep_info":
+        return { tool: call.tool, result: getRepInfo(session) };
+      default:
+        return { tool: call.tool, result: { error: `unknown tool: ${call.tool}` } };
+    }
+  } catch (e) {
+    return { tool: call.tool, result: { error: e instanceof Error ? e.message : String(e) } };
+  }
+}
+
+/** Extract all ```lookup {json}``` blocks from an LLM response. */
+export function extractReadToolCalls(text: string): ToolCall[] {
+  const out: ToolCall[] = [];
+  const re = /```lookup\s*\n([\s\S]*?)\n```/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    try {
+      const parsed = JSON.parse(m[1].trim());
+      if (parsed && typeof parsed === "object" && typeof parsed.tool === "string") {
+        out.push({ tool: parsed.tool, args: (parsed.args ?? {}) as Record<string, unknown> });
+      }
+    } catch {
+      /* skip */
+    }
+  }
+  return out;
+}
+
+/** Strip all lookup blocks from text (for clean display). */
+export function stripReadToolCalls(text: string): string {
+  return text.replace(/```lookup\s*\n[\s\S]*?\n```/g, "").trim();
+}
