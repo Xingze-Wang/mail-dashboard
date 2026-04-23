@@ -98,20 +98,27 @@ export default function OverviewPage() {
 
   useEffect(() => {
     if (!showPerRepOnly) return;
-    fetch("/api/metrics/me")
-      .then((r) => r.json())
-      .then((d) => { if (!d.error) setMyMetrics(d); })
-      .catch(() => {})
+    // Fetch both endpoints in parallel — /api/metrics/me gives the
+    // per-rep pipeline counters, /api/metrics gives the funnel chart
+    // (already scoped to this rep via the `from ilike sender_email`
+    // server-side filter). Sales overview now mirrors the admin
+    // layout with the same chart, just populated with their numbers.
+    Promise.allSettled([
+      fetch("/api/metrics/me").then((r) => r.json()),
+      fetch("/api/metrics").then((r) => r.json()),
+    ])
+      .then(([meRes, metricsRes]) => {
+        if (meRes.status === "fulfilled" && !meRes.value?.error) setMyMetrics(meRes.value);
+        if (metricsRes.status === "fulfilled" && !metricsRes.value?.error) setMetrics(metricsRes.value);
+      })
       .finally(() => setLoading(false));
   }, [showPerRepOnly]);
 
   useEffect(() => {
-    // Only the admin/global-view branch needs /api/metrics. Sales reps
-    // render entirely from /api/metrics/me above; fetching /api/metrics
-    // here would flash the global funnel before showPerRepOnly resolves.
-    // Wait for `me` to populate so we know which branch to render.
+    // Admin/global view fetches /api/metrics with runSync loop.
+    // Sales path above handles its own loading.
     if (me === null) return; // still loading session
-    if (showPerRepOnly) return; // sales path above handles loading
+    if (showPerRepOnly) return;
 
     fetch("/api/metrics")
       .then((res) => res.json())
@@ -167,6 +174,8 @@ export default function OverviewPage() {
   // (which depends only on myMetrics) is ready.
   if (showPerRepOnly) {
     const m = myMetrics;
+    const funnel = metrics?.overview;
+    const daily = metrics?.dailyStats ?? [];
     return (
       <div>
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 28 }}>
@@ -174,8 +183,17 @@ export default function OverviewPage() {
             <h1 className="page-title">My Pipeline</h1>
             <span className="lead-count">{me?.repName} · personal view</span>
           </div>
+          <a
+            href="/pipeline#mode=review"
+            className="btn btn-primary"
+            style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+          >
+            Open next batch →
+          </a>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 24 }}>
+
+        {/* Pipeline counters (from /api/metrics/me) */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 16 }}>
           {[
             { label: "Assigned to me",  value: m?.assigned ?? 0, color: "var(--text)" },
             { label: "Ready to send",   value: m?.ready ?? 0,    color: "var(--blue)" },
@@ -188,9 +206,19 @@ export default function OverviewPage() {
             </div>
           ))}
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16, marginBottom: 24 }}>
+
+        {/* Funnel rates (from /api/metrics, scoped by server) */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 24 }}>
           <div className="stat-card">
-            <div className="stat-label">Lead Rate (WeChat / Sent)</div>
+            <div className="stat-label">Delivery rate</div>
+            <div className="stat-value" style={{ color: "var(--green)" }}>{funnel?.deliveryRate ?? "0"}%</div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-label">Click rate</div>
+            <div className="stat-value" style={{ color: "var(--blue)" }}>{funnel?.clickRate ?? "0"}%</div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-label">Lead rate (WeChat / Sent)</div>
             <div className="stat-value" style={{ color: "var(--green)" }}>{m?.leadRate ?? "0.0"}%</div>
           </div>
           <div className="stat-card">
@@ -198,11 +226,36 @@ export default function OverviewPage() {
             <div className="stat-value">{m?.replied ?? 0}</div>
           </div>
         </div>
-        <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12, padding: 24, textAlign: "center" }}>
-          <p style={{ color: "var(--text-secondary)", fontSize: 13 }}>
-            更详细的 pipeline 视图在 Pipeline 页 — 这里只显示你的核心数字。
-          </p>
-        </div>
+
+        {/* Daily chart — same component admin sees, fed with this rep's
+            dailyStats (server-scoped by rep sender_email). */}
+        {daily.length > 0 && (
+          <div className="section-card" style={{ marginBottom: 24 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+              <TrendingUp style={{ width: 16, height: 16, color: "var(--text-secondary)" }} />
+              <h3 style={{ marginBottom: 0 }}>Last 30 Days — My sends</h3>
+            </div>
+            <ResponsiveContainer width="100%" height={240}>
+              <AreaChart data={daily}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-light)" />
+                <XAxis
+                  dataKey="date"
+                  tickFormatter={(d) => new Date(d).toLocaleDateString("en", { month: "short", day: "numeric" })}
+                  stroke="var(--text-tertiary)"
+                  tick={{ fontSize: 11, fill: "var(--text-tertiary)" }}
+                />
+                <YAxis stroke="var(--text-tertiary)" tick={{ fontSize: 11, fill: "var(--text-tertiary)" }} />
+                <Tooltip
+                  contentStyle={CHART_TOOLTIP}
+                  labelFormatter={(d) => new Date(d).toLocaleDateString("en", { month: "long", day: "numeric" })}
+                />
+                <Area type="monotone" dataKey="sent" stroke="#2563EB" fill="#2563EB" fillOpacity={0.12} />
+                <Area type="monotone" dataKey="delivered" stroke="#16A34A" fill="#16A34A" fillOpacity={0.12} />
+                <Area type="monotone" dataKey="clicked" stroke="#7C3AED" fill="#7C3AED" fillOpacity={0.12} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        )}
       </div>
     );
   }
