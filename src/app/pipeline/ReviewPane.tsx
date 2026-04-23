@@ -1013,8 +1013,10 @@ function FlagButton({ leadId, onSkipped }: { leadId: string; onSkipped: () => vo
 
   const canHardFlag = role === "admin" || role === "senior";
 
+  const [submitError, setSubmitError] = useState<string | null>(null);
   async function submit() {
     if (!chosen) return;
+    setSubmitError(null);
     setSubmitting(true);
     try {
       const r = await fetch("/api/lead/correct", {
@@ -1025,19 +1027,26 @@ function FlagButton({ leadId, onSkipped }: { leadId: string; onSkipped: () => vo
           type: chosen.type,
           reason: reason.trim() || undefined,
           severity,
-          // soft skip is implicit for some types; hard always skips server-side.
           skip: chosen.skipsLead && severity === "soft",
         }),
       });
-      if (r.ok) {
-        setDone(true);
-        const willSkip = severity === "hard" || chosen.skipsLead;
-        if (willSkip) {
-          setTimeout(() => { setOpen(false); setDone(false); setChosen(null); setReason(""); setSeverity("soft"); onSkipped(); }, 800);
-        } else {
-          setTimeout(() => { setOpen(false); setDone(false); setChosen(null); setReason(""); setSeverity("soft"); }, 900);
-        }
+      if (!r.ok) {
+        // Previously: silently failed and modal closed like success.
+        // That's why "sales marked flags but settings showed nothing" —
+        // the insert never actually happened.
+        const body = await r.json().catch(() => ({}));
+        setSubmitError(body.error ?? `Save failed (HTTP ${r.status})`);
+        return;
       }
+      setDone(true);
+      const willSkip = severity === "hard" || chosen.skipsLead;
+      if (willSkip) {
+        setTimeout(() => { setOpen(false); setDone(false); setChosen(null); setReason(""); setSeverity("soft"); onSkipped(); }, 800);
+      } else {
+        setTimeout(() => { setOpen(false); setDone(false); setChosen(null); setReason(""); setSeverity("soft"); }, 900);
+      }
+    } catch (e) {
+      setSubmitError(e instanceof Error ? e.message : "Network error");
     } finally {
       setSubmitting(false);
     }
@@ -1187,6 +1196,11 @@ function FlagButton({ leadId, onSkipped }: { leadId: string; onSkipped: () => vo
                     {submitting ? "Saving…" : severity === "hard" ? "Block & skip" : chosen.skipsLead ? "Save & skip" : "Save"}
                   </button>
                 </div>
+                {submitError && (
+                  <div style={{ marginTop: 8, padding: "8px 10px", background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 6, fontSize: 12, color: "#991B1B" }}>
+                    {submitError}
+                  </div>
+                )}
               </>
             )}
           </div>
