@@ -61,8 +61,17 @@ const PAPER_SUGGESTIONS = [
 
 export function HelpBot() {
   const pathname = usePathname() || "";
-  const [pos, setPos] = useState<Pos>({ x: 24, y: 24 }); // bottom-right offsets
+  const [pos, setPos] = useState<Pos>({ x: 24, y: 24 });
   const [open, setOpen] = useState(false);
+  // Pending nudge — when the helper proactively wants to say something.
+  // Rendered as a speech bubble next to the sparkles button until
+  // the user opens the modal (which consumes it) or dismisses.
+  const [pendingNudge, setPendingNudge] = useState<string | null>(null);
+  // Pending opener — the daily greeting. Seeded once per Beijing day
+  // when the user first opens the modal.
+  const [pendingOpener, setPendingOpener] = useState<string | null>(null);
+  const nudgeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastNudgedLeadRef = useRef<string | null>(null);
   const dragRef = useRef<{ startX: number; startY: number; origPos: Pos; moved: boolean } | null>(null);
 
   // Load saved position
@@ -77,6 +86,71 @@ export function HelpBot() {
       }
     } catch { /* ignore */ }
   }, []);
+
+  // Fetch the daily opener. Returns {skip: true} if already greeted
+  // today, else {greeting}. Runs once per mount, but the server-side
+  // dedup ensures it's only meaningful the first time per Beijing day.
+  useEffect(() => {
+    if (pathname.startsWith("/login")) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch("/api/help/opening");
+        if (!r.ok) return;
+        const d = await r.json();
+        if (!cancelled && !d.skip && typeof d.greeting === "string") {
+          setPendingOpener(d.greeting);
+        }
+      } catch { /* non-fatal */ }
+    })();
+    return () => { cancelled = true; };
+  }, [pathname]);
+
+  // Review-linger nudge — if a rep stays on the same lead for 15s
+  // without opening the helper, the helper pops a bubble. De-dup per
+  // lead id so the same paper can't re-nudge.
+  useEffect(() => {
+    // Only applies on review mode. We poll window.__currentReviewLead
+    // on a slow interval (1s) to pick up cursor changes.
+    if (open) return; // modal already open — don't nudge
+    let currentLeadId: string | null = null;
+
+    const checkLead = () => {
+      if (typeof window === "undefined") return;
+      const next = window.__currentReviewLead?.id ?? null;
+      if (next !== currentLeadId) {
+        currentLeadId = next;
+        if (nudgeTimerRef.current) clearTimeout(nudgeTimerRef.current);
+        if (!next || next === lastNudgedLeadRef.current) return;
+        // Start a 15s timer for THIS lead.
+        nudgeTimerRef.current = setTimeout(async () => {
+          // Double-check the user is still on this lead + modal still closed.
+          if (open || window.__currentReviewLead?.id !== next) return;
+          try {
+            const r = await fetch("/api/help/nudge", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ leadId: next }),
+            });
+            if (!r.ok) return;
+            const d = await r.json();
+            if (d.skip) return;
+            // Final check: user hasn't moved.
+            if (open || window.__currentReviewLead?.id !== next) return;
+            lastNudgedLeadRef.current = next;
+            setPendingNudge(d.nudge);
+          } catch { /* non-fatal */ }
+        }, 15_000);
+      }
+    };
+
+    const interval = setInterval(checkLead, 1000);
+    checkLead(); // initial
+    return () => {
+      clearInterval(interval);
+      if (nudgeTimerRef.current) clearTimeout(nudgeTimerRef.current);
+    };
+  }, [open]);
 
   // Don't show on login page (no auth, would float over the form ugly)
   if (pathname.startsWith("/login")) return null;
@@ -152,22 +226,95 @@ export function HelpBot() {
       >
         <Sparkles style={{ width: 22, height: 22 }} />
       </button>
-      {open && <HelpModal pathname={pathname} onClose={() => setOpen(false)} />}
+
+      {/* Pending nudge bubble — sits to the LEFT of the sparkles.
+          Click opens the modal and seeds the nudge as an assistant
+          message. The X button dismisses without opening. */}
+      {pendingNudge && !open && (
+        <div
+          style={{
+            position: "fixed",
+            bottom: pos.y + 8,
+            right: pos.x + 64,
+            zIndex: 61,
+            background: "white",
+            color: "var(--text, #111827)",
+            borderRadius: 12,
+            padding: "10px 14px",
+            maxWidth: 280,
+            fontSize: 13,
+            lineHeight: 1.4,
+            boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
+            border: "1px solid var(--border, #e5e7eb)",
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 8,
+          }}
+        >
+          <button
+            onClick={() => {
+              // Consume as the modal's opener seed.
+              setPendingOpener(pendingNudge);
+              setPendingNudge(null);
+              setOpen(true);
+            }}
+            style={{ all: "unset", cursor: "pointer", flex: 1 }}
+          >
+            {pendingNudge}
+          </button>
+          <button
+            onClick={() => setPendingNudge(null)}
+            title="Dismiss"
+            style={{ background: "transparent", border: 0, color: "var(--text-tertiary, #9ca3af)", cursor: "pointer", padding: 0, lineHeight: 0 }}
+          >
+            <X style={{ width: 14, height: 14 }} />
+          </button>
+        </div>
+      )}
+
+      {open && (
+        <HelpModal
+          pathname={pathname}
+          onClose={() => setOpen(false)}
+          initialSeed={pendingOpener}
+          onConsumeSeed={() => setPendingOpener(null)}
+        />
+      )}
     </>
   );
 }
 
-function HelpModal({ pathname, onClose }: { pathname: string; onClose: () => void }) {
-  // Read the current review lead once on open — the user can't change
-  // papers while this modal is up, so snapshotting is safe and avoids
-  // having to subscribe to window changes.
+function HelpModal({
+  pathname,
+  onClose,
+  initialSeed,
+  onConsumeSeed,
+}: {
+  pathname: string;
+  onClose: () => void;
+  initialSeed?: string | null;
+  onConsumeSeed?: () => void;
+}) {
   const [currentLead] = useState<CurrentReviewLead | null>(() => {
     if (typeof window === "undefined") return null;
     return window.__currentReviewLead ?? null;
   });
 
   const [mode, setMode] = useState<BotMode>(currentLead ? "paper" : "sales");
-  const [messages, setMessages] = useState<Msg[]>([]);
+  // Seed the daily opener / nudge as the first assistant message so
+  // the helper feels like a presence that "said hi first".
+  const [messages, setMessages] = useState<Msg[]>(() => {
+    if (initialSeed) {
+      return [{ id: Date.now(), role: "assistant", text: initialSeed }];
+    }
+    return [];
+  });
+  // Signal to the parent that we've consumed the seed (so the pending
+  // bubble doesn't reappear after the modal closes).
+  useEffect(() => {
+    if (initialSeed && onConsumeSeed) onConsumeSeed();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
