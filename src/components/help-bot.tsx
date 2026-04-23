@@ -625,24 +625,33 @@ function HelpModal({
         )}
 
         {/* messages */}
-        <div ref={scrollRef} style={{ flex: 1, overflowY: "auto", padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+        <div ref={scrollRef} style={{ flex: 1, overflowY: "auto", padding: "14px 14px 4px", display: "flex", flexDirection: "column", gap: 8 }}>
           {messages.length === 0 && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              <p style={{ fontSize: 12.5, color: "var(--text-tertiary, #6b7280)", lineHeight: 1.55 }}>
-                问问题, 查数据, 或者让我帮你做事.
-              </p>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {(currentLead ? PAPER_SUGGESTIONS : SALES_SUGGESTIONS).map((q) => (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12, paddingTop: 4 }}>
+              <div style={{ fontSize: 14, fontWeight: 500, color: "var(--text, #111827)" }}>
+                {currentLead ? "在看这篇 paper." : "随便问."}
+              </div>
+              <div style={{ fontSize: 11.5, color: "var(--text-tertiary, #9ca3af)", lineHeight: 1.55 }}>
+                {currentLead ? "想读懂 / 想发 / 想改草稿都行." : "问 app 操作, 查数字, 发邮件."}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 4 }}>
+                {(currentLead ? PAPER_SUGGESTIONS : SALES_SUGGESTIONS).slice(0, 4).map((q) => (
                   <button
                     key={q}
                     onClick={() => send(q)}
                     style={{
-                      fontSize: 12, textAlign: "left", padding: "8px 10px",
-                      background: "var(--bg, #f9fafb)",
-                      border: "1px solid var(--border-light, #f3f4f6)",
-                      borderRadius: 6, cursor: "pointer",
+                      fontSize: 12.5,
+                      textAlign: "left",
+                      padding: "8px 12px",
+                      background: "var(--card, #fff)",
+                      border: "1px solid var(--border, #e5e7eb)",
+                      borderRadius: 8,
+                      cursor: "pointer",
                       color: "var(--text-secondary, #4b5563)",
+                      transition: "background 120ms, border-color 120ms",
                     }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = "#f9fafb"; e.currentTarget.style.borderColor = "#d1d5db"; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = "var(--card, #fff)"; e.currentTarget.style.borderColor = "var(--border, #e5e7eb)"; }}
                   >
                     {q}
                   </button>
@@ -694,14 +703,19 @@ function HelpModal({
                 <div
                   style={{
                     alignSelf: m.role === "user" ? "flex-end" : "flex-start",
-                    maxWidth: "85%", padding: "8px 12px",
-                    fontSize: 13, lineHeight: 1.55, borderRadius: 10,
-                    background: m.role === "user" ? "#6366F1" : "var(--bg, #f9fafb)",
+                    maxWidth: "88%",
+                    padding: m.role === "user" ? "7px 11px" : "9px 12px",
+                    fontSize: 13,
+                    lineHeight: 1.55,
+                    borderRadius: 12,
+                    background: m.role === "user" ? "#6366F1" : "var(--bg, #f5f6f8)",
                     color: m.role === "user" ? "white" : "var(--text, #111827)",
-                    whiteSpace: "pre-wrap", wordBreak: "break-word",
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                    border: m.role === "user" ? "none" : "1px solid var(--border-light, #eef0f3)",
                   }}
                 >
-                  {m.text}
+                  {renderMessageContent(m.text)}
                 </div>
                 {/* Tool proposal card — rendered when the LLM suggested
                     an action. User MUST click Confirm for it to execute.
@@ -718,9 +732,10 @@ function HelpModal({
             );
           })}
           {busy && (
-            <div style={{ alignSelf: "flex-start", display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-tertiary, #9ca3af)", padding: "6px 10px" }}>
-              <Loader2 style={{ width: 13, height: 13 }} className="spin" />
-              thinking…
+            <div style={{ alignSelf: "flex-start", padding: "6px 10px", display: "inline-flex", gap: 4, alignItems: "center" }}>
+              <span className="helper-dot" style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--text-tertiary, #9ca3af)", animationDelay: "0ms" }} />
+              <span className="helper-dot" style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--text-tertiary, #9ca3af)", animationDelay: "150ms" }} />
+              <span className="helper-dot" style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--text-tertiary, #9ca3af)", animationDelay: "300ms" }} />
             </div>
           )}
           {err && (
@@ -731,45 +746,101 @@ function HelpModal({
         </div>
 
         {/* input */}
-        <div style={{ padding: 10, borderTop: "1px solid var(--border-light, #f3f4f6)", display: "flex", gap: 6 }}>
+        <div style={{ padding: "10px 12px 12px", borderTop: "1px solid var(--border-light, #f3f4f6)", display: "flex", gap: 8, alignItems: "flex-end" }}>
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
-              // Enter sends; Shift+Enter inserts a newline (standard chat UX).
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
                 if (input.trim() && !busy) send(input);
               }
             }}
-            placeholder="问问题, 或者让我帮你做事…  (Enter 发送, Shift+Enter 换行)"
+            placeholder="问问题, 或让我做事…"
             rows={2}
             style={{
-              flex: 1, padding: "8px 10px", fontSize: 13, lineHeight: 1.5,
-              border: "1px solid var(--border, #e5e7eb)", borderRadius: 6,
-              background: "var(--card, #fff)", color: "var(--text, #111827)",
-              resize: "none", boxSizing: "border-box", outline: "none", fontFamily: "inherit",
+              flex: 1,
+              padding: "8px 11px",
+              fontSize: 13,
+              lineHeight: 1.5,
+              border: "1px solid var(--border, #e5e7eb)",
+              borderRadius: 8,
+              background: "var(--card, #fff)",
+              color: "var(--text, #111827)",
+              resize: "none",
+              boxSizing: "border-box",
+              outline: "none",
+              fontFamily: "inherit",
+              transition: "border-color 120ms",
             }}
+            onFocus={(e) => { e.currentTarget.style.borderColor = "#6366F1"; }}
+            onBlur={(e) => { e.currentTarget.style.borderColor = "var(--border, #e5e7eb)"; }}
           />
           <button
             onClick={() => send(input)}
             disabled={busy || !input.trim()}
+            title={input.trim() ? "Send (Enter)" : "Type a message"}
             style={{
-              padding: "0 14px",
-              background: input.trim() && !busy ? "#6366F1" : "var(--bg, #f9fafb)",
+              width: 38,
+              height: 38,
+              flexShrink: 0,
+              background: input.trim() && !busy ? "#6366F1" : "var(--bg, #f3f4f6)",
               color: input.trim() && !busy ? "white" : "var(--text-tertiary, #9ca3af)",
-              border: 0, borderRadius: 6,
+              border: 0,
+              borderRadius: 8,
               cursor: input.trim() && !busy ? "pointer" : "not-allowed",
-              display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              transition: "background 120ms",
             }}
           >
-            <Send style={{ width: 13, height: 13 }} />
-            Ask
+            {busy ? <Loader2 style={{ width: 14, height: 14 }} className="spin" /> : <Send style={{ width: 14, height: 14 }} />}
           </button>
         </div>
       </div>
     </div>
   );
+}
+
+function renderMessageContent(text: string): React.ReactNode {
+  const paras = text.split(/\n{2,}/);
+  return paras.map((para, pi) => {
+    const lines = para.split("\n");
+    return (
+      <div key={pi} style={{ marginTop: pi === 0 ? 0 : 8 }}>
+        {lines.map((line, li) => (
+          <div key={li}>{renderInline(line)}</div>
+        ))}
+      </div>
+    );
+  });
+}
+
+function renderInline(line: string): React.ReactNode {
+  const out: React.ReactNode[] = [];
+  let i = 0;
+  const pattern = /\*\*([^*\n]+)\*\*|`([^`\n]+)`/g;
+  let match: RegExpExecArray | null = pattern.exec(line);
+  while (match) {
+    if (match.index > i) out.push(line.slice(i, match.index));
+    if (match[1] !== undefined) {
+      out.push(<strong key={`b${match.index}`}>{match[1]}</strong>);
+    } else if (match[2] !== undefined) {
+      out.push(
+        <code
+          key={`c${match.index}`}
+          style={{ fontFamily: "ui-monospace, monospace", background: "rgba(0,0,0,0.06)", padding: "1px 4px", borderRadius: 4, fontSize: "90%" }}
+        >
+          {match[2]}
+        </code>,
+      );
+    }
+    i = pattern.lastIndex;
+    match = pattern.exec(line);
+  }
+  if (i < line.length) out.push(line.slice(i));
+  return out.length === 0 ? line : out;
 }
 
 function ProposalCard({
