@@ -20,21 +20,30 @@ export async function GET(req: NextRequest) {
 
   const repId = session.repId;
 
-  const [{ count: assigned }, { count: sent }, { count: replied }, { count: wechat }] =
-    await Promise.all([
-      supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId),
-      supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).eq("status", "sent"),
-      supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).eq("status", "replied"),
-      supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).eq("status", "wechat_added"),
-    ]);
-
-  const ready = (assigned ?? 0) - (sent ?? 0) - (replied ?? 0) - (wechat ?? 0);
+  // Count each status directly instead of deriving "ready" via
+  // subtraction. Previously `ready = assigned - sent - replied - wechat`
+  // inflated the number because drafting/ripening/skipped rows all
+  // counted as "ready" by default. The sidebar badge (ready-count)
+  // queries status='ready' directly; overview needs to match.
+  const [
+    { count: assigned },
+    { count: ready },
+    { count: sent },
+    { count: replied },
+    { count: wechat },
+  ] = await Promise.all([
+    supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId),
+    supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).eq("status", "ready"),
+    supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).eq("status", "sent"),
+    supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).eq("status", "replied"),
+    supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).eq("status", "wechat_added"),
+  ]);
 
   return NextResponse.json({
     repId,
     repName: session.repName,
     assigned: assigned ?? 0,
-    ready: Math.max(0, ready),
+    ready: ready ?? 0,
     sent: sent ?? 0,
     replied: replied ?? 0,
     wechat: wechat ?? 0,
