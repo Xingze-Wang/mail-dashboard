@@ -302,9 +302,6 @@ export function BulkPane({ leads, onDone, onError }: Props) {
                 onChange={() => toggleSelect(lead.id)}
                 aria-label={`Select ${lead.authorName || lead.id}`}
               />
-              <span className={`dx-bulk-tier ${lead.leadTier === "strong" ? "strong" : ""}`}>
-                {lead.leadTier === "strong" ? "Strong" : "Normal"}
-              </span>
               <div style={{ minWidth: 0 }}>
                 <div className="dx-bulk-author">{lead.authorName || lead.authorEmail}</div>
                 <div className="dx-bulk-snippet">{snippetFor(lead)}</div>

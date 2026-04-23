@@ -54,19 +54,19 @@ async function doBatchSend(
   reqOrigin: string,
   cookie: string,
 ): Promise<{ ok: boolean; detail: Record<string, unknown> }> {
-  const filter = typeof params.filter === "string" ? params.filter : "all";
   const limit = Math.max(1, Math.min(HARD_CAP, Math.floor(Number(params.limit) || 10)));
 
-  // Pick ids: rep's ready leads, most recent first. Apply filter if specified.
+  // Top N of the rep's ready queue, newest first. We deliberately DON'T
+  // filter by lead_tier — the strong/normal split is a heuristic ingest
+  // label, not a useful user-facing filter, and hitting "no matching
+  // leads" just because the LLM guessed a tier wastes sales's time.
   let q = supabase
     .from("pipeline_leads")
-    .select("id, lead_tier")
+    .select("id")
     .eq("status", "ready")
     .order("created_at", { ascending: false })
     .limit(limit);
   if (session.role !== "admin") q = q.eq("assigned_rep_id", session.repId);
-  if (filter === "strong") q = q.eq("lead_tier", "strong");
-  else if (filter === "normal") q = q.eq("lead_tier", "normal");
 
   const { data: leads, error } = await q;
   if (error || !leads || leads.length === 0) {

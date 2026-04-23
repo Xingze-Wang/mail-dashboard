@@ -68,11 +68,11 @@ const SYSTEM = `你是 Qiji Pipeline 的销售助手 (Sales Copilot)。
 **格式**: 当需要建议一个操作时，你的回答最后一行必须是：
 
 \`\`\`tool
-{"action": "batch_send", "filter": "strong", "limit": 20}
+{"action": "batch_send", "limit": 20}
 \`\`\`
 
 可用 actions:
-- batch_send — 批量发邮件. 参数: { filter: "all" | "strong" | "normal", limit: number (最多50) }
+- batch_send — 批量发邮件. 参数: { limit: number (最多50) }. 按最新 ready lead 的顺序发.
 - skip_lead — 跳过一个 lead. 参数: { lead_id: string }
 - flag_lead — 标记一个 lead. 参数: { lead_id: string, type: "bad_compute"|"wrong_author"|"wrong_direction"|"low_quality_email"|"right_lead_wrong_pitch"|"good_lead", severity: "soft"|"hard", reason?: string }
 

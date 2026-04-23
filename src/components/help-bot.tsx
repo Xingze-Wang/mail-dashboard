@@ -688,9 +688,7 @@ function ProposalCard({
   const a = proposal.action;
   if (a === "batch_send") {
     const limit = Number(proposal.limit) || 10;
-    const filter = String(proposal.filter || "all");
-    const filterLabel = filter === "strong" ? "强 lead (strong tier)" : filter === "normal" ? "普通 lead (normal tier)" : "所有 ready lead";
-    summary = `发送 ${filter === "all" ? "最近" : filter === "strong" ? "最近强 lead" : "最近普通 lead"}的前 ${limit} 封邮件`;
+    summary = `发送最近 ${limit} 封 ready 邮件`;
     confirmLabel = `发 ${limit} 封`;
     dangerous = true;
   } else if (a === "skip_lead") {

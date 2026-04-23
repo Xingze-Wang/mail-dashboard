@@ -198,9 +198,6 @@ function LeadRowInner({
             {statusLabel(status)}
           </span>
         )}
-        <span className={`dx-tier-badge ${tierClass}`}>
-          {tierClass === "strong" ? "Strong" : "Normal"}
-        </span>
         {hasMeta && (
           <span className="dx-head-meta">
             {lead.localScore !== null && lead.localScore !== undefined && (
