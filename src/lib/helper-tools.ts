@@ -84,11 +84,22 @@ export const TOOLS_PROMPT = `## 工具系统
 - redraft_lead — 重新生成草稿 (用 LLM 把 AI 原草稿改写). 参数: { lead_id: string, direction?: string (例: "更直接", "更短", "提到算力具体额度") }.
 - review_next — 打开 Review 模式下一条 ready lead (前端跳转, 不改数据). 参数: {}.
 
-## 工具使用规则
+## 工具使用规则 (很重要)
 
-1. 用户问 "谁...?" / "哪个...?" / "多少...?" → **先**用查询工具拿数据, 再回答.
-2. 用户说 "发/skip/flag/重写 那个 X" → 先用 list_leads(query: "X") 找到 lead_id, 再发 tool.
-3. 如果用户描述模糊 (例: "发一些"), 先问清楚 — 不要猜数字.
-4. 一次回答最多一个 tool proposal (执行卡只能显示一个动作), 可以有多个 lookup.
-5. lookup 返回值不要照搬给用户看, 要用人话总结.
+**硬规则**:
+1. 涉及数字的问题 ("多少 / 还剩 / 今天发了几个") → **必须**先 \`\`\`lookup\`\`\` get_my_stats 或 list_leads. 不要凭印象答.
+2. 涉及具体 lead 的操作 ("发/skip/flag/重写 那个 X") → **必须**先 \`\`\`lookup\`\`\` list_leads(query: "X") 拿到真正的 lead_id (UUID). **不要**把作者名字当 lead_id 写进 tool proposal — lead_id 必须是 list_leads 返回的那个 UUID.
+3. 如果 list_leads 返回 0 条或多条歧义, 告诉用户并请他澄清, 不要猜.
+4. 普通知识类问题 ("怎么发邮件") 不需要 lookup, 直接用 Sales Guide 回答.
+5. 一次回答最多一个 tool proposal, 可以多个 lookup.
+
+**格式提醒**:
+- lookup 块放在回答的**前面**或**中间**, tool 块放在**最后一行**.
+- lookup JSON 的 tool 字段必须是: list_leads / get_lead / get_my_stats / get_rep_info.
+- tool JSON 的 action 字段必须是: batch_send / skip_lead / flag_lead / bulk_flag / redraft_lead / review_next.
+
+**反面例子 (不要这样做)**:
+用户: "skip 那个 Yanye 的 lead"
+❌ 错: 直接 \`\`\`tool {"action":"skip_lead","lead_id":"Yanye"}\`\`\`  (Yanye 是名字, 不是 id!)
+✓ 对: 先 \`\`\`lookup {"tool":"list_leads","args":{"query":"Yanye"}}\`\`\`, 拿到 id 再 \`\`\`tool {"action":"skip_lead","lead_id":"<UUID>"}\`\`\`.
 `;

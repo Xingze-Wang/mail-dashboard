@@ -50,28 +50,48 @@ const SYSTEM_BASE = `你是 Qiji Pipeline 的销售助手 (Sales Copilot)。
 - 不要瞎编数字. 不确定就说"这个我也不太确定, 找 Xingze 确认".
 `;
 
-function extractToolProposal(text: string): { cleaned: string; proposal: ToolProposal | null } {
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function extractToolProposal(text: string): { cleaned: string; proposal: ToolProposal | null; proposalError: string | null } {
   const m = text.match(/```tool\s*\n([\s\S]*?)\n```/);
-  if (!m) return { cleaned: text, proposal: null };
+  if (!m) return { cleaned: text, proposal: null, proposalError: null };
+  const cleaned = text.replace(/```tool\s*\n[\s\S]*?\n```/, "").trim();
   let proposal: ToolProposal | null = null;
+  let proposalError: string | null = null;
   try {
     const parsed = JSON.parse(m[1].trim());
-    if (parsed && typeof parsed === "object" && typeof parsed.action === "string") {
-      if (!ACTION_TOOL_NAMES.has(parsed.action)) {
-        // Unknown action — drop it.
-        return { cleaned: text.replace(/```tool\s*\n[\s\S]*?\n```/, "").trim(), proposal: null };
+    if (!parsed || typeof parsed !== "object" || typeof parsed.action !== "string") {
+      proposalError = "proposal missing action";
+    } else if (!ACTION_TOOL_NAMES.has(parsed.action)) {
+      proposalError = `unknown action: ${parsed.action}`;
+    } else {
+      // Validate and clamp per-action args. A bad lead_id (name instead
+      // of UUID) is a common LLM error; reject it up front so the user
+      // sees "helper tried to act on 'Yanye' — need to look up first"
+      // rather than a downstream 404.
+      if ((parsed.action === "skip_lead" || parsed.action === "flag_lead" || parsed.action === "redraft_lead")) {
+        if (typeof parsed.lead_id !== "string" || !UUID_RE.test(parsed.lead_id)) {
+          proposalError = `invalid lead_id (not a UUID): ${parsed.lead_id ?? "null"}. Helper needs to look up first.`;
+        }
+      }
+      if (parsed.action === "bulk_flag") {
+        if (!Array.isArray(parsed.lead_ids) || parsed.lead_ids.length === 0) {
+          proposalError = "bulk_flag needs lead_ids[]";
+        } else {
+          const bad = parsed.lead_ids.find((id: unknown) => typeof id !== "string" || !UUID_RE.test(id as string));
+          if (bad !== undefined) proposalError = `bulk_flag has non-UUID id: ${String(bad).slice(0, 40)}`;
+          else parsed.lead_ids = parsed.lead_ids.slice(0, 20);
+        }
       }
       if (parsed.action === "batch_send" && typeof parsed.limit === "number") {
         parsed.limit = Math.max(1, Math.min(50, Math.floor(parsed.limit)));
       }
-      if (parsed.action === "bulk_flag" && Array.isArray(parsed.lead_ids)) {
-        parsed.lead_ids = parsed.lead_ids.slice(0, 20);
-      }
-      proposal = parsed;
+      if (!proposalError) proposal = parsed;
     }
-  } catch { /* bad JSON */ }
-  const cleaned = text.replace(/```tool\s*\n[\s\S]*?\n```/, "").trim();
-  return { cleaned, proposal };
+  } catch {
+    proposalError = "proposal JSON parse failed";
+  }
+  return { cleaned, proposal, proposalError };
 }
 
 type HistMsg = { role: "user" | "assistant"; text: string };
@@ -142,17 +162,20 @@ export async function POST(req: NextRequest) {
     : "";
   const pathHint = currentPath ? `\n用户当前在页面: ${currentPath}\n` : "";
 
+  // System prompt is already big (tool catalog + rules). Put the
+  // reference corpora in the user message so the LLM treats them as
+  // lookup material, not behavior directives.
   const system = SYSTEM_BASE + "\n" + TOOLS_PROMPT;
-  let userPrompt = `## Sales Guide
-${SALES_GUIDE.slice(0, 4000)}
+  let userPrompt = `## Sales Guide (参考资料, 回答 UI 操作问题时用)
+${SALES_GUIDE.slice(0, 3500)}
 
-## Qiji Compute Facts
-${QIJI_PROGRAM_FACTS.slice(0, 4000)}
+## Qiji Compute Facts (参考资料, 回答话术问题时用)
+${QIJI_PROGRAM_FACTS.slice(0, 3500)}
 ${pathHint}${historyText}
 ## 用户问题
 ${question}
 
-请回答 (必要时调用工具).`;
+记住: 涉及具体数字或具体 lead 时, **必须先** \`\`\`lookup\`\`\`, 不要凭印象答.`;
 
   // Track the tool calls we ran this turn for UI breadcrumbs.
   const toolTrail: Array<{ tool: string; args: Record<string, unknown>; result: Record<string, unknown> }> = [];
@@ -211,13 +234,18 @@ ${lookupSummary}
   // In case the model leaked a lookup into the final answer, strip it.
   finalText = stripReadToolCalls(finalText);
 
-  const { cleaned, proposal } = extractToolProposal(finalText);
+  const { cleaned, proposal, proposalError } = extractToolProposal(finalText);
+  // If the model tried to propose an action with a bad lead_id, append
+  // a hint to the answer so the user sees what went wrong and can rephrase.
+  const finalAnswer = proposalError
+    ? `${cleaned}\n\n⚠️ 我本来想执行一个操作, 但参数有问题 (${proposalError}). 请明确告诉我要操作哪条 lead (说名字或 paper title 就行, 我会先查).`
+    : cleaned;
 
   // Persist.
   if (conversationId) {
     await supabase.from("helper_messages").insert([
       { conversation_id: conversationId, role: "user", text: question },
-      { conversation_id: conversationId, role: "assistant", text: cleaned, tool_proposal: proposal },
+      { conversation_id: conversationId, role: "assistant", text: finalAnswer, tool_proposal: proposal },
     ]);
     await supabase
       .from("helper_conversations")
@@ -229,14 +257,12 @@ ${lookupSummary}
   }
 
   return NextResponse.json({
-    answer: cleaned,
+    answer: finalAnswer,
     proposal,
     model,
     toolTrail: toolTrail.map((t) => ({
       tool: t.tool,
       args: t.args,
-      // Don't ship the full result to the client — just a short summary
-      // ("listed 5 leads", "got stats") to render as a breadcrumb.
       summary: summarizeToolResult(t.tool, t.result),
     })),
   });
