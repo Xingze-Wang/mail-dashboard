@@ -9,13 +9,23 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
-import { Sparkles, X, Send, Loader2, MessageCircle, BookOpen } from "lucide-react";
+import { Sparkles, X, Send, Loader2, MessageCircle, BookOpen, Plus, Clock, Check } from "lucide-react";
 
 const STORAGE_KEY = "help_bot_pos_v1";
 const DRAG_THRESHOLD_PX = 6;
 
 interface Pos { x: number; y: number }
-interface Msg { id: number; role: "user" | "assistant"; text: string }
+interface ToolProposal {
+  action: string;
+  [key: string]: unknown;
+}
+interface Msg {
+  id: number;
+  role: "user" | "assistant" | "tool";
+  text: string;
+  proposal?: ToolProposal | null;
+  toolResult?: { ok: boolean; detail?: Record<string, unknown> } | null;
+}
 
 /** Shape of the window global that ReviewPane publishes when a lead is on
  *  screen. Read synchronously on modal open (not subscribed) because the
@@ -151,26 +161,53 @@ function HelpModal({ pathname, onClose }: { pathname: string; onClose: () => voi
     return window.__currentReviewLead ?? null;
   });
 
-  // Default to paper-tutor mode if a lead is in scope (user is in Review
-  // pane staring at a paper — that's almost always what they want to ask
-  // about). Fall back to sales mode elsewhere.
   const [mode, setMode] = useState<BotMode>(currentLead ? "paper" : "sales");
-
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  // Clear conversation when switching modes — a paper-comprehension thread
-  // has no business continuing into a sales-playbook context (and vice
-  // versa); mixing them would confuse both the user and the LLM.
+  // Conversation persistence — created lazily on first user message in
+  // sales mode. Paper mode stays ephemeral (tied to a specific lead;
+  // persisting adds noise without helping sales recall). If creation
+  // fails the chat still works locally.
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  // History tab — listed threads user can reopen.
+  const [showHistory, setShowHistory] = useState(false);
+  const [history, setHistory] = useState<Array<{ id: string; title: string | null; mode: string; updated_at: string }>>([]);
+
   const switchMode = useCallback((next: BotMode) => {
     if (next === mode) return;
     setMode(next);
     setMessages([]);
     setErr(null);
+    setConversationId(null);
   }, [mode]);
+
+  // Lazy-create a conversation for persistent chats. Only sales mode —
+  // paper mode stays in-memory because the user's model of a paper
+  // tutor is "ephemeral per-paper Q&A" and persisting clutters it.
+  const ensureConversation = useCallback(async (firstMessage: string): Promise<string | null> => {
+    if (conversationId) return conversationId;
+    if (mode !== "sales") return null;
+    try {
+      const r = await fetch("/api/help/conversations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "sales", title: firstMessage.slice(0, 120) }),
+      });
+      if (!r.ok) return null;
+      const d = await r.json();
+      if (d.conversation?.id) {
+        setConversationId(d.conversation.id);
+        return d.conversation.id;
+      }
+    } catch {
+      // non-fatal — chat still works without persistence
+    }
+    return null;
+  }, [conversationId, mode]);
 
   const send = useCallback(async (q: string) => {
     const text = q.trim();
@@ -181,11 +218,16 @@ function HelpModal({ pathname, onClose }: { pathname: string; onClose: () => voi
     setInput("");
     setBusy(true);
     try {
-      const history = next.slice(-5).slice(0, -1).map((m) => ({ role: m.role, text: m.text }));
+      const convId = mode === "sales" ? await ensureConversation(text) : null;
+      const inlineHistory = next.slice(-5).slice(0, -1)
+        .filter((m) => m.role === "user" || m.role === "assistant")
+        .map((m) => ({ role: m.role, text: m.text }));
       const url = mode === "paper" ? "/api/help/paper" : "/api/help/ask";
-      const payload = mode === "paper" && currentLead
-        ? { leadId: currentLead.id, question: text, history }
-        : { question: text, currentPath: pathname, history };
+      const payload: Record<string, unknown> = mode === "paper" && currentLead
+        ? { leadId: currentLead.id, question: text, history: inlineHistory }
+        : { question: text, currentPath: pathname, history: inlineHistory };
+      if (convId) payload.conversationId = convId;
+
       const r = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -195,14 +237,95 @@ function HelpModal({ pathname, onClose }: { pathname: string; onClose: () => voi
       if (!r.ok) {
         setErr(d.error ?? "Failed");
       } else {
-        setMessages([...next, { id: Date.now() + 1, role: "assistant", text: d.answer ?? "" }]);
+        setMessages([...next, {
+          id: Date.now() + 1,
+          role: "assistant",
+          text: d.answer ?? "",
+          proposal: d.proposal ?? null,
+        }]);
       }
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
-  }, [messages, busy, pathname, mode, currentLead]);
+  }, [messages, busy, pathname, mode, currentLead, ensureConversation]);
+
+  // Confirm + execute a tool proposal. The LLM only suggests — this
+  // click is the ONLY way an action runs server-side. Result is
+  // appended as a synthetic 'tool' message so the thread stays
+  // auditable.
+  const executeProposal = useCallback(async (msgId: number, proposal: ToolProposal) => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await fetch("/api/help/execute", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversationId, proposal }),
+      });
+      const d = await r.json();
+      setMessages((prev) => [
+        ...prev.map((m) => m.id === msgId ? { ...m, proposal: null } : m), // consume proposal
+        {
+          id: Date.now() + 2,
+          role: "tool" as const,
+          text: "",
+          toolResult: { ok: !!d.ok, detail: d.detail ?? d },
+        },
+      ]);
+      if (!r.ok) setErr(d.error ?? "Execute failed");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [conversationId]);
+
+  // Cancel a proposal (don't execute) — just strip it so the confirm
+  // card goes away.
+  const cancelProposal = useCallback((msgId: number) => {
+    setMessages((prev) => prev.map((m) => m.id === msgId ? { ...m, proposal: null } : m));
+  }, []);
+
+  // Open history panel — fetch list.
+  const openHistory = useCallback(async () => {
+    setShowHistory(true);
+    try {
+      const r = await fetch("/api/help/conversations");
+      if (!r.ok) return;
+      const d = await r.json();
+      setHistory(d.conversations ?? []);
+    } catch { /* non-fatal */ }
+  }, []);
+
+  const loadConversation = useCallback(async (id: string) => {
+    try {
+      const r = await fetch(`/api/help/conversations/${id}`);
+      if (!r.ok) return;
+      const d = await r.json();
+      setConversationId(id);
+      setMode(d.conversation?.mode === "paper" ? "paper" : "sales");
+      setMessages(
+        (d.messages ?? []).map((m: { id: string; role: string; text: string | null; tool_proposal: ToolProposal | null; tool_result: { ok: boolean; detail?: Record<string, unknown> } | null }, i: number) => ({
+          id: Date.now() + i,
+          role: (m.role as "user" | "assistant" | "tool"),
+          text: m.text ?? "",
+          proposal: m.tool_proposal ?? null,
+          toolResult: m.tool_result ?? null,
+        })),
+      );
+      setShowHistory(false);
+    } catch { /* non-fatal */ }
+  }, []);
+
+  const newConversation = useCallback(() => {
+    setMessages([]);
+    setConversationId(null);
+    setInput("");
+    setErr(null);
+    setShowHistory(false);
+  }, []);
 
   // Esc / Cmd+Enter
   useEffect(() => {
@@ -242,6 +365,7 @@ function HelpModal({ pathname, onClose }: { pathname: string; onClose: () => voi
           boxShadow: "0 20px 60px rgba(0,0,0,0.18)",
           display: "flex", flexDirection: "column",
           overflow: "hidden",
+          position: "relative",
         }}
       >
         {/* header — title reflects active mode so sales knows whether
@@ -275,14 +399,86 @@ function HelpModal({ pathname, onClose }: { pathname: string; onClose: () => voi
               </div>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            title="Close (Esc)"
-            style={{ background: "transparent", border: 0, color: "var(--text-tertiary, #9ca3af)", cursor: "pointer", padding: 4, lineHeight: 0, flexShrink: 0 }}
-          >
-            <X style={{ width: 18, height: 18 }} />
-          </button>
+          <div style={{ display: "flex", gap: 2, flexShrink: 0 }}>
+            <button
+              onClick={newConversation}
+              title="New conversation"
+              style={{ background: "transparent", border: 0, color: "var(--text-tertiary, #9ca3af)", cursor: "pointer", padding: 4, lineHeight: 0 }}
+            >
+              <Plus style={{ width: 16, height: 16 }} />
+            </button>
+            <button
+              onClick={openHistory}
+              title="Past conversations"
+              style={{ background: "transparent", border: 0, color: "var(--text-tertiary, #9ca3af)", cursor: "pointer", padding: 4, lineHeight: 0 }}
+            >
+              <Clock style={{ width: 16, height: 16 }} />
+            </button>
+            <button
+              onClick={onClose}
+              title="Close (Esc)"
+              style={{ background: "transparent", border: 0, color: "var(--text-tertiary, #9ca3af)", cursor: "pointer", padding: 4, lineHeight: 0 }}
+            >
+              <X style={{ width: 18, height: 18 }} />
+            </button>
+          </div>
         </div>
+
+        {/* History panel — slides over the chat. Click a past thread
+            to load it; click anywhere else to dismiss. */}
+        {showHistory && (
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              background: "var(--card, #fff)",
+              zIndex: 2,
+              padding: 12,
+              overflowY: "auto",
+              borderRadius: 14,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>Past conversations</div>
+              <button
+                onClick={() => setShowHistory(false)}
+                style={{ background: "transparent", border: 0, color: "var(--text-tertiary, #9ca3af)", cursor: "pointer", padding: 4, lineHeight: 0 }}
+              >
+                <X style={{ width: 16, height: 16 }} />
+              </button>
+            </div>
+            {history.length === 0 ? (
+              <div style={{ fontSize: 12, color: "var(--text-tertiary, #9ca3af)", padding: 24, textAlign: "center" }}>
+                No past conversations yet.
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {history.map((h) => (
+                  <button
+                    key={h.id}
+                    onClick={() => loadConversation(h.id)}
+                    style={{
+                      textAlign: "left",
+                      padding: "8px 10px",
+                      fontSize: 12.5,
+                      border: "1px solid var(--border, #e5e7eb)",
+                      borderRadius: 6,
+                      background: "var(--bg, #f9fafb)",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <div style={{ fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {h.title || "(untitled)"}
+                    </div>
+                    <div style={{ fontSize: 10, color: "var(--text-tertiary, #9ca3af)", marginTop: 2 }}>
+                      {new Date(h.updated_at).toLocaleString()}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Mode toggle — only shows when a lead is in scope. Outside
             Review mode there's no "paper" to tutor on, so the toggle would
@@ -332,21 +528,56 @@ function HelpModal({ pathname, onClose }: { pathname: string; onClose: () => voi
               </div>
             </div>
           )}
-          {messages.map((m) => (
-            <div
-              key={m.id}
-              style={{
-                alignSelf: m.role === "user" ? "flex-end" : "flex-start",
-                maxWidth: "85%", padding: "8px 12px",
-                fontSize: 13, lineHeight: 1.55, borderRadius: 10,
-                background: m.role === "user" ? "#6366F1" : "var(--bg, #f9fafb)",
-                color: m.role === "user" ? "white" : "var(--text, #111827)",
-                whiteSpace: "pre-wrap", wordBreak: "break-word",
-              }}
-            >
-              {m.text}
-            </div>
-          ))}
+          {messages.map((m) => {
+            // Tool-result rows: not a chat bubble — a small audit strip.
+            if (m.role === "tool") {
+              const ok = m.toolResult?.ok;
+              return (
+                <div
+                  key={m.id}
+                  style={{
+                    alignSelf: "stretch",
+                    padding: "8px 10px",
+                    fontSize: 11.5,
+                    borderRadius: 8,
+                    background: ok ? "#F0FDF4" : "#FEF2F2",
+                    border: "1px solid " + (ok ? "#BBF7D0" : "#FECACA"),
+                    color: ok ? "#166534" : "#991B1B",
+                    fontFamily: "ui-monospace, monospace",
+                  }}
+                >
+                  {ok ? "✓ Executed" : "✗ Failed"} · {JSON.stringify(m.toolResult?.detail ?? {}).slice(0, 200)}
+                </div>
+              );
+            }
+            return (
+              <div key={m.id} style={{ alignSelf: "stretch", display: "flex", flexDirection: "column", gap: 6 }}>
+                <div
+                  style={{
+                    alignSelf: m.role === "user" ? "flex-end" : "flex-start",
+                    maxWidth: "85%", padding: "8px 12px",
+                    fontSize: 13, lineHeight: 1.55, borderRadius: 10,
+                    background: m.role === "user" ? "#6366F1" : "var(--bg, #f9fafb)",
+                    color: m.role === "user" ? "white" : "var(--text, #111827)",
+                    whiteSpace: "pre-wrap", wordBreak: "break-word",
+                  }}
+                >
+                  {m.text}
+                </div>
+                {/* Tool proposal card — rendered when the LLM suggested
+                    an action. User MUST click Confirm for it to execute.
+                    No auto-firing, ever. */}
+                {m.proposal && (
+                  <ProposalCard
+                    proposal={m.proposal}
+                    onConfirm={() => executeProposal(m.id, m.proposal!)}
+                    onCancel={() => cancelProposal(m.id)}
+                    busy={busy}
+                  />
+                )}
+              </div>
+            );
+          })}
           {busy && (
             <div style={{ alignSelf: "flex-start", display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-tertiary, #9ca3af)", padding: "6px 10px" }}>
               <Loader2 style={{ width: 13, height: 13 }} className="spin" />
@@ -434,5 +665,91 @@ function ModeTab({
       {icon}
       {label}
     </button>
+  );
+}
+
+function ProposalCard({
+  proposal,
+  onConfirm,
+  onCancel,
+  busy,
+}: {
+  proposal: ToolProposal;
+  onConfirm: () => void;
+  onCancel: () => void;
+  busy: boolean;
+}) {
+  // Translate the proposal into human-readable Chinese. The LLM produces
+  // JSON; the UI makes it unambiguous so sales understands EXACTLY what
+  // will happen before clicking Confirm.
+  let summary = "";
+  let confirmLabel = "Confirm";
+  let dangerous = false;
+  const a = proposal.action;
+  if (a === "batch_send") {
+    const limit = Number(proposal.limit) || 10;
+    const filter = String(proposal.filter || "all");
+    const filterLabel = filter === "strong" ? "强 lead (strong tier)" : filter === "normal" ? "普通 lead (normal tier)" : "所有 ready lead";
+    summary = `发送 ${filter === "all" ? "最近" : filter === "strong" ? "最近强 lead" : "最近普通 lead"}的前 ${limit} 封邮件`;
+    confirmLabel = `发 ${limit} 封`;
+    dangerous = true;
+  } else if (a === "skip_lead") {
+    summary = `把 lead ${String(proposal.lead_id ?? "?").slice(0, 8)} 标记为 skipped`;
+    confirmLabel = "Skip";
+  } else if (a === "flag_lead") {
+    const sev = proposal.severity === "hard" ? "HARD (加入 blocklist)" : "soft";
+    summary = `Flag lead ${String(proposal.lead_id ?? "?").slice(0, 8)} — type=${proposal.type} severity=${sev}`;
+    confirmLabel = sev === "HARD (加入 blocklist)" ? "Block & skip" : "Flag";
+    dangerous = sev.startsWith("HARD");
+  } else {
+    summary = `未知操作: ${a}`;
+    confirmLabel = "Execute";
+  }
+
+  return (
+    <div
+      style={{
+        alignSelf: "flex-start",
+        maxWidth: "92%",
+        padding: 10,
+        borderRadius: 10,
+        border: "1px solid " + (dangerous ? "#FCA5A5" : "#E5E7EB"),
+        background: dangerous ? "#FEF2F2" : "#F9FAFB",
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+      }}
+    >
+      <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-tertiary, #6b7280)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+        Proposed action
+      </div>
+      <div style={{ fontSize: 13, color: "var(--text, #111827)" }}>{summary}</div>
+      <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+        <button
+          onClick={onCancel}
+          disabled={busy}
+          style={{
+            fontSize: 12, padding: "5px 10px", border: "1px solid var(--border, #e5e7eb)",
+            borderRadius: 6, background: "transparent", cursor: busy ? "not-allowed" : "pointer",
+          }}
+        >
+          Cancel
+        </button>
+        <button
+          onClick={onConfirm}
+          disabled={busy}
+          style={{
+            fontSize: 12, padding: "5px 12px", border: 0, borderRadius: 6,
+            background: dangerous ? "#DC2626" : "#6366F1",
+            color: "white",
+            cursor: busy ? "not-allowed" : "pointer",
+            display: "inline-flex", alignItems: "center", gap: 4,
+          }}
+        >
+          {busy ? <Loader2 style={{ width: 12, height: 12 }} className="spin" /> : <Check style={{ width: 12, height: 12 }} />}
+          {confirmLabel}
+        </button>
+      </div>
+    </div>
   );
 }
