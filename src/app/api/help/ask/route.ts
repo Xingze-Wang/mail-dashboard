@@ -72,7 +72,9 @@ const SYSTEM = `你是 Qiji Pipeline 的销售助手 (Sales Copilot)。
 \`\`\`
 
 可用 actions:
-- batch_send — 批量发邮件. 参数: { limit: number (最多50) }. 按最新 ready lead 的顺序发.
+- batch_send — 批量发邮件. 参数: { limit: number (最多50), override?: boolean }.
+  默认会先挑非 gated 的 lead (>=7天), 不够再用 gated lead 补 (这些会吃每日 200 override 额度).
+  只有当用户明确说"全部 override"/"现在发 (7d内也发)"时, 才加 override: true — 会全部当 override 发.
 - skip_lead — 跳过一个 lead. 参数: { lead_id: string }
 - flag_lead — 标记一个 lead. 参数: { lead_id: string, type: "bad_compute"|"wrong_author"|"wrong_direction"|"low_quality_email"|"right_lead_wrong_pitch"|"good_lead", severity: "soft"|"hard", reason?: string }
 

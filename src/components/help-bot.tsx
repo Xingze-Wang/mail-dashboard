@@ -688,7 +688,10 @@ function ProposalCard({
   const a = proposal.action;
   if (a === "batch_send") {
     const limit = Number(proposal.limit) || 10;
-    summary = `发送最近 ${limit} 封 ready 邮件`;
+    const explicitOverride = proposal.override === true;
+    summary = explicitOverride
+      ? `发 ${limit} 封 — 全部当 override 发 (会吃每日 200 额度)`
+      : `发 ${limit} 封 — 优先非 gated; 不够的用 gated (override) 补`;
     confirmLabel = `发 ${limit} 封`;
     dangerous = true;
   } else if (a === "skip_lead") {

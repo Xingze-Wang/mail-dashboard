@@ -55,42 +55,70 @@ async function doBatchSend(
   cookie: string,
 ): Promise<{ ok: boolean; detail: Record<string, unknown> }> {
   const limit = Math.max(1, Math.min(HARD_CAP, Math.floor(Number(params.limit) || 10)));
+  const explicitOverride = params.override === true;
 
-  // Top N of the rep's ready queue, newest first. We deliberately DON'T
-  // filter by lead_tier — the strong/normal split is a heuristic ingest
-  // label, not a useful user-facing filter, and hitting "no matching
-  // leads" just because the LLM guessed a tier wastes sales's time.
-  let q = supabase
-    .from("pipeline_leads")
-    .select("id")
-    .eq("status", "ready")
-    .order("created_at", { ascending: false })
-    .limit(limit);
-  if (session.role !== "admin") q = q.eq("assigned_rep_id", session.repId);
+  // Two-pass selection so "send 10" doesn't dead-end when everything's
+  // <7 days old:
+  //
+  //   1. Fetch the rep's non-gated (created_at ≥ 7d ago) ready leads,
+  //      newest first, up to `limit`. These need no override.
+  //   2. If that's less than `limit`, top up from gated rows — and we
+  //      pass those ids in `overrides` so batch-send actually sends
+  //      them. Gated top-ups count against the 200/day cap.
+  //   3. If the user explicitly said "override everything" (the LLM
+  //      sets override:true on the proposal), skip step 1 and just
+  //      pull the top N irrespective of age, all as overrides.
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
-  const { data: leads, error } = await q;
-  if (error || !leads || leads.length === 0) {
-    return { ok: false, detail: { error: error?.message ?? "No matching leads" } };
+  const baseQ = () => {
+    let q = supabase
+      .from("pipeline_leads")
+      .select("id, created_at")
+      .eq("status", "ready")
+      .order("created_at", { ascending: false });
+    if (session.role !== "admin") q = q.eq("assigned_rep_id", session.repId);
+    return q;
+  };
+
+  let picked: Array<{ id: string; override: boolean }> = [];
+  let selectionNote = "";
+
+  if (explicitOverride) {
+    const { data } = await baseQ().limit(limit);
+    picked = (data ?? []).map((l) => ({ id: l.id, override: true }));
+    selectionNote = `override=true (user-requested): ${picked.length} leads`;
+  } else {
+    // Prefer non-gated first.
+    const { data: nonGated } = await baseQ().lte("created_at", sevenDaysAgo).limit(limit);
+    picked = (nonGated ?? []).map((l) => ({ id: l.id, override: false }));
+    const need = limit - picked.length;
+    if (need > 0) {
+      // Top up with gated; these'll go out as overrides.
+      const { data: gated } = await baseQ().gt("created_at", sevenDaysAgo).limit(need);
+      picked = [
+        ...picked,
+        ...(gated ?? []).map((l) => ({ id: l.id, override: true })),
+      ];
+      selectionNote = `${picked.filter((p) => !p.override).length} non-gated + ${picked.filter((p) => p.override).length} gated (override)`;
+    } else {
+      selectionNote = `${picked.length} non-gated`;
+    }
   }
 
-  const ids = leads.map((l) => l.id);
+  if (picked.length === 0) {
+    return { ok: false, detail: { error: "No matching leads" } };
+  }
 
-  // Forward to batch-send via a direct internal fetch so all the
-  // existing guards (auth, ownership, override quota, contact-guard)
-  // run exactly once. Note: we pass the caller's cookie through so
-  // batch-send sees the same session.
+  const ids = picked.map((p) => p.id);
+  const overrides = picked.filter((p) => p.override).map((p) => p.id);
+
   const res = await fetch(`${reqOrigin}/api/pipeline/batch-send`, {
     method: "POST",
     headers: { "Content-Type": "application/json", cookie },
-    // IMPORTANT: we don't pass `overrides` here — if sales wants an
-    // override-heavy batch, they need to go through the Bulk UI (which
-    // surfaces the 200/day cap). The helper is for normal sends; if
-    // all leads are <7d old, batch-send will skip them and return a
-    // breakdown in `blocks.age_gate` that we surface below.
-    body: JSON.stringify({ ids }),
+    body: JSON.stringify({ ids, overrides }),
   });
   const detail = await res.json().catch(() => ({}));
-  return { ok: res.ok, detail };
+  return { ok: res.ok, detail: { ...detail, selection: selectionNote } };
 }
 
 async function doSkip(
