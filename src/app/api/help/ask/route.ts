@@ -34,24 +34,30 @@ const MAX_ITERATIONS = 3;
 
 const SYSTEM_BASE = `你是 rep 的搭档. 像一个有分寸的同事, 不是客服机器人.
 
-## 语气规则 (硬规则, 不要违反)
+## 语气规则 (硬规则)
 - 中文为主, 技术词保留英文 (override, ready, queue, lead, batch, Pipeline, Review).
 - 短句. 一行一句. 能一句话说完不说两句.
-- 事实第一, 情绪第二 (如果有).
+- 事实第一, 情绪第二.
 - **不用** emoji.
 - **不用** 语气词 ("哈" "呀" "呢" "哦" "嘿" "诶" "啦").
 - **不用** 敬称 ("您" "请问").
-- 给决策就明确 ("要不要 / 要吗"), 不要 "建议" "不妨" "可以考虑".
-- 没话说就不说. 别硬聊.
+- 要决策明确 ("要不要 / 要吗"), 不要 "建议" "不妨" "可以考虑".
+- 没话说就不说, 别硬聊.
 
-## 工作范围
-1. app 操作问题 ("X 在哪") → 看 Sales Guide 答.
-2. 话术问题 ("对方问 X 怎么回") → 看 Qiji Compute facts 答.
-3. 执行 ("发 N 个" / "skip 这条") → 用工具 (见下).
+## 上下文感知 (重要)
+根据问题+当前情境自己判断走哪条路线, 不问 rep "你想干嘛":
+
+1. **rep 在 Review 模式 (context 有 current_lead)** + 问题是关于这篇 paper ("这篇在做什么" "为啥需要算力") → 解释 paper 本身.
+2. 问题是具体 lead 操作 ("发这个" "skip 这条" "重写") → 先 lookup 确定 lead id, 再用工具.
+3. 问题是数字 ("我今天还能发几个" "还剩多少 override") → 必须先 lookup.
+4. 问题是 app 操作 ("怎么发邮件" "Send 在哪") → 看 Sales Guide 答, 不用工具.
+5. 问题是话术 ("对方说 NSF grant 怎么回") → 看 Qiji facts 答.
+6. 问题模糊 → 用一句话反问清楚, 不要猜.
 
 ## 绝对原则
 - 这是「奇绩算力」program. 严禁回答「奇绩创业营」相关 (投资额 / 股权 / batch 时间).
-- 不瞎编数字. 不确定就说 "不确定, 找 Xingze".
+- 不瞎编数字, 不确定就说 "不确定, 找 Xingze".
+- **不要在聊天里直接写完整邮件正文**. 要改草稿只能通过 redraft_lead 工具 (propose + confirm 流程).
 `;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -133,6 +139,10 @@ export async function POST(req: NextRequest) {
   const currentPath = String(body.currentPath ?? "").trim();
   const inlineHistory: HistMsg[] = Array.isArray(body.history) ? body.history.slice(-4) : [];
   const conversationId = typeof body.conversationId === "string" ? body.conversationId : null;
+  // Current review lead — passed by the HelpBot when rep is in Review
+  // mode. The agent uses this to route paper questions without needing
+  // a separate "Paper Tutor" mode.
+  const currentLeadId = typeof body.currentLeadId === "string" ? body.currentLeadId : null;
 
   if (!question) return NextResponse.json({ error: "question required" }, { status: 400 });
   if (question.length > 500) return NextResponse.json({ error: "question too long" }, { status: 400 });
@@ -166,6 +176,26 @@ export async function POST(req: NextRequest) {
     : "";
   const pathHint = currentPath ? `\n用户当前在页面: ${currentPath}\n` : "";
 
+  // Fetch a lite current-lead snapshot so paper questions can be
+  // answered without a lookup round-trip. Ownership enforced: we
+  // don't leak another rep's lead data via the helper.
+  let currentLeadHint = "";
+  if (currentLeadId) {
+    const { data: lead } = await supabase
+      .from("pipeline_leads")
+      .select("id, title, author_name, abstract, assigned_rep_id")
+      .eq("id", currentLeadId)
+      .maybeSingle();
+    if (lead && (session.role === "admin" || lead.assigned_rep_id === session.repId)) {
+      currentLeadHint = `\n## 当前 rep 正在 Review 的 lead (context)
+id: ${lead.id}
+title: ${lead.title}
+author: ${lead.author_name ?? "?"}
+abstract 前 800 字: ${((lead.abstract as string) ?? "").slice(0, 800)}
+`;
+    }
+  }
+
   // System prompt is already big (tool catalog + rules). Put the
   // reference corpora in the user message so the LLM treats them as
   // lookup material, not behavior directives.
@@ -175,7 +205,7 @@ ${SALES_GUIDE.slice(0, 3500)}
 
 ## Qiji Compute Facts (参考资料, 回答话术问题时用)
 ${QIJI_PROGRAM_FACTS.slice(0, 3500)}
-${pathHint}${historyText}
+${pathHint}${currentLeadHint}${historyText}
 ## 用户问题
 ${question}
 

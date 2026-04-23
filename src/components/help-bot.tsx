@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
-import { Sparkles, X, Send, Loader2, MessageCircle, BookOpen, Plus, Clock, Check } from "lucide-react";
+import { Sparkles, X, Send, Loader2, Plus, Clock, Check } from "lucide-react";
 
 const STORAGE_KEY = "help_bot_pos_v1";
 const DRAG_THRESHOLD_PX = 6;
@@ -40,7 +40,6 @@ declare global {
   interface Window { __currentReviewLead?: CurrentReviewLead }
 }
 
-type BotMode = "sales" | "paper";
 
 const SALES_SUGGESTIONS = [
   "怎么发邮件? 在哪里点 Send?",
@@ -300,7 +299,6 @@ function HelpModal({
     return window.__currentReviewLead ?? null;
   });
 
-  const [mode, setMode] = useState<BotMode>(currentLead ? "paper" : "sales");
   // Seed the daily opener / nudge as the first assistant message so
   // the helper feels like a presence that "said hi first".
   const [messages, setMessages] = useState<Msg[]>(() => {
@@ -309,8 +307,6 @@ function HelpModal({
     }
     return [];
   });
-  // Signal to the parent that we've consumed the seed (so the pending
-  // bubble doesn't reappear after the modal closes).
   useEffect(() => {
     if (initialSeed && onConsumeSeed) onConsumeSeed();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -320,29 +316,15 @@ function HelpModal({
   const [err, setErr] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  // Conversation persistence — created lazily on first user message in
-  // sales mode. Paper mode stays ephemeral (tied to a specific lead;
-  // persisting adds noise without helping sales recall). If creation
-  // fails the chat still works locally.
+  // Conversation persistence — created lazily on first user message.
+  // One endpoint now, no mode split.
   const [conversationId, setConversationId] = useState<string | null>(null);
-  // History tab — listed threads user can reopen.
   const [showHistory, setShowHistory] = useState(false);
   const [history, setHistory] = useState<Array<{ id: string; title: string | null; mode: string; updated_at: string }>>([]);
 
-  const switchMode = useCallback((next: BotMode) => {
-    if (next === mode) return;
-    setMode(next);
-    setMessages([]);
-    setErr(null);
-    setConversationId(null);
-  }, [mode]);
-
-  // Lazy-create a conversation for persistent chats. Only sales mode —
-  // paper mode stays in-memory because the user's model of a paper
-  // tutor is "ephemeral per-paper Q&A" and persisting clutters it.
+  // Lazy-create a conversation for persistence. One unified chat now.
   const ensureConversation = useCallback(async (firstMessage: string): Promise<string | null> => {
     if (conversationId) return conversationId;
-    if (mode !== "sales") return null;
     try {
       const r = await fetch("/api/help/conversations", {
         method: "POST",
@@ -359,7 +341,7 @@ function HelpModal({
       // non-fatal — chat still works without persistence
     }
     return null;
-  }, [conversationId, mode]);
+  }, [conversationId]);
 
   const send = useCallback(async (q: string) => {
     const text = q.trim();
@@ -370,17 +352,21 @@ function HelpModal({
     setInput("");
     setBusy(true);
     try {
-      const convId = mode === "sales" ? await ensureConversation(text) : null;
+      const convId = await ensureConversation(text);
       const inlineHistory = next.slice(-5).slice(0, -1)
         .filter((m) => m.role === "user" || m.role === "assistant")
         .map((m) => ({ role: m.role, text: m.text }));
-      const url = mode === "paper" ? "/api/help/paper" : "/api/help/ask";
-      const payload: Record<string, unknown> = mode === "paper" && currentLead
-        ? { leadId: currentLead.id, question: text, history: inlineHistory }
-        : { question: text, currentPath: pathname, history: inlineHistory };
+      // One endpoint, one payload. currentLeadId is passed when rep is
+      // in Review so the agent can answer paper questions naturally.
+      const payload: Record<string, unknown> = {
+        question: text,
+        currentPath: pathname,
+        history: inlineHistory,
+      };
+      if (currentLead) payload.currentLeadId = currentLead.id;
       if (convId) payload.conversationId = convId;
 
-      const r = await fetch(url, {
+      const r = await fetch("/api/help/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -402,7 +388,7 @@ function HelpModal({
     } finally {
       setBusy(false);
     }
-  }, [messages, busy, pathname, mode, currentLead, ensureConversation]);
+  }, [messages, busy, pathname, currentLead, ensureConversation]);
 
   // Confirm + execute a tool proposal. The LLM only suggests — this
   // click is the ONLY way an action runs server-side. Result is
@@ -466,7 +452,6 @@ function HelpModal({
       if (!r.ok) return;
       const d = await r.json();
       setConversationId(id);
-      setMode(d.conversation?.mode === "paper" ? "paper" : "sales");
       setMessages(
         (d.messages ?? []).map((m: { id: string; role: string; text: string | null; tool_proposal: ToolProposal | null; tool_result: { ok: boolean; detail?: Record<string, unknown> } | null }, i: number) => ({
           id: Date.now() + i,
@@ -541,7 +526,7 @@ function HelpModal({
             <Sparkles style={{ width: 16, height: 16, color: "#6366F1", flexShrink: 0 }} />
             <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 13, fontWeight: 600 }}>
-                {mode === "paper" ? "Paper Tutor" : "Sales Helper"}
+                Helper
               </div>
               <div
                 style={{
@@ -552,11 +537,9 @@ function HelpModal({
                   textOverflow: "ellipsis",
                   maxWidth: 320,
                 }}
-                title={mode === "paper" && currentLead ? currentLead.title : undefined}
+                title={currentLead?.title}
               >
-                {mode === "paper" && currentLead
-                  ? `读懂: ${currentLead.title}`
-                  : "有问题随时问 — 知道这 app 怎么用 + 算力项目所有 facts"}
+                {currentLead ? `reviewing: ${currentLead.title}` : "问问题, 发邮件, 查数据都可以"}
               </div>
             </div>
           </div>
@@ -641,37 +624,15 @@ function HelpModal({
           </div>
         )}
 
-        {/* Mode toggle — only shows when a lead is in scope. Outside
-            Review mode there's no "paper" to tutor on, so the toggle would
-            just be a dead button. */}
-        {currentLead && (
-          <div style={{ display: "flex", gap: 0, padding: "8px 12px 0 12px", borderBottom: "1px solid var(--border-light, #f3f4f6)" }}>
-            <ModeTab
-              active={mode === "paper"}
-              onClick={() => switchMode("paper")}
-              icon={<BookOpen style={{ width: 12, height: 12 }} />}
-              label="读论文"
-            />
-            <ModeTab
-              active={mode === "sales"}
-              onClick={() => switchMode("sales")}
-              icon={<MessageCircle style={{ width: 12, height: 12 }} />}
-              label="销售帮助"
-            />
-          </div>
-        )}
-
         {/* messages */}
         <div ref={scrollRef} style={{ flex: 1, overflowY: "auto", padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
           {messages.length === 0 && (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               <p style={{ fontSize: 12.5, color: "var(--text-tertiary, #6b7280)", lineHeight: 1.55 }}>
-                {mode === "paper"
-                  ? "我只负责帮你读懂这篇 paper — 不会告诉你怎么发邮件（切到「销售帮助」问那个）。"
-                  : "问任何 UI 操作或者「对方问 X 怎么回」的话术。我用奇绩官网 facts + sales 手册回答。"}
+                问问题, 查数据, 或者让我帮你做事.
               </p>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {(mode === "paper" ? PAPER_SUGGESTIONS : SALES_SUGGESTIONS).map((q) => (
+                {(currentLead ? PAPER_SUGGESTIONS : SALES_SUGGESTIONS).map((q) => (
                   <button
                     key={q}
                     onClick={() => send(q)}
@@ -781,7 +742,7 @@ function HelpModal({
                 if (input.trim() && !busy) send(input);
               }
             }}
-            placeholder={mode === "paper" ? "问关于这篇 paper 的任何问题…  (Enter 发送)" : "问一个问题…  (Enter 发送, Shift+Enter 换行)"}
+            placeholder="问问题, 或者让我帮你做事…  (Enter 发送, Shift+Enter 换行)"
             rows={2}
             style={{
               flex: 1, padding: "8px 10px", fontSize: 13, lineHeight: 1.5,
@@ -808,41 +769,6 @@ function HelpModal({
         </div>
       </div>
     </div>
-  );
-}
-
-function ModeTab({
-  active,
-  onClick,
-  icon,
-  label,
-}: {
-  active: boolean;
-  onClick: () => void;
-  icon: React.ReactNode;
-  label: string;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 5,
-        padding: "6px 10px",
-        fontSize: 12,
-        fontWeight: active ? 600 : 500,
-        color: active ? "#6366F1" : "var(--text-tertiary, #9ca3af)",
-        background: "transparent",
-        border: 0,
-        borderBottom: active ? "2px solid #6366F1" : "2px solid transparent",
-        cursor: "pointer",
-        marginBottom: -1,
-      }}
-    >
-      {icon}
-      {label}
-    </button>
   );
 }
 
