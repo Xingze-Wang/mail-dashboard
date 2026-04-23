@@ -160,20 +160,11 @@ export default function OverviewPage() {
     );
   }
 
-  if (!metrics) {
-    return (
-      <div>
-        <h1 className="page-title">Overview</h1>
-        <p style={{ color: "var(--text-secondary)", marginTop: 12 }}>Failed to load metrics</p>
-      </div>
-    );
-  }
-
-  const o = metrics.overview;
-
-  // Sales reps (non-Leo, non-admin) get a scoped view: their own pipeline
-  // slice only, no global email funnel. Leo + admin see the full dashboard
-  // since historical email data is not rep-tagged and defaults to Leo.
+  // Sales rep branch must be checked BEFORE `!metrics` — sales never
+  // fetches /api/metrics (the global funnel), so `metrics` will be
+  // null for them. Without this reordering, sales users hit the
+  // "Failed to load metrics" screen even though their per-rep view
+  // (which depends only on myMetrics) is ready.
   if (showPerRepOnly) {
     const m = myMetrics;
     return (
@@ -208,14 +199,24 @@ export default function OverviewPage() {
           </div>
         </div>
         <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12, padding: 24, textAlign: "center" }}>
-          <p style={{ color: "var(--text-secondary)", marginBottom: 8 }}>Ready to send your next batch?</p>
-          <a href="/pipeline#mode=review" className="btn btn-primary" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-            Open next batch
-          </a>
+          <p style={{ color: "var(--text-secondary)", fontSize: 13 }}>
+            更详细的 pipeline 视图在 Pipeline 页 — 这里只显示你的核心数字。
+          </p>
         </div>
       </div>
     );
   }
+
+  if (!metrics) {
+    return (
+      <div>
+        <h1 className="page-title">Overview</h1>
+        <p style={{ color: "var(--text-secondary)", marginTop: 12 }}>Failed to load metrics</p>
+      </div>
+    );
+  }
+
+  const o = metrics.overview;
 
   return (
     <div>
