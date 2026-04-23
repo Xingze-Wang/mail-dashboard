@@ -30,7 +30,13 @@ export async function GET(req: NextRequest) {
   if (!isAdmin) q = q.eq("rep_id", session.repId);
 
   const { data, error } = await q;
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    // If the migration hasn't been run, the table won't exist — that's
+    // fine, just return empty list so the UI's "past conversations"
+    // panel doesn't break.
+    console.error("helper_conversations query error — returning empty", error);
+    return NextResponse.json({ conversations: [] });
+  }
   return NextResponse.json({ conversations: data ?? [] });
 }
 
@@ -48,6 +54,11 @@ export async function POST(req: NextRequest) {
     .insert({ rep_id: session.repId, mode, lead_id: leadId, title })
     .select()
     .single();
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    // Migration 006 not run — fall back to ephemeral: return null so
+    // the client skips persistence and the chat still works.
+    console.error("helper_conversations insert error — ephemeral fallback", error);
+    return NextResponse.json({ conversation: null });
+  }
   return NextResponse.json({ conversation: data });
 }

@@ -32,7 +32,10 @@ export async function GET(req: NextRequest) {
       .select("*", { count: "exact", head: true })
       .eq("is_read", false)
       .in("thread_id", threadIds);
-    if (error) return NextResponse.json({ count: 0, error: error.message }, { status: 500 });
+    if (error) {
+      console.error("inbox/unread-count query error — returning 0", error);
+      return NextResponse.json({ count: 0 });
+    }
     return NextResponse.json({ count: count ?? 0 });
   }
 
