@@ -142,7 +142,6 @@ function LeadRowInner({
   const [editSubject, setEditSubject] = useState(lead.draftSubject || "");
   const [editHtml, setEditHtml] = useState(lead.draftHtml || "");
   const [saving, setSaving] = useState(false);
-  const [overrideArmed, setOverrideArmed] = useState(false);
 
   // 7-day age-gate (UX hint — server is the final word). Anchored on
   // created_at, distinct from canSend()'s published_at check.
@@ -451,35 +450,24 @@ function LeadRowInner({
                 <Mail />
                 {isExpanded ? "Edit draft" : "View draft"}
               </button>
-              {overrideArmed ? (
-                <>
-                  <button type="button" className="dx-ghost" onClick={() => setOverrideArmed(false)} disabled={isSending}>
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    className="dx-primary"
-                    disabled={isSending}
-                    onClick={() => onSend(lead, true)}
-                    title="Override the paper-age rule"
-                    style={{ background: "var(--dx-amber)" }}
-                  >
-                    {isSending ? <Loader2 className="animate-spin" /> : <Send />}
-                    Send anyway
-                  </button>
-                </>
-              ) : (
-                <button
-                  type="button"
-                  className="dx-secondary"
-                  disabled={isSending}
-                  onClick={() => setOverrideArmed(true)}
-                  title="Paper is less than 7 days old"
-                >
-                  <Send />
-                  Override & send
-                </button>
-              )}
+              {/* One-click send for gated leads. Was a 2-click dance
+                  (arm → confirm); sales complained about every send
+                  needing 2 clicks because most leads are <7d old. Now
+                  clicking Send fires the POST with override=true
+                  directly. The server still enforces the daily 200-cap;
+                  visible "Xd old · needs override" hint stays so sales
+                  understands why it's an override send. */}
+              <button
+                type="button"
+                className="dx-primary"
+                disabled={isSending}
+                onClick={() => onSend(lead, true)}
+                title={`Paper is <7 days old — sends as override (${ageDaysFloor}d)`}
+                style={{ background: "var(--dx-amber)" }}
+              >
+                {isSending ? <Loader2 className="animate-spin" /> : <Send />}
+                Send ({ageDaysFloor}d · override)
+              </button>
             </>
           )}
 
@@ -521,39 +509,21 @@ function LeadRowInner({
                 <X style={{ width: 13, height: 13 }} />
               </button>
               {ageGated ? (
-                overrideArmed ? (
-                  <>
-                    <button
-                      type="button"
-                      className="dx-ghost"
-                      onClick={() => setOverrideArmed(false)}
-                      disabled={isSending}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      className="dx-primary"
-                      disabled={isSending}
-                      onClick={() => onSend(lead, true)}
-                      title={`Override the ${MIN_AGE_DAYS}-day rule`}
-                    >
-                      {isSending ? <Loader2 className="animate-spin" /> : <Send />}
-                      Override and send
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    type="button"
-                    className="dx-secondary"
-                    disabled={isSending}
-                    onClick={() => setOverrideArmed(true)}
-                    title={`${ageDaysFloor}d old — needs override`}
-                  >
-                    <Send />
-                    {ageDaysFloor}d old · override
-                  </button>
-                )
+                // One-click send for gated leads — was a 2-click dance
+                // (arm → confirm). Now a single click fires with
+                // override=true. Amber color signals "this is an
+                // override"; label shows the age so sales sees why.
+                <button
+                  type="button"
+                  className="dx-primary"
+                  disabled={isSending}
+                  onClick={() => onSend(lead, true)}
+                  title={`Sends as override — paper is ${ageDaysFloor}d old`}
+                  style={{ background: "var(--dx-amber)" }}
+                >
+                  {isSending ? <Loader2 className="animate-spin" /> : <Send />}
+                  Send ({ageDaysFloor}d · override)
+                </button>
               ) : (
                 <button
                   type="button"
