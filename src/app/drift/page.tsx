@@ -58,6 +58,7 @@ export default function DriftPage() {
   const [mining, setMining] = useState(false);
   const [mineNote, setMineNote] = useState<string | null>(null);
   const [actingId, setActingId] = useState<string | null>(null);
+  const [setupHint, setSetupHint] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/auth/me")
@@ -82,6 +83,7 @@ export default function DriftPage() {
       setPatterns(d.patterns ?? []);
       setCounts(d.counts ?? { pending: 0, accepted: 0, ignored: 0, total: 0 });
       setByCategory(d.byCategory ?? {});
+      setSetupHint(typeof d.setupHint === "string" ? d.setupHint : null);
     } finally {
       setLoading(false);
     }
@@ -185,6 +187,7 @@ export default function DriftPage() {
       {tab === "human" && <HumanSignalsView />}
       {tab === "patterns" && <PatternsView
         mineNote={mineNote}
+        setupHint={setupHint}
         counts={counts}
         byCategory={byCategory}
         statusFilter={statusFilter}
@@ -205,6 +208,7 @@ export default function DriftPage() {
 /* === Patterns view (extracted so Judge-vs-Human can live alongside) === */
 function PatternsView(props: {
   mineNote: string | null;
+  setupHint: string | null;
   counts: Counts;
   byCategory: Record<string, number>;
   statusFilter: "pending" | "accepted" | "ignored" | "all";
@@ -218,9 +222,26 @@ function PatternsView(props: {
   actingId: string | null;
   actOn: (id: string, action: "accept" | "ignore") => void;
 }) {
-  const { mineNote, counts, byCategory, statusFilter, setStatusFilter, categoryFilter, setCategoryFilter, repFilter, setRepFilter, loading, patterns, actingId, actOn } = props;
+  const { mineNote, setupHint, counts, byCategory, statusFilter, setStatusFilter, categoryFilter, setCategoryFilter, repFilter, setRepFilter, loading, patterns, actingId, actOn } = props;
   return (
     <div>
+
+      {setupHint && (
+        <div
+          style={{
+            padding: "12px 14px",
+            border: "1px solid #FDE68A",
+            background: "#FFFBEB",
+            borderRadius: 8,
+            fontSize: 13,
+            color: "#92400E",
+            marginBottom: 16,
+            lineHeight: 1.55,
+          }}
+        >
+          ⚠ {setupHint}
+        </div>
+      )}
 
       {mineNote && (
         <div
@@ -520,7 +541,11 @@ function DisagreementList({
   onReJudge: (id: string) => void;
 }) {
   if (leads.length === 0) {
-    return <div style={{ padding: 20, color: "var(--muted)", textAlign: "center", fontSize: 13 }}>No leads in this quadrant.</div>;
+    return (
+      <div style={{ padding: 20, color: "var(--muted)", textAlign: "center", fontSize: 13, lineHeight: 1.6 }}>
+        No leads in this quadrant yet. As sends + judge runs accumulate, rows will surface here — pick another quadrant to see what&apos;s already populated.
+      </div>
+    );
   }
 
   return (

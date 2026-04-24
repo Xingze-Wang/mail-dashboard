@@ -77,11 +77,12 @@ export async function POST(req: NextRequest) {
     .from("lead_corrections")
     .insert({
       lead_id: leadId,
+      rep_id: session.repId,      // canonical FK — used by drift Human Signals + per-rep analytics
       type,
       reason,
       payload,
       severity,
-      corrected_by: session.email,
+      corrected_by: session.email, // legacy field kept for back-compat with pre-rep_id inserts
     })
     .select()
     .single();

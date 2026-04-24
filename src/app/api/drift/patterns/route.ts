@@ -31,7 +31,22 @@ export async function GET(req: NextRequest) {
   else if (repIdRaw && /^\d+$/.test(repIdRaw)) q = q.eq("rep_id", Number(repIdRaw));
 
   const { data, error } = await q;
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    // Typical cause: migration 008 not applied → prompt_drift_patterns
+    // table doesn't exist. Surface this precisely so admin knows the
+    // fix, instead of a blank page or raw SQL error.
+    const msg = error.message || "";
+    const missingTable = /relation .* does not exist/i.test(msg) || /no such table/i.test(msg);
+    if (missingTable) {
+      return NextResponse.json({
+        patterns: [],
+        counts: { pending: 0, accepted: 0, ignored: 0, total: 0 },
+        byCategory: {},
+        setupHint: "Drift tables missing — run migrations/008-drift-and-edit-tracking.sql in Supabase SQL Editor.",
+      });
+    }
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
 
   // Aggregate counts for the dashboard header
   const { data: allRows } = await supabase
