@@ -1927,3 +1927,116 @@ button { font-family: inherit; }
   0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
   40%           { transform: translateY(-3px); opacity: 1; }
 }
+
+/* ─── HelpBot robot avatar ─────────────────────────────────────────
+   A cute SVG robot replaces the old Sparkles icon. Three moods drive
+   distinct CSS-keyed animations:
+     idle  — slow double-blink every few seconds (alive but quiet)
+     wave  — right arm swings once on enter, then idle
+     peek  — whole body translates UP out of the circle, waves longer,
+             settles back down; loops ~every 4s so the rep notices
+             even with peripheral vision */
+
+/* Default subtle idle gait — tiny vertical bob so the robot never
+   looks frozen. Applies to all moods unless overridden. Transform
+   origins are in SVG user units (viewBox 48 × 48). */
+.help-bot-button svg .robot-body {
+  transform-origin: 24px 40px;
+  animation: robot-idle 3.6s ease-in-out infinite;
+}
+.help-bot-button svg .robot-arm-right {
+  /* pivot at the shoulder, not the mid-arm, so the wave looks like a
+     shoulder→hand arc instead of a spinning stick */
+  transform-origin: 37.5px 30.5px;
+}
+.help-bot-button svg .robot-eye {
+  /* blink by scaling vertically toward the eye's own center */
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: robot-blink 4.8s ease-in-out infinite;
+}
+.help-bot-button svg .robot-chest-light {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: robot-chest-pulse 2s ease-in-out infinite;
+}
+
+/* idle — already the default. Keyframes are gentle so the button
+   doesn't feel distracting. */
+@keyframes robot-idle {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-1px); }
+}
+@keyframes robot-blink {
+  0%, 92%, 100% { transform: scaleY(1); }
+  94%           { transform: scaleY(0.1); }
+  96%           { transform: scaleY(1); }
+}
+
+/* Chest light — soft pulse. Stays on always so the robot feels alive
+   even when no animation is active. */
+@keyframes robot-chest-pulse {
+  0%, 100% { transform: scale(1);   opacity: 1;   }
+  50%      { transform: scale(1.3); opacity: 0.7; }
+}
+
+/* wave — fires when pendingOpener is set (daily opener waiting). Arm
+   does a friendly single arc, body does a small lean. Runs twice so
+   it's enough to register if the rep glances over a second late. */
+.help-bot-button[data-robot-mood="wave"] svg .robot-body {
+  animation: robot-wave-body 1.8s ease-in-out 2;
+}
+.help-bot-button[data-robot-mood="wave"] svg .robot-arm-right {
+  animation: robot-arm-wave 1.8s ease-in-out 2;
+}
+@keyframes robot-wave-body {
+  0%, 100% { transform: translateY(0) rotate(0); }
+  30%      { transform: translateY(-0.5px) rotate(-4deg); }
+  60%      { transform: translateY(-0.5px) rotate(4deg); }
+}
+@keyframes robot-arm-wave {
+  0%, 100% { transform: rotate(0); }
+  20%      { transform: rotate(-55deg); }
+  45%      { transform: rotate(-10deg); }
+  70%      { transform: rotate(-55deg); }
+  90%      { transform: rotate(-15deg); }
+}
+
+/* peek — fires when a chime-in is pending. Robot climbs UP out of
+   the circle, waves, then ducks back. Loops every few seconds so it
+   keeps trying to get the rep's attention. The translate is in SVG
+   user units (viewBox 48 across); 18 units ≈ 12 CSS px up with the
+   34px render size — enough for the head to visibly clear the top
+   of the 52px button. */
+.help-bot-button[data-robot-mood="peek"] svg .robot-body {
+  animation: robot-peek-body 4.2s ease-in-out infinite;
+}
+.help-bot-button[data-robot-mood="peek"] svg .robot-arm-right {
+  animation: robot-arm-peek 4.2s ease-in-out infinite;
+}
+@keyframes robot-peek-body {
+  0%       { transform: translateY(0) rotate(0); }
+  12%      { transform: translateY(-18px) rotate(-4deg); }
+  30%      { transform: translateY(-18px) rotate(5deg); }
+  48%      { transform: translateY(-18px) rotate(-4deg); }
+  65%      { transform: translateY(-4px) rotate(0); }
+  100%     { transform: translateY(0) rotate(0); }
+}
+@keyframes robot-arm-peek {
+  0%, 10%  { transform: rotate(0); }
+  20%      { transform: rotate(-60deg); }
+  32%      { transform: rotate(-15deg); }
+  44%      { transform: rotate(-60deg); }
+  56%      { transform: rotate(-15deg); }
+  70%, 100% { transform: rotate(0); }
+}
+
+/* Respect reduced-motion: keep the character but drop the movement. */
+@media (prefers-reduced-motion: reduce) {
+  .help-bot-button svg .robot-body,
+  .help-bot-button svg .robot-arm-right,
+  .help-bot-button svg .robot-eye,
+  .help-bot-button svg .robot-chest-light {
+    animation: none;
+  }
+}
