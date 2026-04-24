@@ -1961,6 +1961,22 @@ button { font-family: inherit; }
   animation: robot-chest-pulse 2s ease-in-out infinite;
 }
 
+/* ChenyuRobot sparkle glints — tiny twinkle every ~3s, offset per-
+   sparkle via nth-child so they don't sync up and look mechanical. */
+.help-bot-button svg .chenyu-sparkle path {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: chenyu-sparkle-twinkle 3.2s ease-in-out infinite;
+}
+.help-bot-button svg .chenyu-sparkle path:nth-child(2) {
+  animation-delay: 1.6s;
+}
+@keyframes chenyu-sparkle-twinkle {
+  0%, 70%, 100% { transform: scale(0.7); opacity: 0.3; }
+  80%           { transform: scale(1.1); opacity: 1; }
+  85%           { transform: scale(0.9); opacity: 0.8; }
+}
+
 /* idle — already the default. Keyframes are gentle so the button
    doesn't feel distracting. */
 @keyframes robot-idle {

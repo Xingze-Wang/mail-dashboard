@@ -27,6 +27,95 @@ import { AgentSplitView } from "./agent-split-view";
  * past the circle's top edge. Colors stay on-brand with the existing
  * indigo→pink gradient — robot is white with subtle shading.
  */
+/**
+ * ChenyuRobot — friendlier-than-CuteRobot variant. Round head instead
+ * of a rounded rect, heart-tipped antenna, larger cheeks, blush
+ * gradient, sparkle glints. Reserved for Chenyu's session per product
+ * call on 2026-04-24.
+ */
+function ChenyuRobot({ mood }: { mood: "idle" | "wave" | "peek" | "alert" }) {
+  return (
+    <svg
+      data-mood={mood}
+      viewBox="0 0 48 48"
+      width="36"
+      height="36"
+      xmlns="http://www.w3.org/2000/svg"
+      style={{ display: "block", overflow: "visible" }}
+      aria-hidden="true"
+    >
+      <defs>
+        <radialGradient id="chenyu-head" cx="50%" cy="45%" r="55%">
+          <stop offset="0%"  stopColor="#ffffff" />
+          <stop offset="100%" stopColor="#f1f3ff" />
+        </radialGradient>
+        <radialGradient id="chenyu-cheek" cx="50%" cy="50%" r="50%">
+          <stop offset="0%"  stopColor="#fda4af" stopOpacity="0.9" />
+          <stop offset="100%" stopColor="#fda4af" stopOpacity="0" />
+        </radialGradient>
+        <filter id="chenyu-shadow" x="-20%" y="-20%" width="140%" height="140%">
+          <feGaussianBlur in="SourceAlpha" stdDeviation="0.8" />
+          <feOffset dx="0" dy="0.8" result="off" />
+          <feComponentTransfer><feFuncA type="linear" slope="0.3" /></feComponentTransfer>
+          <feMerge><feMergeNode /><feMergeNode in="SourceGraphic" /></feMerge>
+        </filter>
+      </defs>
+
+      {/* sparkle glints (behind the body, float gently) */}
+      <g className="chenyu-sparkle">
+        <path d="M8 14 l1 2 l2 1 l-2 1 l-1 2 l-1 -2 l-2 -1 l2 -1 z" fill="#fde68a" opacity="0.9" />
+        <path d="M40 10 l0.7 1.5 l1.5 0.7 l-1.5 0.7 l-0.7 1.5 l-0.7 -1.5 l-1.5 -0.7 l1.5 -0.7 z" fill="#fbcfe8" opacity="0.9" />
+      </g>
+
+      <g className="robot-body" filter="url(#chenyu-shadow)">
+        {/* heart-tipped antenna */}
+        <line x1="24" y1="4" x2="24" y2="8.5" stroke="white" strokeWidth="1.8" strokeLinecap="round" />
+        <path d="M22.3 3 C22.3 1.7, 23.3 1, 24 2 C24.7 1, 25.7 1.7, 25.7 3 C25.7 4, 24 5, 24 5 C24 5, 22.3 4, 22.3 3 Z"
+              fill="#fda4af" />
+
+        {/* round head (circle, not rect) */}
+        <circle cx="24" cy="19" r="11" fill="url(#chenyu-head)" />
+
+        {/* face highlight */}
+        <ellipse cx="20" cy="15" rx="3.5" ry="1.2" fill="#ffffff" opacity="0.7" />
+
+        {/* eyes — round with catchlight */}
+        <g className="robot-eye left">
+          <circle cx="19.5" cy="20" r="2.6" fill="#1e1b4b" />
+          <circle cx="20.3" cy="19.2" r="0.8" fill="white" />
+        </g>
+        <g className="robot-eye right">
+          <circle cx="28.5" cy="20" r="2.6" fill="#1e1b4b" />
+          <circle cx="29.3" cy="19.2" r="0.8" fill="white" />
+        </g>
+
+        {/* cheeks — gradient blush */}
+        <circle cx="16" cy="23" r="2.3" fill="url(#chenyu-cheek)" />
+        <circle cx="32" cy="23" r="2.3" fill="url(#chenyu-cheek)" />
+
+        {/* smile */}
+        <path d="M21 24.5 Q24 27 27 24.5" stroke="#1e1b4b" strokeWidth="1.6" fill="none" strokeLinecap="round" />
+
+        {/* body — softer rounded rect, slightly narrower than head */}
+        <rect x="15.5" y="29.5" width="17" height="10.5" rx="4" ry="4" fill="url(#chenyu-head)" />
+
+        {/* chest heart light */}
+        <path d="M22.4 35 C22.4 33.5, 23.4 32.8, 24 34 C24.6 32.8, 25.6 33.5, 25.6 35 C25.6 36.2, 24 37.5, 24 37.5 C24 37.5, 22.4 36.2, 22.4 35 Z"
+              fill="#ec4899" className="robot-chest-light" />
+
+        {/* left arm */}
+        <rect x="10" y="30.5" width="4" height="8.5" rx="2" ry="2" fill="url(#chenyu-head)" />
+
+        {/* right arm — animated */}
+        <g className="robot-arm-right">
+          <rect x="34" y="30.5" width="4" height="8.5" rx="2" ry="2" fill="url(#chenyu-head)" />
+          <circle cx="36" cy="39.5" r="1.9" fill="url(#chenyu-head)" />
+        </g>
+      </g>
+    </svg>
+  );
+}
+
 function CuteRobot({ mood }: { mood: "idle" | "wave" | "peek" | "alert" }) {
   return (
     <svg
@@ -148,6 +237,24 @@ export function HelpBot() {
   const pathname = usePathname() || "";
   const [pos, setPos] = useState<Pos>({ x: 24, y: 24 });
   const [open, setOpen] = useState(false);
+  // Chenyu-only: cuter robot avatar. Everyone else sees the plain
+  // Sparkles icon (reverted from the previous session-wide robot
+  // rollout). We check once on mount via /api/auth/me.
+  const [isChenyu, setIsChenyu] = useState(false);
+  useEffect(() => {
+    if (pathname.startsWith("/login")) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch("/api/auth/me");
+        const d = await r.json().catch(() => ({}));
+        if (!cancelled && typeof d?.repName === "string" && d.repName.toLowerCase() === "chenyu") {
+          setIsChenyu(true);
+        }
+      } catch { /* non-fatal */ }
+    })();
+    return () => { cancelled = true; };
+  }, [pathname]);
   // Pending nudge — when the helper proactively wants to say something.
   // Rendered as a speech bubble next to the sparkles button until
   // the user opens the modal (which consumes it) or dismisses.
@@ -363,8 +470,8 @@ export function HelpBot() {
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         title="Sales Helper — drag me anywhere, click to ask"
-        data-robot-mood={robotMood}
-        className="help-bot-button"
+        data-robot-mood={isChenyu ? robotMood : undefined}
+        className={isChenyu ? "help-bot-button" : undefined}
         style={{
           position: "fixed",
           bottom: pos.y,
@@ -383,12 +490,20 @@ export function HelpBot() {
           justifyContent: "center",
           zIndex: 60,
           userSelect: "none",
-          // overflow: visible so `peek` can translate the robot up past
-          // the button's top edge without getting clipped.
-          overflow: "visible",
+          // Chenyu's robot "peek" translates up past the button's
+          // top edge; everyone else keeps clipping on to prevent
+          // weird overflow if any animation accidentally runs.
+          overflow: isChenyu ? "visible" : "hidden",
         }}
       >
-        <CuteRobot mood={robotMood} />
+        {/* Chenyu's session gets the cuter robot avatar; everyone
+            else sees the plain Sparkles icon. The CuteRobot /
+            ChenyuRobot components + robot-* keyframes in globals.css
+            stay in the repo so we can re-enable more broadly later
+            by flipping the gate. */}
+        {isChenyu
+          ? <ChenyuRobot mood={robotMood} />
+          : <Sparkles style={{ width: 22, height: 22 }} />}
       </button>
 
       {/* Pending nudge bubble — sits to the LEFT of the sparkles.
