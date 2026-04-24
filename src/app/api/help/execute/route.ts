@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { requireSession } from "@/lib/auth-helpers";
+import { llmChat } from "@/lib/llm-proxy";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -256,6 +257,210 @@ async function doReviewNext(): Promise<{ ok: boolean; detail: Record<string, unk
   return { ok: true, detail: { navigate: "/pipeline#mode=review" } };
 }
 
+/**
+ * build_rep_template — voice capture.
+ *
+ * Reads this rep's recent heavy-edit sends (draft_original vs final
+ * draft), asks an LLM to produce the four templated parts in the
+ * rep's own voice as JSON, and inserts an INACTIVE email_templates
+ * row (name="rep_<sanitized_rep_name>"). The row is inactive by
+ * default — admin reviews it in Settings → Voice Templates and
+ * flips `active=true` when it looks good. Until then, draft assembly
+ * keeps using the global template.
+ *
+ * Scoped to the caller's own repId — a sales rep can trigger this
+ * for themselves, admin can pass a {rep_id} param to build for anyone.
+ * No per-rep DAILY cap beyond the LLM cost concern; each template
+ * build is ~1 LLM call.
+ */
+async function doBuildRepTemplate(
+  session: { repId: number; role: string; repName?: string },
+  params: Record<string, unknown>,
+): Promise<{ ok: boolean; detail: Record<string, unknown> }> {
+  const isAdmin = session.role === "admin";
+  const targetRepId = typeof params.rep_id === "number" && isAdmin
+    ? params.rep_id
+    : session.repId;
+
+  // Look up the target rep's name (used both as the template key and
+  // inside the LLM prompt so it can ground on "who's writing this").
+  const { data: rep } = await supabase
+    .from("sales_reps")
+    .select("id, name, sender_name")
+    .eq("id", targetRepId)
+    .maybeSingle();
+  if (!rep) return { ok: false, detail: { error: "Rep not found" } };
+
+  // Grab the 10 most recent SENT leads with heavy edits. Draft-original
+  // is the AI's output; draft-html is what the rep actually sent. The
+  // diff between them is the rep's voice, in aggregate.
+  const HEAVY_EDIT_THRESHOLD = 200;
+  const { data: samples, error: samplesErr } = await supabase
+    .from("pipeline_leads")
+    .select("id, title, draft_original_html, draft_html, edit_reasons, edit_note, draft_edit_distance")
+    .eq("assigned_rep_id", targetRepId)
+    .eq("status", "sent")
+    .gt("draft_edit_distance", HEAVY_EDIT_THRESHOLD)
+    .not("draft_original_html", "is", null)
+    .not("draft_html", "is", null)
+    .order("sent_at", { ascending: false })
+    .limit(10);
+  if (samplesErr) {
+    // Common cause: migration 008 not applied → draft_original_html /
+    // draft_edit_distance columns don't exist yet. Surface a precise
+    // error so admin knows to run the migration, instead of a raw
+    // Postgres message that reads as a general system failure.
+    const msg = samplesErr.message || "";
+    const missingColumn = /column .* does not exist/i.test(msg) || /no such column/i.test(msg);
+    return {
+      ok: false,
+      detail: {
+        error: missingColumn
+          ? "Voice capture needs migration 008 (draft edit-tracking columns). Run migrations/008-drift-and-edit-tracking.sql in Supabase SQL Editor, then retry."
+          : msg,
+      },
+    };
+  }
+  if (!samples || samples.length < 3) {
+    return {
+      ok: false,
+      detail: {
+        error: `Not enough heavy-edit samples (${samples?.length ?? 0}/3 min). Need 3+ edits with draft_edit_distance > ${HEAVY_EDIT_THRESHOLD}.`,
+      },
+    };
+  }
+
+  // Load the global template — we're diffing against it, so the LLM
+  // sees "here's the baseline, here's the rep's edits, produce the
+  // rep-specific variants of each part."
+  const { data: globalTpl } = await supabase
+    .from("email_templates")
+    .select("*")
+    .eq("name", "global")
+    .maybeSingle();
+  if (!globalTpl) {
+    return { ok: false, detail: { error: "Global template missing — migration 011 not run?" } };
+  }
+
+  const stripHtml = (s: string) => s.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  const diffPairs = samples.map((s, i) => {
+    const ai = stripHtml((s.draft_original_html as string) ?? "").slice(0, 800);
+    const final = stripHtml((s.draft_html as string) ?? "").slice(0, 800);
+    const reasons = Array.isArray(s.edit_reasons) ? (s.edit_reasons as string[]).join(", ") : "";
+    const note = (s.edit_note as string | null) ?? "";
+    return `### Sample ${i + 1}${reasons ? ` (reasons: ${reasons})` : ""}${note ? ` (rep note: ${note})` : ""}
+AI wrote:
+${ai}
+
+Rep sent:
+${final}`;
+  }).join("\n\n");
+
+  const system = `You are analyzing a sales rep's editing style to produce a per-rep email template.
+
+You will see the baseline "global" email template (what the AI currently generates) and several examples of this rep's edits (AI draft → what the rep actually sent). Infer the rep's voice: what do they consistently change, delete, or rephrase? Produce a new version of each template part in the rep's voice.
+
+Rules:
+- Return ONLY valid JSON, no prose before or after.
+- Keep ALL placeholder tokens (like {{title}}, {{rep_name}}, {{closing_name}}, {{rep_wechat}}, {{first_name_or_you}}, {{school_text}}, {{base_info}}, {{directions_text}}, {{wechat_article_url}}, {{apply_url}}) exactly as they appear — don't rename them, don't add new ones.
+- The new template must still be a valid email: greeting → personalized intro → rep intro → school pitch → CTA/signoff.
+- Chinese for body, English OK for subject prefix.
+- Match the rep's voice, not a fictional "better" voice. If the rep is terse, be terse. If they're warm, be warm.
+- If you can't see a clear pattern (e.g. edits are random), say so via a high-level "notes" field and return the global template's fields unchanged.`;
+
+  const user = `## Baseline (global template)
+
+subject_format: ${globalTpl.subject_format}
+intro_prompt: (too long to include; same across reps)
+greeting_format: ${globalTpl.greeting_format}
+rep_intro_format: ${globalTpl.rep_intro_format}
+school_pitch_format: ${globalTpl.school_pitch_format}
+cta_signoff_format: ${globalTpl.cta_signoff_format}
+
+## Rep: ${rep.sender_name ?? rep.name}
+
+## Samples (AI → what rep sent)
+
+${diffPairs}
+
+## Your task
+
+Return JSON with these exact keys:
+{
+  "subject_format": "...",
+  "greeting_format": "...",
+  "rep_intro_format": "...",
+  "school_pitch_format": "...",
+  "cta_signoff_format": "...",
+  "notes": "1-2 sentence summary of what you changed and why"
+}
+
+The intro_prompt stays the same as global — we're not changing how the LLM writes the personalized sentence, just how the email around it is shaped.`;
+
+  let llmJson: Record<string, unknown>;
+  try {
+    const r = await llmChat({
+      model: "gemini-3-pro",
+      system,
+      user,
+      temperature: 0.3,
+      max_tokens: 2000,
+      timeoutMs: 60_000,
+    });
+    const text = r.text.trim().replace(/^```json\s*/, "").replace(/\s*```$/, "");
+    llmJson = JSON.parse(text);
+  } catch (err) {
+    return { ok: false, detail: { error: `LLM or JSON parse failed: ${err instanceof Error ? err.message : String(err)}` } };
+  }
+
+  // Validate the required fields exist. If any are missing we'd be
+  // inserting a half-formed template; safer to bail so admin sees the
+  // error.
+  const required = ["subject_format", "greeting_format", "rep_intro_format", "school_pitch_format", "cta_signoff_format"];
+  for (const k of required) {
+    if (typeof llmJson[k] !== "string" || (llmJson[k] as string).trim().length === 0) {
+      return { ok: false, detail: { error: `LLM output missing or empty field: ${k}`, raw: llmJson } };
+    }
+  }
+
+  // Name the template. Sanitize rep name → snake case for stability.
+  const nameKey = `rep_${(rep.name as string).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "")}`;
+
+  // Insert as INACTIVE. Admin flips active=true in Settings. If a row
+  // with this name already exists, we UPDATE (assumption: rerunning
+  // means "regenerate, the old one was stale") but keep it inactive.
+  const { data: inserted, error: insErr } = await supabase
+    .from("email_templates")
+    .upsert({
+      name: nameKey,
+      rep_id: targetRepId,
+      active: false,
+      subject_format: llmJson.subject_format as string,
+      intro_prompt: globalTpl.intro_prompt,  // reuse global
+      greeting_format: llmJson.greeting_format as string,
+      rep_intro_format: llmJson.rep_intro_format as string,
+      school_pitch_format: llmJson.school_pitch_format as string,
+      cta_signoff_format: llmJson.cta_signoff_format as string,
+      notes: `Auto-generated from ${samples.length} heavy-edit samples on ${new Date().toISOString().slice(0, 10)}. ${typeof llmJson.notes === "string" ? llmJson.notes : ""}`,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "name" })
+    .select()
+    .single();
+  if (insErr) return { ok: false, detail: { error: insErr.message } };
+
+  return {
+    ok: true,
+    detail: {
+      template_id: inserted.id,
+      template_name: nameKey,
+      samples_used: samples.length,
+      active: false,
+      notes: typeof llmJson.notes === "string" ? llmJson.notes : null,
+      next_step: "Admin reviews in Settings → Voice Templates and activates.",
+    },
+  };
+}
+
 export async function POST(req: NextRequest) {
   const session = await requireSession(req);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -304,6 +509,9 @@ export async function POST(req: NextRequest) {
         break;
       case "review_next":
         result = await doReviewNext();
+        break;
+      case "build_rep_template":
+        result = await doBuildRepTemplate(session, proposal);
         break;
       default:
         result = { ok: false, detail: { error: `Unknown action: ${proposal.action}` } };
