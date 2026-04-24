@@ -52,12 +52,20 @@ export async function GET(req: NextRequest) {
     return q;
   };
 
+  // NOTE: Click/bounce/complained counts MUST come from webhook_events,
+  // not emails.status. Resend's webhooks drive emails.status as a
+  // monotonic "latest event" field — a clicked-then-complained email
+  // ends up at status='complained' and would no longer count toward
+  // clickRate. Before this change, clickRate silently decayed as
+  // emails progressed past "clicked". webhook_events is the canonical
+  // log of every fire; we dedup by email_id so one email clicking
+  // twice counts once.
   const [
     { count: totalSent },
     { count: totalDelivered },
-    { count: totalClicked },
-    { count: totalBounced },
-    { count: totalComplained },
+    clickedIds,
+    bouncedIds,
+    complainedIds,
     { count: totalInbound },
     { data: recentEvents },
     { count: last7DaysSent },
@@ -65,9 +73,51 @@ export async function GET(req: NextRequest) {
   ] = await Promise.all([
     scopedEmails().neq("status", "queued"),
     scopedEmails().in("status", DELIVERED_STATUSES),
-    scopedEmails().eq("status", "clicked"),
-    scopedEmails().eq("status", "bounced"),
-    scopedEmails().eq("status", "complained"),
+    // Distinct email_ids from webhook_events for each event type.
+    // When the request is scoped to a rep, we filter via the joined
+    // emails row's rep_id (migration 014) with sender_email fallback.
+    (async () => {
+      let q = supabase
+        .from("webhook_events")
+        .select("email_id, email:emails!inner(rep_id, from)")
+        .eq("type", "email.clicked")
+        .not("email_id", "is", null);
+      if (repFromPattern) q = q.ilike("email.from", repFromPattern);
+      const { data } = await q;
+      const ids = new Set<string>();
+      for (const row of data ?? []) {
+        if (row.email_id) ids.add(row.email_id as string);
+      }
+      return ids;
+    })(),
+    (async () => {
+      let q = supabase
+        .from("webhook_events")
+        .select("email_id, email:emails!inner(rep_id, from)")
+        .eq("type", "email.bounced")
+        .not("email_id", "is", null);
+      if (repFromPattern) q = q.ilike("email.from", repFromPattern);
+      const { data } = await q;
+      const ids = new Set<string>();
+      for (const row of data ?? []) {
+        if (row.email_id) ids.add(row.email_id as string);
+      }
+      return ids;
+    })(),
+    (async () => {
+      let q = supabase
+        .from("webhook_events")
+        .select("email_id, email:emails!inner(rep_id, from)")
+        .eq("type", "email.complained")
+        .not("email_id", "is", null);
+      if (repFromPattern) q = q.ilike("email.from", repFromPattern);
+      const { data } = await q;
+      const ids = new Set<string>();
+      for (const row of data ?? []) {
+        if (row.email_id) ids.add(row.email_id as string);
+      }
+      return ids;
+    })(),
     // Inbound scope: when this rep has zero threads, we skip the query
     // entirely and use {count:0} as a literal. Otherwise pass `.in()`.
     (threadIdScope !== null && threadIdScope.length === 0)
@@ -90,7 +140,7 @@ export async function GET(req: NextRequest) {
     (() => {
       let q = supabase
         .from("emails")
-        .select("created_at, status")
+        .select("id, created_at, status")
         .neq("status", "queued")
         .gte("created_at", thirtyDaysAgo);
       if (repFromPattern) q = q.ilike("from", repFromPattern);
@@ -108,20 +158,26 @@ export async function GET(req: NextRequest) {
     dailyMap[key] = { sent: 0, delivered: 0, clicked: 0, bounced: 0 };
   }
 
+  // Daily chart: sent + delivered come from emails.status (monotonic,
+  // fine). clicked + bounced come from the webhook-event id sets we
+  // already built, indexed back to the email's created_at so the
+  // clicks bucket into the day the ORIGINAL send landed on. If an
+  // email goes "clicked→complained" between buckets, its click still
+  // shows up in the right day.
   for (const email of dailyEmails || []) {
     const key = new Date(email.created_at).toISOString().split("T")[0];
-    if (dailyMap[key]) {
-      dailyMap[key].sent++;
-      if (DELIVERED_STATUSES.includes(email.status)) dailyMap[key].delivered++;
-      if (email.status === "clicked") dailyMap[key].clicked++;
-      if (email.status === "bounced") dailyMap[key].bounced++;
-    }
+    if (!dailyMap[key]) continue;
+    dailyMap[key].sent++;
+    if (DELIVERED_STATUSES.includes(email.status)) dailyMap[key].delivered++;
+    if (email.id && clickedIds.has(email.id as string)) dailyMap[key].clicked++;
+    if (email.id && bouncedIds.has(email.id as string)) dailyMap[key].bounced++;
   }
 
   const ts = totalSent || 0;
   const td = totalDelivered || 0;
-  const tc = totalClicked || 0;
-  const tb = totalBounced || 0;
+  const tc = clickedIds.size;
+  const tb = bouncedIds.size;
+  const tComp = complainedIds.size;
 
   const deliveryRate = ts > 0 ? ((td / ts) * 100).toFixed(1) : "0";
   const clickRate = td > 0 ? ((tc / td) * 100).toFixed(1) : "0";
@@ -192,7 +248,7 @@ export async function GET(req: NextRequest) {
       totalDelivered: td,
       totalClicked: tc,
       totalBounced: tb,
-      totalComplained: totalComplained || 0,
+      totalComplained: tComp,
       totalInbound: totalInbound || 0,
       last7DaysSent: last7DaysSent || 0,
       deliveryRate,
