@@ -46,20 +46,36 @@ export async function GET(req: NextRequest) {
   const sent = (sentOnly ?? 0) + (replied ?? 0);
 
   // WeChat conversions — unique leads this rep has marked as added on
-  // WeChat. Uses brief_lookups (the conversion event table) joined to
-  // pipeline_leads to keep the count scoped to THIS rep's leads.
-  // Counting brief_lookups rows directly would double-count on repeat
-  // clicks; DISTINCT lead_id dedups.
+  // WeChat. Two-step fetch (avoid relying on a postgrest-registered
+  // FK between brief_lookups and pipeline_leads, which migration 016
+  // adds but may not be live in all environments):
+  //   1. Get this rep's lead ids.
+  //   2. Count DISTINCT brief_lookups.lead_id where added_wechat=true
+  //      AND lead_id is in that set.
+  // If the rep has zero leads the result is 0 without hitting the
+  // second query.
   let wechat = 0;
   {
-    const { data: convRows } = await supabase
-      .from("brief_lookups")
-      .select("lead_id, pipeline_leads!inner(assigned_rep_id)")
-      .eq("added_wechat", true)
-      .eq("pipeline_leads.assigned_rep_id", repId)
-      .not("lead_id", "is", null);
-    if (Array.isArray(convRows)) {
-      wechat = new Set(convRows.map((r) => r.lead_id as string)).size;
+    const { data: myLeadIds } = await supabase
+      .from("pipeline_leads")
+      .select("id")
+      .eq("assigned_rep_id", repId);
+    const idSet = new Set((myLeadIds ?? []).map((r) => r.id as string));
+    if (idSet.size > 0) {
+      const { data: convRows } = await supabase
+        .from("brief_lookups")
+        .select("lead_id")
+        .eq("added_wechat", true)
+        .not("lead_id", "is", null)
+        .in("lead_id", Array.from(idSet));
+      if (Array.isArray(convRows)) {
+        const distinct = new Set<string>();
+        for (const r of convRows) {
+          const id = r.lead_id as string | null;
+          if (id) distinct.add(id);
+        }
+        wechat = distinct.size;
+      }
     }
   }
 
