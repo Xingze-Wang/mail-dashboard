@@ -1,5 +1,6 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
+import { requireAdmin } from "@/lib/auth-helpers";
 
 interface RepSeed {
   name: string;
@@ -33,8 +34,12 @@ const SEEDS: RepSeed[] = [
  * One-shot migration: ensure Chenyu and Ethan are present in `sales_reps`.
  * Idempotent — looks up by wechat_id (or name as fallback) and skips if
  * the rep is already there. Safe to re-run.
+ *
+ * ADMIN ONLY. Previously unauth — any caller could create rep rows.
  */
-export async function POST() {
+export async function POST(req: NextRequest) {
+  const gate = await requireAdmin(req);
+  if ("response" in gate) return gate.response;
   const results: Array<{
     name: string;
     status: "created" | "exists" | "failed";

@@ -1,8 +1,12 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { requireAdmin } from "@/lib/auth-helpers";
 
-// Direct SQL execution using Supabase's pg_net extension or service role
-export async function POST() {
+// Direct SQL execution using Supabase's pg_net extension or service role.
+// ADMIN ONLY — this runs raw DDL. Previously unauth.
+export async function POST(req: NextRequest) {
+  const gate = await requireAdmin(req);
+  if ("response" in gate) return gate.response;
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const serviceKey = process.env.SUPABASE_SERVICE_KEY!;
 

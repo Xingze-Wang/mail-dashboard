@@ -1,5 +1,6 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
+import { requireAdmin } from "@/lib/auth-helpers";
 
 /**
  * POST /api/migrate/scorer
@@ -9,8 +10,12 @@ import { supabase } from "@/lib/db";
  * Actually, Supabase doesn't auto-create tables. We need _exec_sql or
  * direct SQL. Let's try creating via the REST API by checking if the
  * table exists first.
+ *
+ * ADMIN ONLY. Previously unauth.
  */
-export async function POST() {
+export async function POST(req: NextRequest) {
+  const gate = await requireAdmin(req);
+  if ("response" in gate) return gate.response;
   // Try to query the table — if it exists, we're done
   const { error: checkError } = await supabase
     .from("scorer_runs")

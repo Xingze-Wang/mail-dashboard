@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { requireAdmin } from "@/lib/auth-helpers";
 
 async function execSQL(sql: string): Promise<{ ok: boolean; error?: string }> {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -46,7 +47,9 @@ async function execSQL(sql: string): Promise<{ ok: boolean; error?: string }> {
   return { ok: false, error: `HTTP ${sqlRes.status}: ${await sqlRes.text()}` };
 }
 
-export async function POST() {
+export async function POST(req: NextRequest) {
+  const gate = await requireAdmin(req);
+  if ("response" in gate) return gate.response;
   // Instead of trying to run DDL through the API (which often fails),
   // return the SQL statements the user needs to run in the Supabase SQL editor
   const sql = `

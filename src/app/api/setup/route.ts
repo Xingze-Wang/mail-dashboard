@@ -1,9 +1,15 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
+import { requireAdmin } from "@/lib/auth-helpers";
 
-// One-time setup: creates tables via individual SQL statements
-// Hit POST /api/setup once after first deploy
-export async function POST() {
+// One-time setup: creates tables via individual SQL statements.
+// ADMIN ONLY — this runs CREATE TABLE / ALTER TABLE DDL via
+// _exec_sql, which trivially bricks the DB if misused. Previously
+// unauth — anyone who hit POST /api/setup could re-initialize
+// schema. Locking to admin session.
+export async function POST(req: NextRequest) {
+  const gate = await requireAdmin(req);
+  if ("response" in gate) return gate.response;
   const statements = [
     `create table if not exists emails (
       id uuid primary key default gen_random_uuid(),
@@ -193,7 +199,9 @@ export async function POST() {
   return NextResponse.json({ results });
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const gate = await requireAdmin(req);
+  if ("response" in gate) return gate.response;
   return NextResponse.json({
     message: "POST to this endpoint to run database setup. First create the _exec_sql function in Supabase SQL Editor.",
     instructions: [

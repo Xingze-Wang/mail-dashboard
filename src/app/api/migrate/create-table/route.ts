@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { requireAdmin } from "@/lib/auth-helpers";
 
 /**
  * POST /api/migrate/create-table
@@ -7,8 +8,15 @@ import { createClient } from "@supabase/supabase-js";
  *
  * Uses the Supabase Management API to execute raw SQL.
  * Falls back to creating via insert if management API is unavailable.
+ *
+ * ADMIN ONLY — takes arbitrary SQL from the request body and runs it
+ * against the production DB via the Management API. Previously unauth;
+ * anyone who found the URL could drop tables, escalate privileges, or
+ * exfiltrate data. Gate first, then parse body.
  */
 export async function POST(req: NextRequest) {
+  const gate = await requireAdmin(req);
+  if ("response" in gate) return gate.response;
   const { sql } = await req.json();
 
   if (!sql) {

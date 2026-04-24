@@ -28,12 +28,13 @@ export async function GET(req: NextRequest) {
   if (!secret) {
     return NextResponse.json({ error: "CRON_SECRET not configured" }, { status: 503 });
   }
+  // Bearer-token only. The old implementation also accepted a referer-
+  // matches-host fallback as "internal traffic" — but the referer is
+  // client-controlled, so anyone could forge it and trigger cron work
+  // (sync from Resend + scan arxiv + generate drafts = expensive +
+  // writes to the DB). Auth by shared secret, no fallbacks.
   const isVercelCron = req.headers.get("authorization") === `Bearer ${secret}`;
-  const referer = req.headers.get("referer") || "";
-  const host = req.headers.get("host") || "__none__";
-  const isInternal = referer.includes(host);
-
-  if (!isVercelCron && !isInternal) {
+  if (!isVercelCron) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

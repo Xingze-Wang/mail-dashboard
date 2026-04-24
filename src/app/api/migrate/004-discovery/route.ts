@@ -1,5 +1,6 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
+import { requireAdmin } from "@/lib/auth-helpers";
 
 /**
  * POST /api/migrate/004-discovery
@@ -9,8 +10,12 @@ import { supabase } from "@/lib/db";
  * DDL through the API (Supabase service role can't run DDL via REST).
  * Instead we probe the tables and, if missing, return the SQL for the
  * user to paste into the Supabase SQL Editor.
+ *
+ * ADMIN ONLY. Previously unauth.
  */
-export async function POST() {
+export async function POST(req: NextRequest) {
+  const gate = await requireAdmin(req);
+  if ("response" in gate) return gate.response;
   const checks: Array<{ table: string; ok: boolean; error?: string }> = [];
 
   for (const table of ["discovery_leads", "scan_state"] as const) {

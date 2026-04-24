@@ -7,7 +7,11 @@ import {
 } from "@/lib/assignment";
 import { requireAdmin } from "@/lib/auth-helpers";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  // Admin-only — leaks which schools/emails route to which rep, i.e.
+  // the business routing rules. Previously unauthed.
+  const gate = await requireAdmin(req);
+  if ("response" in gate) return gate.response;
   const config = await getAssignmentConfig();
   return NextResponse.json(config);
 }
