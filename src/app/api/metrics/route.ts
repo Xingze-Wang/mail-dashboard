@@ -269,15 +269,19 @@ export async function GET(req: NextRequest) {
     readyQ,
     sentQ,
     totalQ,
-    // brief_lookups: admin sees global; non-priv gets 0 for now
-    // (accurate per-rep attribution would need to cross-reference every
-    // wechat query against this rep's delivered recipients — expensive).
+    // brief_lookups:
+    //   - Admin sees the GLOBAL total (every conversion ever marked).
+    //   - Non-admin (sales) sees only conversions THEY marked
+    //     (brief_lookups.marked_by_rep_id = their repId), matching
+    //     /api/metrics/me and the helper's get_my_stats. Historical
+    //     rows with marked_by_rep_id=null stay in the admin total but
+    //     don't count toward any individual rep.
     isPrivileged
       ? supabase.from("brief_lookups").select("*", { count: "exact", head: true }).eq("added_wechat", true)
-      : Promise.resolve({ count: 0 }),
+      : supabase.from("brief_lookups").select("*", { count: "exact", head: true }).eq("added_wechat", true).eq("marked_by_rep_id", session.repId),
     isPrivileged
       ? supabase.from("brief_lookups").select("query, arxiv_id, created_at").eq("added_wechat", true).order("created_at", { ascending: false }).limit(10)
-      : Promise.resolve({ data: [] as Array<{ query: string; arxiv_id: string; created_at: string }> }),
+      : supabase.from("brief_lookups").select("query, arxiv_id, created_at").eq("added_wechat", true).eq("marked_by_rep_id", session.repId).order("created_at", { ascending: false }).limit(10),
   ]);
 
   return NextResponse.json({

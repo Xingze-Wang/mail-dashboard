@@ -45,37 +45,35 @@ export async function GET(req: NextRequest) {
   ]);
   const sent = (sentOnly ?? 0) + (replied ?? 0);
 
-  // WeChat conversions — unique leads this rep has marked as added on
-  // WeChat. Two-step fetch (avoid relying on a postgrest-registered
-  // FK between brief_lookups and pipeline_leads, which migration 016
-  // adds but may not be live in all environments):
-  //   1. Get this rep's lead ids.
-  //   2. Count DISTINCT brief_lookups.lead_id where added_wechat=true
-  //      AND lead_id is in that set.
-  // If the rep has zero leads the result is 0 without hitting the
-  // second query.
+  // WeChat conversions — attributed to WHOEVER MARKED the row (the
+  // rep who clicked "Added on WeChat"), not to the lead's owner.
+  // Previously this scoped by the lead's assigned_rep_id, which
+  // inflated Leo's count with every historical conversion marked
+  // against a Leo-owned lead — even when Chenyu was actually the
+  // rep who took the WeChat contact. marked_by_rep_id (migration 012)
+  // is the canonical field.
+  //
+  // Pre-migration-012 rows have marked_by_rep_id=null — their
+  // attribution is genuinely unknown, so they're excluded from every
+  // per-rep count. Admin sees them separately in a "legacy
+  // unattributed" bucket (not surfaced yet; rows still exist in DB).
+  //
+  // DISTINCT by lead_id so a repeat click on the same lead counts once.
   let wechat = 0;
   {
-    const { data: myLeadIds } = await supabase
-      .from("pipeline_leads")
-      .select("id")
-      .eq("assigned_rep_id", repId);
-    const idSet = new Set((myLeadIds ?? []).map((r) => r.id as string));
-    if (idSet.size > 0) {
-      const { data: convRows } = await supabase
-        .from("brief_lookups")
-        .select("lead_id")
-        .eq("added_wechat", true)
-        .not("lead_id", "is", null)
-        .in("lead_id", Array.from(idSet));
-      if (Array.isArray(convRows)) {
-        const distinct = new Set<string>();
-        for (const r of convRows) {
-          const id = r.lead_id as string | null;
-          if (id) distinct.add(id);
-        }
-        wechat = distinct.size;
+    const { data: convRows } = await supabase
+      .from("brief_lookups")
+      .select("lead_id")
+      .eq("added_wechat", true)
+      .eq("marked_by_rep_id", repId)
+      .not("lead_id", "is", null);
+    if (Array.isArray(convRows)) {
+      const distinct = new Set<string>();
+      for (const r of convRows) {
+        const id = r.lead_id as string | null;
+        if (id) distinct.add(id);
       }
+      wechat = distinct.size;
     }
   }
 

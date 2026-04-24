@@ -84,27 +84,44 @@ async function getLead(session: Session, args: Record<string, unknown>) {
 
 async function getMyStats(session: Session) {
   const repId = session.repId;
+  // Kept in sync with /api/metrics/me so the helper's answers match
+  // what the sales rep sees on the overview page. Two derivations
+  // matter:
+  //   - `sent` is status='sent' PLUS status='replied' (reply is a
+  //     later phase of the same send; splitting them made reps see
+  //     their sent count drop when replies came in).
+  //   - `wechat` is attributed via brief_lookups.marked_by_rep_id —
+  //     the rep who clicked "Added on WeChat", not the lead's owner.
+  //     Pre-migration-012 rows (marked_by_rep_id=null) are excluded
+  //     because their attribution is genuinely unknown.
   const [
     { count: assigned },
     { count: ready },
-    { count: sent },
+    { count: sentOnly },
     { count: replied },
-    { count: wechat },
+    { data: wechatRows },
   ] = await Promise.all([
     supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId),
     supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).eq("status", "ready"),
     supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).eq("status", "sent"),
     supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).eq("status", "replied"),
-    supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).eq("status", "wechat_added"),
+    supabase.from("brief_lookups").select("lead_id").eq("added_wechat", true).eq("marked_by_rep_id", repId).not("lead_id", "is", null),
   ]);
+  const sent = (sentOnly ?? 0) + (replied ?? 0);
+  const wechatDistinct = new Set<string>();
+  for (const r of wechatRows ?? []) {
+    const id = (r as { lead_id: string | null }).lead_id;
+    if (id) wechatDistinct.add(id);
+  }
+  const wechat = wechatDistinct.size;
   const overrideUsed = (await countOverridesTodayByRep(repId)) ?? 0;
   return {
     stats: {
       assigned: assigned ?? 0,
       ready: ready ?? 0,
-      sent: sent ?? 0,
+      sent,
       replied: replied ?? 0,
-      wechat: wechat ?? 0,
+      wechat,
       override_used_today: overrideUsed,
       override_cap: DAILY_OVERRIDE_CAP,
       override_remaining: Math.max(0, DAILY_OVERRIDE_CAP - overrideUsed),
