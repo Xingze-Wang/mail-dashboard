@@ -30,6 +30,7 @@ export const ACTION_TOOL_NAMES = new Set([
   "bulk_flag",
   "review_next",
   "build_rep_template",
+  "open_split_view",
 ]);
 
 export const READ_TOOL_NAMES = new Set([
@@ -85,6 +86,7 @@ export const TOOLS_PROMPT = `## 工具系统
 - redraft_lead — 重新生成草稿 (用 LLM 把 AI 原草稿改写). 参数: { lead_id: string, direction?: string (例: "更直接", "更短", "提到算力具体额度") }.
 - review_next — 打开 Review 模式下一条 ready lead (前端跳转, 不改数据). 参数: {}.
 - build_rep_template — 根据 rep 最近改过的草稿 (draft_original_html vs draft_html 的 diff), 用 LLM 生成一份属于这个 rep 的邮件模板 (inactive, 等 admin 审核). 参数: { rep_id?: number (admin 可指定, sales 省略=自己) }. **什么时候用**: 当 rep 说 "试试看 / 生成我的模板 / 建一个我的 template" 或类似意图, 特别是 chime-in 里 helper 主动问过 "要不要生成你自己的 intro 模板" 之后. 不需要参数, 因为这是根据 sent 历史自动分析的.
+- open_split_view — 打开一个全屏左右对比视图: 左边是 paper PDF, 右边是可编辑的 draft. 参数: { lead_id: string (UUID, 必填) }. **什么时候用**: 用户说 "同时看 paper 和邮件 / 对比一下 / split view / 开一个对照视图" 或类似意图. 可以直接改 subject/body 再 save, save 后回到原来的页面. 不发邮件, 只是编辑草稿.
 
 ## 工具使用规则 (很重要)
 

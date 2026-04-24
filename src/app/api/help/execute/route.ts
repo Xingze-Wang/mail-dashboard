@@ -264,6 +264,56 @@ async function doReviewNext(): Promise<{ ok: boolean; detail: Record<string, unk
 }
 
 /**
+ * open_split_view — frontend-conjured overlay with the paper PDF on
+ * the left and an editable draft on the right. Server-side we do two
+ * things: (a) verify the lead exists + the caller owns it, (b) return
+ * the bits the UI needs to render (PDF URL, title, authors, draft
+ * subject/body). The UI handles rendering + Save (PATCHes via existing
+ * /api/pipeline/[id]) + close.
+ *
+ * No DB mutation in THIS action — split-view is a viewer/editor, not
+ * a send path. Saving is a separate PATCH.
+ */
+async function doOpenSplitView(
+  session: { repId: number; role: string },
+  params: Record<string, unknown>,
+): Promise<{ ok: boolean; detail: Record<string, unknown> }> {
+  const leadId = typeof params.lead_id === "string" ? params.lead_id : null;
+  if (!leadId) return { ok: false, detail: { error: "lead_id required" } };
+
+  const { data: lead, error } = await supabase
+    .from("pipeline_leads")
+    .select("id, title, authors, pdf_url, abstract, author_name, author_email, assigned_rep_id, draft_subject, draft_html, status")
+    .eq("id", leadId)
+    .maybeSingle();
+  if (error || !lead) return { ok: false, detail: { error: "Lead not found" } };
+
+  // Scope: non-admin must own the lead. 404-style reply so the helper
+  // doesn't reveal leads outside the caller's scope.
+  if (session.role !== "admin" && lead.assigned_rep_id !== session.repId) {
+    return { ok: false, detail: { error: "Lead not found" } };
+  }
+
+  return {
+    ok: true,
+    detail: {
+      openSplitView: {
+        leadId: lead.id,
+        title: lead.title,
+        authors: lead.authors,
+        pdfUrl: lead.pdf_url,
+        abstract: lead.abstract,
+        authorName: lead.author_name,
+        authorEmail: lead.author_email,
+        draftSubject: lead.draft_subject,
+        draftHtml: lead.draft_html,
+        status: lead.status,
+      },
+    },
+  };
+}
+
+/**
  * build_rep_template — voice capture.
  *
  * Reads this rep's recent heavy-edit sends (draft_original vs final
@@ -518,6 +568,9 @@ export async function POST(req: NextRequest) {
         break;
       case "build_rep_template":
         result = await doBuildRepTemplate(session, proposal);
+        break;
+      case "open_split_view":
+        result = await doOpenSplitView(session, proposal);
         break;
       default:
         result = { ok: false, detail: { error: `Unknown action: ${proposal.action}` } };

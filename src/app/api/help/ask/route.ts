@@ -85,7 +85,7 @@ function extractToolProposal(text: string): { cleaned: string; proposal: ToolPro
       // of UUID) is a common LLM error; reject it up front so the user
       // sees "helper tried to act on 'Yanye' — need to look up first"
       // rather than a downstream 404.
-      if ((parsed.action === "skip_lead" || parsed.action === "flag_lead" || parsed.action === "redraft_lead")) {
+      if ((parsed.action === "skip_lead" || parsed.action === "flag_lead" || parsed.action === "redraft_lead" || parsed.action === "open_split_view")) {
         if (typeof parsed.lead_id !== "string" || !UUID_RE.test(parsed.lead_id)) {
           proposalError = `invalid lead_id (not a UUID): ${parsed.lead_id ?? "null"}. Helper needs to look up first.`;
         }

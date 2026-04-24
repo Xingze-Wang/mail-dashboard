@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { Sparkles, X, Send, Loader2, Plus, Clock, Check } from "lucide-react";
+import { AgentSplitView } from "./agent-split-view";
 
 /**
  * Cute robot avatar — pure SVG, no deps. Three moods drive CSS-only
@@ -160,6 +161,33 @@ export function HelpBot() {
   // on read so it fires once — if the cron re-detects the signal
   // tomorrow, it comes back.
   const [pendingChimeIn, setPendingChimeIn] = useState<{ type: string; message: string } | null>(null);
+  // Split-view data, populated when the helper's open_split_view action
+  // is confirmed. Outlives the chat modal so the rep can close the
+  // chat without losing the viewer. Cleared on the overlay's close.
+  // Listens for a 'helper:open-split-view' CustomEvent so the inner
+  // HelpModal can dispatch without us passing callbacks through React.
+  interface SplitViewData {
+    leadId: string;
+    title: string;
+    authors: string | null;
+    pdfUrl: string | null;
+    abstract: string | null;
+    authorName: string | null;
+    authorEmail: string | null;
+    draftSubject: string | null;
+    draftHtml: string | null;
+    status: string;
+  }
+  const [splitView, setSplitView] = useState<SplitViewData | null>(null);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onOpen = (e: Event) => {
+      const d = (e as CustomEvent).detail as SplitViewData | undefined;
+      if (d && typeof d.leadId === "string") setSplitView(d);
+    };
+    window.addEventListener("helper:open-split-view", onOpen);
+    return () => window.removeEventListener("helper:open-split-view", onOpen);
+  }, []);
   const nudgeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastNudgedLeadRef = useRef<string | null>(null);
   const dragRef = useRef<{ startX: number; startY: number; origPos: Pos; moved: boolean } | null>(null);
@@ -463,6 +491,13 @@ export function HelpBot() {
           }}
         />
       )}
+
+      {/* Agent-conjured split-view. Mounts above everything; closes
+          on Esc or the X button. Independent of the chat modal so the
+          rep can dismiss the chat and keep reading/editing. */}
+      {splitView && (
+        <AgentSplitView data={splitView} onClose={() => setSplitView(null)} />
+      )}
     </>
   );
 }
@@ -649,6 +684,14 @@ function HelpModal({
         const nav = (d.detail as { navigate?: string } | undefined)?.navigate;
         if (nav && typeof window !== "undefined") {
           setTimeout(() => { window.location.href = nav; }, 400);
+        }
+      }
+      // open_split_view — server returned lead data; the outer
+      // HelpBot listens for this event and mounts the overlay.
+      if (r.ok && proposal.action === "open_split_view") {
+        const payload = (d.detail as { openSplitView?: unknown } | undefined)?.openSplitView;
+        if (payload && typeof window !== "undefined") {
+          window.dispatchEvent(new CustomEvent("helper:open-split-view", { detail: payload }));
         }
       }
     } catch (e) {
