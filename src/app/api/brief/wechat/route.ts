@@ -30,6 +30,13 @@ export async function POST(req: NextRequest) {
       added_wechat: true,
       wechat_at: new Date().toISOString(),
       notes: notes || null,
+      // Attribute the conversion to the session's rep. Brief search is
+      // deliberately cross-rep (any rep can look up anyone for WeChat
+      // follow-up), but admin still needs to audit who marked which
+      // lead as "added on WeChat". Without rep_id these were orphan
+      // rows.
+      marked_by_rep_id: session.repId,
+      marked_by_email: session.email,
     })
     .select()
     .single();
