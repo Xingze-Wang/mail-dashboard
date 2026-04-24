@@ -2,14 +2,19 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { requireSession } from "@/lib/auth-helpers";
 import { getRep } from "@/lib/assignment";
+import { beijingDaysAgoStartUtc } from "@/lib/override-quota";
 
 // Status progression: clicked implies delivered, delivered implies sent
 const DELIVERED_STATUSES = ["delivered", "clicked", "complained"];
 
 export async function GET(req: NextRequest) {
-  const now = new Date();
-  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
-  const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  // Anchor windows on Beijing day boundary so the 30-day chart + 7-day
+  // week filter line up with override_quota + /api/help/opening. A UTC
+  // anchor made the chart's daily buckets flip at Beijing 08:00 — a
+  // send at 23:30 Beijing showed up in "yesterday" on the chart but
+  // "today" in the override banner. Same boundary everywhere now.
+  const thirtyDaysAgo = beijingDaysAgoStartUtc(30).toISOString();
+  const sevenDaysAgo = beijingDaysAgoStartUtc(7).toISOString();
 
   // Auth required. Fail-closed: no session → 401. A non-privileged user
   // with no resolvable rep row gets empty results (not the global
@@ -93,11 +98,13 @@ export async function GET(req: NextRequest) {
     })(),
   ]);
 
-  // Aggregate daily stats
+  // Aggregate daily stats — 30 bins anchored on Beijing days, so the
+  // chart's day labels line up with "sent today" everywhere else.
   const dailyMap: Record<string, { sent: number; delivered: number; clicked: number; bounced: number }> = {};
+  const todayBeijing = new Date(Date.now() + 8 * 3600 * 1000);
   for (let i = 29; i >= 0; i--) {
-    const date = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
-    const key = date.toISOString().split("T")[0];
+    const d = new Date(todayBeijing.getTime() - i * 86_400_000);
+    const key = d.toISOString().split("T")[0];
     dailyMap[key] = { sent: 0, delivered: 0, clicked: 0, bounced: 0 };
   }
 

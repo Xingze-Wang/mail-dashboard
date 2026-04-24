@@ -32,6 +32,15 @@ export function beijingDayStartUtc(now: Date = new Date()): Date {
   return new Date(Date.UTC(y, m, d, 0, 0, 0) - 8 * 3600 * 1000);
 }
 
+/** Beijing day boundary, N days ago. Use for "last 7 days" / "30 days"
+ *  windows so every metric aligns to the same boundary the override
+ *  quota uses — a send at 23:30 Beijing either fully counts or doesn't
+ *  count, never straddles two daily buckets. */
+export function beijingDaysAgoStartUtc(days: number, now: Date = new Date()): Date {
+  const today = beijingDayStartUtc(now);
+  return new Date(today.getTime() - days * 86_400_000);
+}
+
 /** Count 7-day overrides this rep has used today (Beijing).
  *  Returns null if repId is missing (caller should treat as "no cap to
  *  enforce" — we only cap authenticated rep users). */

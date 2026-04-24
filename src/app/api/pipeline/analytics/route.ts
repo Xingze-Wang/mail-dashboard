@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { requireSession } from "@/lib/auth-helpers";
+import { beijingDaysAgoStartUtc } from "@/lib/override-quota";
 
 // Analytics must always reflect the live DB — "This week" is time-sensitive
 // and drifts by a full day if cached. Force a fresh query on every hit.
@@ -114,7 +115,10 @@ export async function GET(req: NextRequest) {
     ? Math.round((wechatCount / totalRecipients) * 1000) / 10
     : 0;
 
-  const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  // Anchor on Beijing day boundary so "this week" aligns with the
+  // override quota + helper signals. UTC-anchored drifted by up to 8h
+  // and numbers wiggled at midnight local.
+  const oneWeekAgo = beijingDaysAgoStartUtc(7).toISOString();
   const leadsThisWeek = leads.filter((l) => l.created_at >= oneWeekAgo).length;
 
   // ── Daily breakdown (last 30 days) ──

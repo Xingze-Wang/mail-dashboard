@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
+import { beijingDaysAgoStartUtc } from "@/lib/override-quota";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -46,7 +47,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const cutoff = new Date(Date.now() - LOOKBACK_DAYS * 86_400_000).toISOString();
+  // Beijing-day-aligned cutoff so the "last 7 days" window matches
+  // override_quota / metrics / analytics — a rep who edited 5 drafts
+  // yesterday night Beijing time trips the signal at the right moment
+  // regardless of when the cron fires.
+  const cutoff = beijingDaysAgoStartUtc(LOOKBACK_DAYS).toISOString();
 
   const { data: reps, error: repsErr } = await supabase
     .from("sales_reps")

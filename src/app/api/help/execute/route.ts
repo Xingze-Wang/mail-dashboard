@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { requireSession } from "@/lib/auth-helpers";
 import { llmChat } from "@/lib/llm-proxy";
+import { beijingDaysAgoStartUtc } from "@/lib/override-quota";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -69,7 +70,12 @@ async function doBatchSend(
   //   3. If the user explicitly said "override everything" (the LLM
   //      sets override:true on the proposal), skip step 1 and just
   //      pull the top N irrespective of age, all as overrides.
-  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  //
+  // Anchor on the Beijing-day boundary (same as override-quota) so a
+  // lead created at 23:30 Beijing either lives in today's window or
+  // yesterday's, never straddles depending on server TZ. Plain
+  // `Date.now() - 7d` would drift against the quota check by up to 8h.
+  const sevenDaysAgo = beijingDaysAgoStartUtc(7).toISOString();
 
   const baseQ = () => {
     let q = supabase

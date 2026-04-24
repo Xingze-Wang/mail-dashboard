@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { requireSession } from "@/lib/auth-helpers";
+import { beijingDaysAgoStartUtc } from "@/lib/override-quota";
 
 /**
  * GET /api/pipeline/ready-count
@@ -38,7 +39,10 @@ export async function GET(req: NextRequest) {
     if (!isPrivileged) q = q.eq("assigned_rep_id", session.repId);
     return q;
   };
-  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  // Beijing-anchored so "ripening" matches the age-gate the send
+  // routes actually enforce (policy.isAgeGated uses a 7d window; we
+  // need the count UI to agree with what sales see blocked at send).
+  const sevenDaysAgo = beijingDaysAgoStartUtc(7).toISOString();
 
   const [{ count: total }, { count: ripening }] = await Promise.all([
     baseQ(),
