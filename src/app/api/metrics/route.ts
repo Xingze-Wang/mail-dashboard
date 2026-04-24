@@ -52,20 +52,30 @@ export async function GET(req: NextRequest) {
     return q;
   };
 
-  // NOTE: Click/bounce/complained counts MUST come from webhook_events,
-  // not emails.status. Resend's webhooks drive emails.status as a
-  // monotonic "latest event" field — a clicked-then-complained email
-  // ends up at status='complained' and would no longer count toward
-  // clickRate. Before this change, clickRate silently decayed as
-  // emails progressed past "clicked". webhook_events is the canonical
-  // log of every fire; we dedup by email_id so one email clicking
-  // twice counts once.
+  // Click / bounce / complained counts: union TWO sources, dedup by
+  // email id.
+  //   (a) emails.status in the progression set. Status is monotonic
+  //       "latest event wins" — an email that clicked then complained
+  //       ends up at 'complained', but that still tells us it was
+  //       clicked at some point.
+  //   (b) webhook_events with the matching type. Authoritative when
+  //       present, but can be empty if click-tracking isn't configured
+  //       on the domain (Resend off by default).
+  // Earlier attempts to use either source alone had failure modes:
+  // status-only undercounted mature emails; webhook_events-only showed
+  // 0 forever when tracking wasn't configured. Union covers both.
+  //
+  // Done in JS so we don't depend on postgrest's FK registration for
+  // webhook_events.email_id → emails.id, which can drift after
+  // migrations without a schema-cache refresh.
   const [
     { count: totalSent },
     { count: totalDelivered },
-    clickedIds,
-    bouncedIds,
-    complainedIds,
+    emailsByStatus,
+    clickedWebhookIds,
+    bouncedWebhookIds,
+    complainedWebhookIds,
+    scopedEmailIds,
     { count: totalInbound },
     { data: recentEvents },
     { count: last7DaysSent },
@@ -73,49 +83,58 @@ export async function GET(req: NextRequest) {
   ] = await Promise.all([
     scopedEmails().neq("status", "queued"),
     scopedEmails().in("status", DELIVERED_STATUSES),
-    // Distinct email_ids from webhook_events for each event type.
-    // When the request is scoped to a rep, we filter via the joined
-    // emails row's rep_id (migration 014) with sender_email fallback.
+    // Pull current-status + id per email so we can derive click/bounce
+    // purely from the progression when webhooks are silent.
     (async () => {
       let q = supabase
+        .from("emails")
+        .select("id, status")
+        .neq("status", "queued");
+      if (repFromPattern) q = q.ilike("from", repFromPattern);
+      const { data } = await q;
+      return data ?? [];
+    })(),
+    // Webhook-event email_ids per type. No inner join — we filter by
+    // cross-referencing against scopedEmailIds below.
+    (async () => {
+      const { data } = await supabase
         .from("webhook_events")
-        .select("email_id, email:emails!inner(rep_id, from)")
+        .select("email_id")
         .eq("type", "email.clicked")
         .not("email_id", "is", null);
-      if (repFromPattern) q = q.ilike("email.from", repFromPattern);
-      const { data } = await q;
       const ids = new Set<string>();
-      for (const row of data ?? []) {
-        if (row.email_id) ids.add(row.email_id as string);
-      }
+      for (const row of data ?? []) if (row.email_id) ids.add(row.email_id as string);
       return ids;
     })(),
     (async () => {
-      let q = supabase
+      const { data } = await supabase
         .from("webhook_events")
-        .select("email_id, email:emails!inner(rep_id, from)")
+        .select("email_id")
         .eq("type", "email.bounced")
         .not("email_id", "is", null);
-      if (repFromPattern) q = q.ilike("email.from", repFromPattern);
-      const { data } = await q;
       const ids = new Set<string>();
-      for (const row of data ?? []) {
-        if (row.email_id) ids.add(row.email_id as string);
-      }
+      for (const row of data ?? []) if (row.email_id) ids.add(row.email_id as string);
       return ids;
     })(),
     (async () => {
-      let q = supabase
+      const { data } = await supabase
         .from("webhook_events")
-        .select("email_id, email:emails!inner(rep_id, from)")
+        .select("email_id")
         .eq("type", "email.complained")
         .not("email_id", "is", null);
-      if (repFromPattern) q = q.ilike("email.from", repFromPattern);
+      const ids = new Set<string>();
+      for (const row of data ?? []) if (row.email_id) ids.add(row.email_id as string);
+      return ids;
+    })(),
+    // Set of email IDs the caller is scoped to (admin: all, sales:
+    // just theirs). Used to restrict webhook event counts to
+    // emails the caller can see.
+    (async () => {
+      let q = supabase.from("emails").select("id");
+      if (repFromPattern) q = q.ilike("from", repFromPattern);
       const { data } = await q;
       const ids = new Set<string>();
-      for (const row of data ?? []) {
-        if (row.email_id) ids.add(row.email_id as string);
-      }
+      for (const row of data ?? []) ids.add(row.id as string);
       return ids;
     })(),
     // Inbound scope: when this rep has zero threads, we skip the query
@@ -158,12 +177,31 @@ export async function GET(req: NextRequest) {
     dailyMap[key] = { sent: 0, delivered: 0, clicked: 0, bounced: 0 };
   }
 
+  // Build the final (scoped, unioned, deduped) id sets FIRST so the
+  // daily-chart loop below can use them. Status sources contribute
+  // whichever emails currently sit at the target status or past it
+  // (e.g. a 'complained' row still counted as clicked-ever). Webhook
+  // sources contribute any event ever recorded. Both are restricted
+  // to emailIds the caller can see.
+  const clickedIds = new Set<string>();
+  const bouncedIds = new Set<string>();
+  const complainedIds = new Set<string>();
+  for (const e of emailsByStatus) {
+    const id = e.id as string;
+    const s = e.status as string;
+    if (!id) continue;
+    if (s === "clicked" || s === "complained") clickedIds.add(id);
+    if (s === "bounced") bouncedIds.add(id);
+    if (s === "complained") complainedIds.add(id);
+  }
+  for (const id of clickedWebhookIds)    if (scopedEmailIds.has(id)) clickedIds.add(id);
+  for (const id of bouncedWebhookIds)    if (scopedEmailIds.has(id)) bouncedIds.add(id);
+  for (const id of complainedWebhookIds) if (scopedEmailIds.has(id)) complainedIds.add(id);
+
   // Daily chart: sent + delivered come from emails.status (monotonic,
-  // fine). clicked + bounced come from the webhook-event id sets we
-  // already built, indexed back to the email's created_at so the
-  // clicks bucket into the day the ORIGINAL send landed on. If an
-  // email goes "clicked→complained" between buckets, its click still
-  // shows up in the right day.
+  // fine). clicked + bounced come from the id sets we just built,
+  // indexed back to the email's created_at so clicks bucket into the
+  // day the ORIGINAL send landed on.
   for (const email of dailyEmails || []) {
     const key = new Date(email.created_at).toISOString().split("T")[0];
     if (!dailyMap[key]) continue;
