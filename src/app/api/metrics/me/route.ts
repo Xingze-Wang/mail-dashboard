@@ -20,33 +20,57 @@ export async function GET(req: NextRequest) {
 
   const repId = session.repId;
 
-  // Count each status directly instead of deriving "ready" via
-  // subtraction. Previously `ready = assigned - sent - replied - wechat`
-  // inflated the number because drafting/ripening/skipped rows all
-  // counted as "ready" by default. The sidebar badge (ready-count)
-  // queries status='ready' directly; overview needs to match.
+  // Count each status directly. Two important derivations:
+  //
+  // - `sent` counts both status='sent' AND status='replied', because
+  //   "sent" to the rep means "an email went out" — reply is a later
+  //   phase of the same send, not a displacement. Previously reps saw
+  //   their sent count drop when replies came in, which read as a bug.
+  //
+  // - `wechat` counts DISTINCT pipeline_leads.id from brief_lookups
+  //   where added_wechat=true AND that lead is assigned to this rep.
+  //   Previously this checked pipeline_leads.status='wechat_added',
+  //   but nothing writes that status — it was always zero. WeChat
+  //   conversions live in brief_lookups (the conversion event log).
   const [
     { count: assigned },
     { count: ready },
-    { count: sent },
+    { count: sentOnly },
     { count: replied },
-    { count: wechat },
   ] = await Promise.all([
     supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId),
     supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).eq("status", "ready"),
     supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).eq("status", "sent"),
     supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).eq("status", "replied"),
-    supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).eq("status", "wechat_added"),
   ]);
+  const sent = (sentOnly ?? 0) + (replied ?? 0);
+
+  // WeChat conversions — unique leads this rep has marked as added on
+  // WeChat. Uses brief_lookups (the conversion event table) joined to
+  // pipeline_leads to keep the count scoped to THIS rep's leads.
+  // Counting brief_lookups rows directly would double-count on repeat
+  // clicks; DISTINCT lead_id dedups.
+  let wechat = 0;
+  {
+    const { data: convRows } = await supabase
+      .from("brief_lookups")
+      .select("lead_id, pipeline_leads!inner(assigned_rep_id)")
+      .eq("added_wechat", true)
+      .eq("pipeline_leads.assigned_rep_id", repId)
+      .not("lead_id", "is", null);
+    if (Array.isArray(convRows)) {
+      wechat = new Set(convRows.map((r) => r.lead_id as string)).size;
+    }
+  }
 
   return NextResponse.json({
     repId,
     repName: session.repName,
     assigned: assigned ?? 0,
     ready: ready ?? 0,
-    sent: sent ?? 0,
+    sent,
     replied: replied ?? 0,
-    wechat: wechat ?? 0,
-    leadRate: (sent ?? 0) > 0 ? (((wechat ?? 0) / (sent ?? 0)) * 100).toFixed(1) : "0.0",
+    wechat,
+    leadRate: sent > 0 ? ((wechat / sent) * 100).toFixed(1) : "0.0",
   });
 }

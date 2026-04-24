@@ -5,29 +5,47 @@ import { requireSession } from "@/lib/auth-helpers";
 /**
  * GET /api/pipeline/ready-count
  *
- * Returns count of pipeline_leads with status = 'ready'. Scoped per rep
- * for non-admin sessions so the sidebar badge matches the Pipeline page
- * (otherwise sales sees "Pipeline 561" in the sidebar but only ~167 rows
- * on the page — mismatch looks like a broken feature).
+ * Returns counts of pipeline_leads with status='ready', scoped per rep
+ * for non-admin sessions. Splits the count so every surface can choose
+ * the same number:
+ *
+ *   count      — all ready leads (incl. ripening <7d). Kept for
+ *                back-compat with existing sidebar/badge callers.
+ *   readyNow   — ready AND past the 7-day cool-down (sendable without
+ *                override).
+ *   ripening   — ready AND still inside the 7-day window (need override
+ *                to send today, will become readyNow once they age out).
+ *
+ * Prior behavior: ready-count returned only `count` (total ready). The
+ * pipeline page derived "ready minus ripening" client-side, so its
+ * counter didn't match the sidebar's. Now both numbers are served, so
+ * every surface that wants "sendable now" can consume `readyNow` and
+ * every surface that wants "in the funnel" can consume `count`.
  */
 export async function GET(req: NextRequest) {
   // Fail-closed. Unauthenticated callers used to get the global count.
   const session = await requireSession(req);
   if (!session) {
-    return NextResponse.json({ count: 0 });
+    return NextResponse.json({ count: 0, readyNow: 0, ripening: 0 });
   }
   const isPrivileged = session.role === "admin";
 
-  let q = supabase
-    .from("pipeline_leads")
-    .select("*", { count: "exact", head: true })
-    .eq("status", "ready");
-  if (!isPrivileged) {
-    q = q.eq("assigned_rep_id", session.repId);
-  }
-  const { count, error } = await q;
-  if (error) {
-    return NextResponse.json({ count: 0, error: error.message }, { status: 500 });
-  }
-  return NextResponse.json({ count: count ?? 0 });
+  const baseQ = () => {
+    let q = supabase
+      .from("pipeline_leads")
+      .select("*", { count: "exact", head: true })
+      .eq("status", "ready");
+    if (!isPrivileged) q = q.eq("assigned_rep_id", session.repId);
+    return q;
+  };
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  const [{ count: total }, { count: ripening }] = await Promise.all([
+    baseQ(),
+    baseQ().gt("created_at", sevenDaysAgo),
+  ]);
+  const totalCount = total ?? 0;
+  const ripeningCount = ripening ?? 0;
+  const readyNow = Math.max(0, totalCount - ripeningCount);
+  return NextResponse.json({ count: totalCount, readyNow, ripening: ripeningCount });
 }

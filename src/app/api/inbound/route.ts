@@ -76,6 +76,40 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
+    // Flip the originating pipeline_leads row to status='replied' so
+    // metrics / helper / analytics can actually count replies. Until
+    // this was wired, `pipeline_leads.status='replied'` was queried in
+    // 5+ places but never written anywhere — replied count was always
+    // zero. We identify the lead via the sent email's to-address on
+    // the thread: find the outbound `emails` row that started this
+    // thread, match its `to` to a `pipeline_leads.author_email`.
+    //
+    // Best-effort. If the lookup fails or no lead matches (spam, out-
+    // of-band reply), we just skip — inbound_emails still saved.
+    try {
+      const { data: outbound } = await supabase
+        .from("emails")
+        .select("to")
+        .eq("thread_id", threadId)
+        .not("thread_id", "is", null)
+        .order("created_at", { ascending: true })
+        .limit(1);
+      const outboundToRaw = outbound?.[0]?.to as string | undefined;
+      const recipient = outboundToRaw ? cleanToField(outboundToRaw).split(",")[0].trim().toLowerCase() : "";
+      if (recipient) {
+        // Only flip 'sent' → 'replied'. Don't overwrite 'skipped' /
+        // 'wechat_added' if a reply lands after a later state flip.
+        await supabase
+          .from("pipeline_leads")
+          .update({ status: "replied" })
+          .ilike("author_email", recipient)
+          .eq("status", "sent");
+      }
+    } catch (err) {
+      // Non-fatal — log and continue. Inbound mail is saved regardless.
+      console.warn("inbound: pipeline_leads.status='replied' update failed", err);
+    }
+
     return NextResponse.json({ id: inbound.id, threadId });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Failed to process inbound email";
