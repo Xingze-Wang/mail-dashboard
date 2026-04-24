@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { RefreshCw, Reply, Mail, Send, FileText } from "lucide-react";
 import { formatDate } from "@/lib/utils";
@@ -10,6 +10,18 @@ const DRAFT_KEY_PREFIX = "inbox-reply-draft:";
 const draftKey = (id: string) => `${DRAFT_KEY_PREFIX}${id}`;
 const hasDraft = (id: string) =>
   typeof window !== "undefined" && !!localStorage.getItem(draftKey(id));
+
+interface ThreadMessage {
+  id: string;
+  direction: "inbound" | "outbound";
+  from: string;
+  to: string;
+  subject: string;
+  html: string | null;
+  text: string | null;
+  created_at: string;
+  status?: string | null;
+}
 
 interface InboundEmail {
   id: string;
@@ -38,6 +50,11 @@ function InboxInner() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<InboundEmail | null>(null);
+  // Thread history — outbound replies + further inbounds on the same
+  // thread_id. Previously the thread view showed ONE inbound only, so
+  // reps replied and then couldn't see their own reply. Fetched lazily
+  // when an inbound is selected.
+  const [thread, setThread] = useState<ThreadMessage[] | null>(null);
   const [replyOpen, setReplyOpen] = useState(false);
   const [replyBody, setReplyBody] = useState("");
   const [sending, setSending] = useState(false);
@@ -91,6 +108,25 @@ function InboxInner() {
     };
   }, []);
 
+  // Load the full thread (inbound + outbound) whenever the selected
+  // email changes. Previously the detail pane only showed the one
+  // selected inbound; sales replies to it went out but never reappeared
+  // in the view. Now we render every message on the thread below the
+  // primary inbound, in chronological order.
+  const reloadThread = useCallback(async (threadId: string | null | undefined) => {
+    if (!threadId) { setThread(null); return; }
+    try {
+      const r = await fetch(`/api/inbox/thread/${encodeURIComponent(threadId)}`, { cache: "no-store" });
+      if (!r.ok) { setThread(null); return; }
+      const d = await r.json();
+      setThread(Array.isArray(d.messages) ? d.messages : null);
+    } catch { setThread(null); }
+  }, []);
+  useEffect(() => {
+    if (!selected) { setThread(null); return; }
+    void reloadThread(selected.threadId ?? null);
+  }, [selected, reloadThread]);
+
   const markRead = (email: InboundEmail) => {
     if (email.isRead) return;
     // Optimistic UI; reconcile via next fetch if it fails.
@@ -141,6 +177,9 @@ On ${date}, ${selected.from} wrote:
             next.delete(selected.id);
             return next;
           });
+          // Refetch the thread so the reply we just sent appears in
+          // the history view without requiring a page reload.
+          void reloadThread(selected.threadId ?? null);
         }
         setTimeout(() => {
           setReplyOpen(false);
@@ -437,6 +476,67 @@ On ${date}, ${selected.from} wrote:
                     color: #6b7280 !important;
                   }
                 `}</style>
+
+                {/* Thread history — inbound + outbound rows on the
+                    same thread_id. Skip the exact `selected` row so we
+                    don't duplicate what's already rendered above. All
+                    HTML here is piped through the same sanitizeHtml
+                    (DOMPurify) wrapper that the primary body uses. */}
+                {thread && thread.filter((m) => !(m.direction === "inbound" && m.id === selected.id)).length > 0 && (
+                  <div style={{ marginTop: 24, display: "flex", flexDirection: "column", gap: 12 }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)", letterSpacing: 0.5, textTransform: "uppercase" }}>
+                      Thread history
+                    </div>
+                    {thread
+                      .filter((m) => !(m.direction === "inbound" && m.id === selected.id))
+                      .map((m) => {
+                        // Sanitized via DOMPurify — same path the main
+                        // body above uses. Safe to pass to dSIH.
+                        const safeHtml = m.html ? sanitizeHtml(m.html) : "";
+                        const isOutbound = m.direction === "outbound";
+                        return (
+                          <div
+                            key={`${m.direction}:${m.id}`}
+                            style={{
+                              borderRadius: 8,
+                              border: "1px solid var(--border-light)",
+                              background: isOutbound ? "#EFF6FF" : "#FFFFFF",
+                              padding: 14,
+                            }}
+                          >
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, marginBottom: 6, fontSize: 12, color: "var(--text-tertiary)" }}>
+                              <div>
+                                <span style={{
+                                  fontSize: 10,
+                                  padding: "1px 6px",
+                                  borderRadius: 4,
+                                  background: isOutbound ? "#2563EB" : "#16A34A",
+                                  color: "white",
+                                  fontWeight: 600,
+                                  marginRight: 6,
+                                }}>
+                                  {isOutbound ? "SENT" : "RECEIVED"}
+                                </span>
+                                <span style={{ color: "var(--text)" }}>{m.from}</span>
+                              </div>
+                              <span>{new Date(m.created_at).toLocaleString()}</span>
+                            </div>
+                            {safeHtml ? (
+                              <div
+                                className="email-content"
+                                style={{ color: "#1A1A1A", fontSize: 13 }}
+                                dangerouslySetInnerHTML={{ __html: safeHtml }}
+                              />
+                            ) : (
+                              <pre style={{ fontSize: 12, color: "var(--text)", whiteSpace: "pre-wrap", fontFamily: "var(--font-body)", margin: 0 }}>
+                                {m.text || "(no content)"}
+                              </pre>
+                            )}
+                          </div>
+                        );
+                      })}
+                  </div>
+                )}
               </div>
 
               {/* Inline Reply — Gmail style */}
