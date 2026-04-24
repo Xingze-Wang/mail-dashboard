@@ -11,6 +11,91 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { Sparkles, X, Send, Loader2, Plus, Clock, Check } from "lucide-react";
 
+/**
+ * Cute robot avatar — pure SVG, no deps. Three moods drive CSS-only
+ * animations keyed by data-mood on the host button:
+ *
+ *   idle   — soft blink every few seconds (alive, but quiet)
+ *   wave   — right arm arcs once (fires when daily opener is ready)
+ *   peek   — body pops UP out of the button, arm waves slowly, then
+ *            settles back into the circle (fires when a signal-based
+ *            chime-in is pending; wants attention without being a toast)
+ *
+ * Rendered inside the floating round button. The button has
+ * `overflow: visible` so `peek` can translate the robot upward
+ * past the circle's top edge. Colors stay on-brand with the existing
+ * indigo→pink gradient — robot is white with subtle shading.
+ */
+function CuteRobot({ mood }: { mood: "idle" | "wave" | "peek" }) {
+  return (
+    <svg
+      data-mood={mood}
+      viewBox="0 0 48 48"
+      width="34"
+      height="34"
+      xmlns="http://www.w3.org/2000/svg"
+      style={{ display: "block", overflow: "visible" }}
+      aria-hidden="true"
+    >
+      {/* Subtle drop shadow under the robot so it reads as sitting
+          INSIDE the button rather than floating flat on the gradient. */}
+      <defs>
+        <filter id="robot-shadow" x="-20%" y="-20%" width="140%" height="140%">
+          <feGaussianBlur in="SourceAlpha" stdDeviation="0.6" />
+          <feOffset dx="0" dy="0.6" result="off" />
+          <feComponentTransfer><feFuncA type="linear" slope="0.25" /></feComponentTransfer>
+          <feMerge><feMergeNode /><feMergeNode in="SourceGraphic" /></feMerge>
+        </filter>
+      </defs>
+
+      {/* body group — translates up on peek, rocks slightly on wave */}
+      <g className="robot-body" filter="url(#robot-shadow)">
+        {/* antenna — with gap above head */}
+        <line x1="24" y1="4.5" x2="24" y2="9" stroke="white" strokeWidth="1.8" strokeLinecap="round" />
+        <circle cx="24" cy="3" r="2" fill="#fde68a" />
+
+        {/* head — slightly taller, deeper rounding for a softer read */}
+        <rect x="10" y="10" width="28" height="20" rx="8" ry="8" fill="white" />
+        {/* head top highlight — a thin lighter strip so the head doesn't
+            read as a flat white blob against the gradient */}
+        <rect x="12" y="11.5" width="24" height="3" rx="1.5" ry="1.5" fill="#f5f3ff" opacity="0.9" />
+
+        {/* eyes — bigger + set lower on the face (classic "cute" ratio).
+            Each eye has a white catchlight so they feel alive. */}
+        <g className="robot-eye left">
+          <circle cx="18.5" cy="21" r="3" fill="#1e1b4b" />
+          <circle cx="19.4" cy="20.1" r="0.9" fill="white" />
+        </g>
+        <g className="robot-eye right">
+          <circle cx="29.5" cy="21" r="3" fill="#1e1b4b" />
+          <circle cx="30.4" cy="20.1" r="0.9" fill="white" />
+        </g>
+
+        {/* cheeks */}
+        <circle cx="14" cy="25" r="1.6" fill="#fbcfe8" />
+        <circle cx="34" cy="25" r="1.6" fill="#fbcfe8" />
+
+        {/* smile — wider arc, thicker stroke, shows up at 32px */}
+        <path d="M20.5 26.2 Q24 28.8 27.5 26.2" stroke="#1e1b4b" strokeWidth="1.6" fill="none" strokeLinecap="round" />
+
+        {/* body */}
+        <rect x="14" y="30" width="20" height="11" rx="3.5" ry="3.5" fill="white" />
+        {/* status light on chest — pulses subtly via CSS */}
+        <circle className="robot-chest-light" cx="24" cy="35.5" r="1.6" fill="#ec4899" />
+
+        {/* left arm (static, cradled slightly against body) */}
+        <rect x="8.5" y="30.5" width="4" height="9" rx="2" ry="2" fill="white" />
+
+        {/* right arm — animated on wave/peek */}
+        <g className="robot-arm-right">
+          <rect x="35.5" y="30.5" width="4" height="9" rx="2" ry="2" fill="white" />
+          <circle cx="37.5" cy="40.5" r="2" fill="white" />
+        </g>
+      </g>
+    </svg>
+  );
+}
+
 const STORAGE_KEY = "help_bot_pos_v1";
 const DRAG_THRESHOLD_PX = 6;
 
@@ -69,6 +154,12 @@ export function HelpBot() {
   // Pending opener — the daily greeting. Seeded once per Beijing day
   // when the user first opens the modal.
   const [pendingOpener, setPendingOpener] = useState<string | null>(null);
+  // Pending chime-in — proactive, signal-based message from the
+  // /api/cron/proactive-signals watcher. When present, seeded as the
+  // FIRST assistant message (above the opener). Cleared server-side
+  // on read so it fires once — if the cron re-detects the signal
+  // tomorrow, it comes back.
+  const [pendingChimeIn, setPendingChimeIn] = useState<{ type: string; message: string } | null>(null);
   const nudgeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastNudgedLeadRef = useRef<string | null>(null);
   const dragRef = useRef<{ startX: number; startY: number; origPos: Pos; moved: boolean } | null>(null);
@@ -86,19 +177,30 @@ export function HelpBot() {
     } catch { /* ignore */ }
   }, []);
 
-  // Fetch the daily opener. Returns {skip: true} if already greeted
-  // today, else {greeting}. Runs once per mount, but the server-side
-  // dedup ensures it's only meaningful the first time per Beijing day.
+  // Fetch the daily opener + pending chime-in in parallel. The opener
+  // is cadence-driven (once per Beijing day); the chime-in is signal-
+  // driven (a cron watcher wrote it when a rule tripped). Both seed
+  // the chat on open — chime-in first if present, then opener.
   useEffect(() => {
     if (pathname.startsWith("/login")) return;
     let cancelled = false;
     (async () => {
       try {
-        const r = await fetch("/api/help/opening");
-        if (!r.ok) return;
-        const d = await r.json();
-        if (!cancelled && !d.skip && typeof d.greeting === "string") {
-          setPendingOpener(d.greeting);
+        const [openR, chimeR] = await Promise.all([
+          fetch("/api/help/opening"),
+          fetch("/api/help/chime-in"),
+        ]);
+        if (openR.ok) {
+          const d = await openR.json();
+          if (!cancelled && !d.skip && typeof d.greeting === "string") {
+            setPendingOpener(d.greeting);
+          }
+        }
+        if (chimeR.ok) {
+          const d = await chimeR.json();
+          if (!cancelled && d.chimeIn && typeof d.chimeIn.message === "string") {
+            setPendingChimeIn({ type: d.chimeIn.type, message: d.chimeIn.message });
+          }
         }
       } catch { /* non-fatal */ }
     })();
@@ -196,6 +298,15 @@ export function HelpBot() {
     }
   }
 
+  // Robot mood drives the CSS animation. peek > wave > idle. Peek when a
+  // signal-based chime-in is pending (wants attention). Wave when a daily
+  // opener is ready but no chime-in (friendly hi). Idle otherwise.
+  const robotMood: "idle" | "wave" | "peek" = pendingChimeIn
+    ? "peek"
+    : pendingOpener
+      ? "wave"
+      : "idle";
+
   return (
     <>
       <button
@@ -203,6 +314,8 @@ export function HelpBot() {
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         title="Sales Helper — drag me anywhere, click to ask"
+        data-robot-mood={robotMood}
+        className="help-bot-button"
         style={{
           position: "fixed",
           bottom: pos.y,
@@ -221,9 +334,12 @@ export function HelpBot() {
           justifyContent: "center",
           zIndex: 60,
           userSelect: "none",
+          // overflow: visible so `peek` can translate the robot up past
+          // the button's top edge without getting clipped.
+          overflow: "visible",
         }}
       >
-        <Sparkles style={{ width: 22, height: 22 }} />
+        <CuteRobot mood={robotMood} />
       </button>
 
       {/* Pending nudge bubble — sits to the LEFT of the sparkles.
@@ -276,7 +392,11 @@ export function HelpBot() {
           pathname={pathname}
           onClose={() => setOpen(false)}
           initialSeed={pendingOpener}
-          onConsumeSeed={() => setPendingOpener(null)}
+          chimeIn={pendingChimeIn}
+          onConsumeSeed={() => {
+            setPendingOpener(null);
+            setPendingChimeIn(null);
+          }}
         />
       )}
     </>
@@ -287,11 +407,13 @@ function HelpModal({
   pathname,
   onClose,
   initialSeed,
+  chimeIn,
   onConsumeSeed,
 }: {
   pathname: string;
   onClose: () => void;
   initialSeed?: string | null;
+  chimeIn?: { type: string; message: string } | null;
   onConsumeSeed?: () => void;
 }) {
   const [currentLead] = useState<CurrentReviewLead | null>(() => {
@@ -299,16 +421,25 @@ function HelpModal({
     return window.__currentReviewLead ?? null;
   });
 
-  // Seed the daily opener / nudge as the first assistant message so
-  // the helper feels like a presence that "said hi first".
+  // Seed chime-in (proactive signal) first, then daily opener. Both
+  // get their own message bubble so the rep can see they're distinct
+  // voices: the chime-in is "I noticed something", the opener is
+  // "here's today's status". Seeding as assistant messages also means
+  // the rep can answer either directly and the LLM sees the full
+  // thread context.
   const [messages, setMessages] = useState<Msg[]>(() => {
-    if (initialSeed) {
-      return [{ id: Date.now(), role: "assistant", text: initialSeed }];
+    const seeds: Msg[] = [];
+    const now = Date.now();
+    if (chimeIn?.message) {
+      seeds.push({ id: now, role: "assistant", text: chimeIn.message });
     }
-    return [];
+    if (initialSeed) {
+      seeds.push({ id: now + 1, role: "assistant", text: initialSeed });
+    }
+    return seeds;
   });
   useEffect(() => {
-    if (initialSeed && onConsumeSeed) onConsumeSeed();
+    if ((initialSeed || chimeIn) && onConsumeSeed) onConsumeSeed();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const [input, setInput] = useState("");
