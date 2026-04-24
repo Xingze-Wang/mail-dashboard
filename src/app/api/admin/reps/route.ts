@@ -131,5 +131,29 @@ export async function PATCH(req: NextRequest) {
     .eq("id", id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  return NextResponse.json({ ok: true });
+  // If the rep was deactivated, orphan their unsent queue so drafts
+  // don't silently render under fallback identity ("Leo") on send.
+  // We requeue those leads; the assignment config still routes them
+  // back to this inactive rep (config is a separate source of truth),
+  // so admin needs to update the config too if the deactivation is
+  // permanent. Logging the count makes that obvious.
+  let orphaned = 0;
+  if (updates.active === false) {
+    const { data: orphanRows } = await supabase
+      .from("pipeline_leads")
+      .update({
+        status: "queued",
+        draft_subject: null,
+        draft_html: null,
+        draft_original_subject: null,
+        draft_original_html: null,
+        draft_edit_distance: null,
+      })
+      .eq("assigned_rep_id", id)
+      .in("status", ["ready", "drafting"])
+      .select("id");
+    orphaned = orphanRows?.length ?? 0;
+  }
+
+  return NextResponse.json({ ok: true, orphaned });
 }

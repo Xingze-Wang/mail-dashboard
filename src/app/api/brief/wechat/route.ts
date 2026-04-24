@@ -21,25 +21,36 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "query required" }, { status: 400 });
   }
 
-  const { data, error } = await supabase
-    .from("brief_lookups")
-    .insert({
-      query,
-      arxiv_id: arxiv_id || null,
-      lead_id: lead_id || null,
-      added_wechat: true,
-      wechat_at: new Date().toISOString(),
-      notes: notes || null,
-      // Attribute the conversion to the session's rep. Brief search is
-      // deliberately cross-rep (any rep can look up anyone for WeChat
-      // follow-up), but admin still needs to audit who marked which
-      // lead as "added on WeChat". Without rep_id these were orphan
-      // rows.
-      marked_by_rep_id: session.repId,
-      marked_by_email: session.email,
-    })
-    .select()
-    .single();
+  // UPSERT on (lead_id) where added_wechat=true — migration 016 adds
+  // a partial unique index ux_brief_lookups_wechat_per_lead, so a plain
+  // INSERT would throw on repeat clicks. We want idempotent: marking
+  // a lead "Added on WeChat" twice should leave exactly one conversion
+  // row, with the newer metadata (notes, rep attribution) preserved.
+  //
+  // If lead_id is null (name-only lookup), the unique index doesn't
+  // apply, and a plain insert is the right behavior — each name lookup
+  // is its own event.
+  const payload = {
+    query,
+    arxiv_id: arxiv_id || null,
+    lead_id: lead_id || null,
+    added_wechat: true,
+    wechat_at: new Date().toISOString(),
+    notes: notes || null,
+    marked_by_rep_id: session.repId,
+    marked_by_email: session.email,
+  };
+  const { data, error } = lead_id
+    ? await supabase
+        .from("brief_lookups")
+        .upsert(payload, { onConflict: "lead_id", ignoreDuplicates: false })
+        .select()
+        .single()
+    : await supabase
+        .from("brief_lookups")
+        .insert(payload)
+        .select()
+        .single();
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });

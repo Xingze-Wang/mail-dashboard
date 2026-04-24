@@ -152,6 +152,34 @@ export async function POST(req: NextRequest) {
           .from("emails")
           .update({ status: newStatus, updated_at: new Date().toISOString() })
           .eq("id", emailId);
+
+        // Propagate delivery-status signals to pipeline_leads so the
+        // lead-level view stays in sync with the email-level truth.
+        // Previously the webhook only touched `emails`, leaving
+        // `pipeline_leads.status` stuck at 'sent' regardless of
+        // bounce/complaint — sales couldn't tell which of their
+        // "sent" leads actually landed. We only REGRESS status for
+        // bad outcomes (bounced / complained → set a dedicated
+        // column so counts stay honest without overwriting 'replied'
+        // if a reply happens to arrive first).
+        if (newStatus === "bounced" || newStatus === "complained") {
+          // Locate the lead via the shared thread_id on emails row.
+          const { data: emailRow } = await supabase
+            .from("emails")
+            .select("thread_id")
+            .eq("id", emailId)
+            .maybeSingle();
+          const threadId = emailRow?.thread_id as string | null;
+          if (threadId) {
+            await supabase
+              .from("pipeline_leads")
+              .update({
+                bounced_at: newStatus === "bounced" ? new Date().toISOString() : null,
+                complained_at: newStatus === "complained" ? new Date().toISOString() : null,
+              })
+              .eq("thread_id", threadId);
+          }
+        }
       }
     }
 

@@ -60,6 +60,9 @@ export async function POST(req: NextRequest) {
         resend_id: result.data?.id || null,
         status: "sent",
         thread_id: threadId,
+        // Low-level admin sends — attribute to the admin session so
+        // these don't become orphaned rep_id=null rows after migration 014.
+        rep_id: gate.session.repId,
       })
       .select()
       .single();

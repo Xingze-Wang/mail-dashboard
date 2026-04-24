@@ -129,11 +129,25 @@ export async function POST(req: NextRequest) {
       // a budget unit. When budget hits 0 we start skipping them with a
       // dedicated reason so the caller can surface "X leads blocked by
       // daily override cap."
+      //
+      // Re-check against the LIVE count before every override-consuming
+      // send. This protects against the concurrent-batch race: our
+      // in-memory budget started from countOverridesTodayByRep() at
+      // the top of the request, but a parallel batch could be eating
+      // slots at the same time. A cheap per-override COUNT query
+      // closes the window from "hundreds of leads" to "one lead".
       const willUseOverride = needsOverride && clientAskedOverride;
-      if (willUseOverride && overrideBudget <= 0) {
-        skipped++;
-        blocks["daily_override_limit"] = (blocks["daily_override_limit"] || 0) + 1;
-        continue;
+      if (willUseOverride) {
+        const liveUsed = (await countOverridesTodayByRep(actingRepId)) ?? 0;
+        const liveRemaining = Math.max(0, DAILY_OVERRIDE_CAP - liveUsed);
+        if (liveRemaining <= 0) {
+          skipped++;
+          blocks["daily_override_limit"] = (blocks["daily_override_limit"] || 0) + 1;
+          continue;
+        }
+        // Keep the in-memory budget in sync with the live count so
+        // the later `overrideBudget--` reflects reality, not drift.
+        overrideBudget = Math.min(overrideBudget, liveRemaining);
       }
 
       const guard = await checkSendAllowed(lead, { override: clientAskedOverride });
@@ -228,7 +242,10 @@ export async function POST(req: NextRequest) {
         overridesUsedThisBatch++;
       }
 
-      // Audit log (best-effort).
+      // Audit log (best-effort). rep_id mirrors the lead's
+      // assigned_rep_id (canonical, migration 014) so scope-by-rep
+      // queries can later swap off the fragile `from ilike
+      // sender_email` proxy filter.
       const { error: emailInsertErr } = await supabase.from("emails").insert({
         from: senderFrom,
         to: toEmail,
@@ -239,6 +256,7 @@ export async function POST(req: NextRequest) {
         status: "sent",
         thread_id: threadId,
         paper_arxiv_id: lead.arxiv_id ?? null,
+        rep_id: lead.assigned_rep_id ?? actingRepId,
       });
       if (emailInsertErr) {
         console.error("batch emails insert failed", { id, resendId: result.data?.id, err: emailInsertErr });

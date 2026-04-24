@@ -59,7 +59,12 @@ export async function POST(req: NextRequest) {
   const { data: leads, error: fetchError } = await supabase
     .from("pipeline_leads")
     .select(
-      "id, citation_count, h_index, school_tier, author_email, matched_directions, lead_tier, assigned_rep_id, status",
+      // Include local_score + industry_orgs so re-classify uses the
+      // SAME signal set as ingest (import / draft-queue). Previously
+      // re-classify dropped these inputs, so running the POST could
+      // silently downgrade a lead the ingest path had correctly
+      // promoted to 'strong' via industry affiliation or local score.
+      "id, citation_count, h_index, school_tier, author_email, matched_directions, lead_tier, assigned_rep_id, status, local_score, industry_orgs",
     );
 
   if (fetchError) {
@@ -79,6 +84,8 @@ export async function POST(req: NextRequest) {
       hIndex: l.h_index ?? null,
       schoolTier: l.school_tier ?? null,
       authorEmail: l.author_email ?? "",
+      localScore: l.local_score ?? null,
+      industryOrgs: Array.isArray(l.industry_orgs) ? (l.industry_orgs as string[]) : null,
     });
     const newRepId = assignRep(config, newTier, l.author_email ?? "", l.matched_directions ?? null);
 
@@ -103,6 +110,11 @@ export async function POST(req: NextRequest) {
       assigned_rep_id: newRepId,
     };
     const currentStatus = (l as Record<string, unknown>).status as string | undefined;
+    // Re-queue only when the REP changes. Tier-only changes don't
+    // currently alter the draft output (email-generator doesn't branch
+    // on tier), so regenerating would be pure cost. If we ever
+    // introduce tier-specific templates (e.g. a terser pitch for
+    // 'strong' leads), flip `regenerable` to include `tierChanged`.
     const regenerable = repChanged && currentStatus !== "sent" && currentStatus !== "replied";
     if (regenerable) {
       updatePayload.status = "queued";

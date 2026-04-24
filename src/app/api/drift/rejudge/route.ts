@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
 
   const { data: lead, error: fetchErr } = await supabase
     .from("pipeline_leads")
-    .select("id, title, abstract, draft_original_html, draft_original_subject, draft_model")
+    .select("id, title, abstract, draft_original_html, draft_original_subject, draft_model, judge_verdicts, judge_avg, judge_at, judge_verdicts_history")
     .eq("id", leadId)
     .single();
   if (fetchErr || !lead) {
@@ -53,19 +53,41 @@ export async function POST(req: NextRequest) {
     : null;
   const anyLeak = verdicts.some((v) => v.prompt_leak);
 
-  // Persist — silently swallow errors here; the columns may not exist on
-  // older deployments and that shouldn't break the response.
+  // Preserve prior verdicts as history BEFORE overwriting. The whole
+  // point of re-judging is drift-over-time detection; if we blow away
+  // the old verdicts, we lose the signal we came for. Append the
+  // previous judge_verdicts (with its timestamp and avg) into
+  // judge_verdicts_history, then overwrite current. Cap history at
+  // 20 entries so the JSONB column doesn't grow unbounded.
+  const prevHistory = Array.isArray(lead.judge_verdicts_history)
+    ? (lead.judge_verdicts_history as Array<Record<string, unknown>>)
+    : [];
+  const nextHistory = lead.judge_verdicts
+    ? [
+        ...prevHistory,
+        {
+          verdicts: lead.judge_verdicts,
+          avg: lead.judge_avg,
+          judged_at: lead.judge_at,
+        },
+      ].slice(-20)
+    : prevHistory;
+
+  // Persist — silently swallow errors here; the history column may not
+  // exist on older deployments (before migration 017) but the primary
+  // fields still land so the response stays useful.
   await supabase
     .from("pipeline_leads")
     .update({
       judge_verdicts: verdicts,
+      judge_verdicts_history: nextHistory,
       judge_avg: avg,
       judge_prompt_leak: anyLeak,
       judge_at: new Date().toISOString(),
     })
     .eq("id", leadId);
 
-  return NextResponse.json({ leadId, avg, prompt_leak: anyLeak, verdicts });
+  return NextResponse.json({ leadId, avg, prompt_leak: anyLeak, verdicts, historyDepth: nextHistory.length });
 }
 
 function stripHtml(s: string): string {

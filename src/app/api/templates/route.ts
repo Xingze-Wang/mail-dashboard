@@ -1,6 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 
+// The `templates` table is the legacy home of a special row named
+// "pipeline_intro_prompt" that used to drive the AI intro sentence.
+// Since migration 010/011, the authoritative source is
+// `email_templates.intro_prompt` where name='global'. Both tables
+// currently coexist (email-generator falls back to legacy `templates`
+// if email_templates isn't seeded), so edits to the singleton prompt
+// must mirror into the new table — otherwise the Templates UI looks
+// like it's editing the prompt but drafts keep using the stale
+// email_templates row. Only this one row gets mirrored; other
+// templates stay single-homed.
+const PIPELINE_PROMPT_NAME = "pipeline_intro_prompt";
+async function mirrorIntroPromptToEmailTemplates(name: string, html: string): Promise<void> {
+  if (name !== PIPELINE_PROMPT_NAME) return;
+  try {
+    await supabase
+      .from("email_templates")
+      .update({ intro_prompt: html, updated_at: new Date().toISOString() })
+      .eq("name", "global");
+  } catch {
+    // email_templates may not be seeded yet — non-fatal.
+  }
+}
+
 export async function GET() {
   const { data: templates } = await supabase
     .from("templates")
@@ -39,6 +62,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
+    await mirrorIntroPromptToEmailTemplates(name, html);
     return NextResponse.json(template, { status: 201 });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Failed to create template";
@@ -70,6 +94,14 @@ export async function PUT(req: NextRequest) {
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    // Mirror AFTER the update — we use the returned row's name + html
+    // rather than the request body so we reflect what's actually in the
+    // table (e.g. if only `html` was in the body but name was already
+    // the prompt row, we still want to mirror).
+    if (template?.name && typeof template?.html === "string") {
+      await mirrorIntroPromptToEmailTemplates(template.name as string, template.html as string);
     }
 
     return NextResponse.json(template);

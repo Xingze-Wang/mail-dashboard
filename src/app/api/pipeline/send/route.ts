@@ -310,6 +310,10 @@ export async function POST(req: NextRequest) {
         status: "sent",
         thread_id: threadId,
         paper_arxiv_id: lead.arxiv_id ?? null,
+        // Canonical rep attribution (migration 014). Carried on the
+        // emails row so future queries can scope by rep_id instead of
+        // the fragile `from ilike sender_email` proxy filter.
+        rep_id: lead.assigned_rep_id ?? actingRepId,
       })
       .select()
       .single();
