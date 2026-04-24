@@ -1,47 +1,25 @@
 -- ═══════════════════════════════════════════════════════════════════
--- APPLY migrations 008 → 018 in one shot.
+-- APPLY migrations 008 → 018 in one shot (v2: resilient against
+-- pre-existing tables with older column sets).
 --
 -- Paste the entire file into Supabase SQL Editor and run. Each block
--- is individually idempotent (IF NOT EXISTS on columns/tables/indexes,
--- DO blocks around FKs, ON CONFLICT on seeds). Safe to re-run, safe
--- to run partially — any already-applied migration no-ops.
---
--- Order matters: 008 creates drift tables + columns that 011's seed
--- and 016's dedup rely on. Run top-to-bottom.
---
--- After this file completes:
---   - /drift and /drift Judge-vs-Human work
---   - Helper chime-in + voice templates wire up end-to-end
---   - rep_id is stamped on emails/inbound_emails and back-filled
---   - brief_lookups has FK + dedup
---   - judge_verdicts_history preserves drift-over-time signal
---   - industry_orgs column backs the classifyLead +2500 bonus
---
--- Earlier migrations (001 → 007) are NOT included here — those are
--- already live in prod. If you're bootstrapping a fresh DB, run 001–
--- 007 first (or use the full migrations/ folder in order).
+-- is idempotent. Known prod gotcha fixed here:
+-- "ERROR: 42703: column created_at does not exist" (2026-04-24) —
+-- older lead_corrections / prompt_drift_patterns / email_templates
+-- tables pre-existed without some columns; CREATE TABLE IF NOT EXISTS
+-- was a no-op on re-run, so the indexes that followed crashed.
+-- Now every CREATE TABLE block is followed by ALTER TABLE ADD COLUMN
+-- IF NOT EXISTS for every field so re-runs upgrade instead of no-op.
 -- ═══════════════════════════════════════════════════════════════════
 
 -- ═══════════════════════════════════════════════════════════════════
 -- Migration 008: Drift + edit-tracking columns + tables
 --
--- What was missing:
---   The drift page (/drift) and Judge vs Human tab query columns and
---   tables that were never defined in a migration — they had been
---   added ad-hoc in Supabase at some point or never at all. This
---   migration is the canonical, idempotent definition.
---
--- Adds:
---   pipeline_leads columns for edit-tracking + judge ensemble:
---     draft_original_subject, draft_original_html, draft_model,
---     draft_edit_distance, edit_reasons, edit_note,
---     judge_avg, judge_prompt_leak, judge_at, judge_verdicts
---
---   prompt_drift_patterns  — mined drift signals
---   lead_corrections       — sales "flag" signal (right lead wrong
---                            pitch / wrong author / etc.)
---
--- Idempotent — safe to re-run. All columns use IF NOT EXISTS.
+-- Drift page (/drift) + Judge-vs-Human queries columns + tables that
+-- were never defined in a migration. Canonical, idempotent, safe on
+-- re-run — adds ALTER TABLE ADD COLUMN IF NOT EXISTS for each field
+-- so re-running against a table that already exists with a reduced
+-- column set upgrades it instead of silently staying stale.
 -- ═══════════════════════════════════════════════════════════════════
 
 -- pipeline_leads: edit-tracking + judge columns
@@ -56,14 +34,9 @@ alter table pipeline_leads add column if not exists judge_prompt_leak      boole
 alter table pipeline_leads add column if not exists judge_at               timestamptz;
 alter table pipeline_leads add column if not exists judge_verdicts         jsonb;
 
--- Index to make Judge-vs-Human query cheap (scans ~500 newest sent
--- rows with both signals).
 create index if not exists idx_pipeline_leads_judge_edit
   on pipeline_leads (sent_at desc)
   where judge_avg is not null and draft_edit_distance is not null;
-
--- Index for the heavy-editor chime-in rule (count edits per rep in 7d
--- window where draft_edit_distance is meaningful).
 create index if not exists idx_pipeline_leads_rep_edit_sent
   on pipeline_leads (assigned_rep_id, sent_at desc)
   where draft_edit_distance is not null;
@@ -72,18 +45,29 @@ create index if not exists idx_pipeline_leads_rep_edit_sent
 create table if not exists prompt_drift_patterns (
   id                uuid primary key default gen_random_uuid(),
   detected_at       timestamptz not null default now(),
-  rep_id            integer,                     -- null = global pattern
-  category          text not null,               -- ai_misunderstood | format | too_verbose | too_robotic | individual_taste
+  rep_id            integer,
+  category          text not null,
   ai_phrase         text not null,
-  sales_phrase      text,                        -- null when sales deleted it
+  sales_phrase      text,
   occurrence_count  integer not null default 1,
   example_lead_ids  text[] not null default '{}',
   prompt_patch      text,
-  status            text not null default 'pending'  -- pending | accepted | ignored
+  status            text not null default 'pending'
                     check (status in ('pending','accepted','ignored')),
   accepted_at       timestamptz,
   accepted_by       text
 );
+alter table prompt_drift_patterns add column if not exists detected_at      timestamptz not null default now();
+alter table prompt_drift_patterns add column if not exists rep_id           integer;
+alter table prompt_drift_patterns add column if not exists category         text;
+alter table prompt_drift_patterns add column if not exists ai_phrase        text;
+alter table prompt_drift_patterns add column if not exists sales_phrase     text;
+alter table prompt_drift_patterns add column if not exists occurrence_count integer not null default 1;
+alter table prompt_drift_patterns add column if not exists example_lead_ids text[] not null default '{}';
+alter table prompt_drift_patterns add column if not exists prompt_patch     text;
+alter table prompt_drift_patterns add column if not exists status           text not null default 'pending';
+alter table prompt_drift_patterns add column if not exists accepted_at      timestamptz;
+alter table prompt_drift_patterns add column if not exists accepted_by      text;
 
 create index if not exists idx_drift_patterns_status_detected
   on prompt_drift_patterns (status, detected_at desc);
@@ -93,25 +77,32 @@ create index if not exists idx_drift_patterns_category
   on prompt_drift_patterns (category);
 
 -- ── lead_corrections ───────────────────────────────────────────────
--- Sales-facing "flag" for leads. Every row is one flag event; a single
--- lead can have many (different reps over time, different reasons).
--- `corrected_by` is the rep's email (legacy); `rep_id` is the FK added
--- later so newer writes can record which rep. Both columns exist for
--- compatibility with older insert paths.
 create table if not exists lead_corrections (
   id            uuid primary key default gen_random_uuid(),
   lead_id       uuid not null,
   rep_id        integer,
-  type          text not null,            -- bad_compute | wrong_author | wrong_direction | low_quality_email | right_lead_wrong_pitch | good_lead
-  severity      text default 'soft'       -- soft | hard
+  type          text not null,
+  severity      text default 'soft'
                 check (severity in ('soft','hard')),
   reason        text,
   payload       jsonb,
-  skip          boolean default false,    -- did sales also skip the lead?
-  corrected_by  text,                     -- legacy: rep email
+  skip          boolean default false,
+  corrected_by  text,
   corrected_at  timestamptz default now(),
   created_at    timestamptz default now()
 );
+-- Patch in anything the pre-existing lead_corrections table might be
+-- missing. This is the concrete fix for "ERROR: 42703: column
+-- created_at does not exist" observed on 2026-04-24 — older tables
+-- had corrected_at but not created_at, and the index below crashed.
+alter table lead_corrections add column if not exists rep_id       integer;
+alter table lead_corrections add column if not exists severity     text default 'soft';
+alter table lead_corrections add column if not exists reason       text;
+alter table lead_corrections add column if not exists payload      jsonb;
+alter table lead_corrections add column if not exists skip         boolean default false;
+alter table lead_corrections add column if not exists corrected_by text;
+alter table lead_corrections add column if not exists corrected_at timestamptz default now();
+alter table lead_corrections add column if not exists created_at   timestamptz default now();
 
 create index if not exists idx_lead_corrections_lead
   on lead_corrections (lead_id);
@@ -206,6 +197,19 @@ create table if not exists email_templates (
   created_at       timestamptz not null default now(),
   updated_at       timestamptz not null default now()
 );
+-- Back-compat for re-runs against an older shape (any of these
+-- columns missing on a pre-existing email_templates gets patched in).
+alter table email_templates add column if not exists rep_id              integer;
+alter table email_templates add column if not exists active              boolean not null default true;
+alter table email_templates add column if not exists subject_format      text;
+alter table email_templates add column if not exists intro_prompt        text;
+alter table email_templates add column if not exists greeting_format     text;
+alter table email_templates add column if not exists rep_intro_format    text;
+alter table email_templates add column if not exists school_pitch_format text;
+alter table email_templates add column if not exists cta_signoff_format  text;
+alter table email_templates add column if not exists notes               text;
+alter table email_templates add column if not exists created_at          timestamptz not null default now();
+alter table email_templates add column if not exists updated_at          timestamptz not null default now();
 
 create index if not exists idx_email_templates_rep on email_templates (rep_id) where active = true;
 create index if not exists idx_email_templates_active on email_templates (active) where active = true;

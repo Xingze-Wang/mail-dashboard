@@ -55,6 +55,19 @@ create table if not exists email_templates (
   created_at       timestamptz not null default now(),
   updated_at       timestamptz not null default now()
 );
+-- Back-compat for re-runs against an older shape (any of these
+-- columns missing on a pre-existing email_templates gets patched in).
+alter table email_templates add column if not exists rep_id              integer;
+alter table email_templates add column if not exists active              boolean not null default true;
+alter table email_templates add column if not exists subject_format      text;
+alter table email_templates add column if not exists intro_prompt        text;
+alter table email_templates add column if not exists greeting_format     text;
+alter table email_templates add column if not exists rep_intro_format    text;
+alter table email_templates add column if not exists school_pitch_format text;
+alter table email_templates add column if not exists cta_signoff_format  text;
+alter table email_templates add column if not exists notes               text;
+alter table email_templates add column if not exists created_at          timestamptz not null default now();
+alter table email_templates add column if not exists updated_at          timestamptz not null default now();
 
 create index if not exists idx_email_templates_rep on email_templates (rep_id) where active = true;
 create index if not exists idx_email_templates_active on email_templates (active) where active = true;
