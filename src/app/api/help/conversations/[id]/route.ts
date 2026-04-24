@@ -39,7 +39,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     .select("id, role, text, tool_proposal, tool_result, created_at")
     .eq("conversation_id", id)
     .order("created_at", { ascending: true });
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    console.error("conversations GET messages error", { convId: id, err: error.message });
+    return NextResponse.json({ error: "Failed to load messages" }, { status: 500 });
+  }
   return NextResponse.json({ conversation: gate.conv, messages: messages ?? [] });
 }
 
@@ -65,7 +68,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     .eq("id", id)
     .select()
     .single();
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    console.error("conversations PATCH error", { convId: id, err: error.message });
+    return NextResponse.json({ error: "Failed to update conversation" }, { status: 500 });
+  }
   return NextResponse.json({ conversation: data });
 }
 
@@ -77,6 +83,9 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   if (!gate.ok) return NextResponse.json({ error: gate.error }, { status: gate.status });
 
   const { error } = await supabase.from("helper_conversations").delete().eq("id", id);
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    console.error("conversations DELETE error", { convId: id, err: error.message });
+    return NextResponse.json({ error: "Failed to delete conversation" }, { status: 500 });
+  }
   return NextResponse.json({ deleted: true });
 }

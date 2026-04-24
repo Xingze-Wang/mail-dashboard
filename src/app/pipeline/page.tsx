@@ -650,6 +650,12 @@ export default function PipelinePage() {
     }
   };
 
+  // Browse-mode skip deliberately sets a terminal status='skipped' —
+  // different from ReviewPane's skip, which only advances the cursor
+  // without flipping status. The Browse click is an explicit "don't
+  // send this one", reflected in the Skipped chip on the status
+  // sidebar; ReviewPane's is "move to next lead, I'll decide later."
+  // Don't unify these — they're different user intents.
   const handleSkip = useCallback(async (id: string) => {
     await fetch(`/api/pipeline/${id}`, {
       method: "PATCH",

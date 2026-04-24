@@ -452,26 +452,41 @@ function HelpModal({
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [history, setHistory] = useState<Array<{ id: string; title: string | null; mode: string; updated_at: string }>>([]);
+  // In-flight guard against double-create races. Two rapid sends both
+  // enter ensureConversation before conversationId has settled from the
+  // first fetch; without this ref each would POST its own new row and
+  // the history panel would show duplicate threads. The ref holds the
+  // in-flight Promise so the second caller awaits the same result.
+  const convInFlightRef = useRef<Promise<string | null> | null>(null);
 
   // Lazy-create a conversation for persistence. One unified chat now.
   const ensureConversation = useCallback(async (firstMessage: string): Promise<string | null> => {
     if (conversationId) return conversationId;
-    try {
-      const r = await fetch("/api/help/conversations", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "sales", title: firstMessage.slice(0, 120) }),
-      });
-      if (!r.ok) return null;
-      const d = await r.json();
-      if (d.conversation?.id) {
-        setConversationId(d.conversation.id);
-        return d.conversation.id;
+    if (convInFlightRef.current) return convInFlightRef.current;
+    const inFlight = (async (): Promise<string | null> => {
+      try {
+        const r = await fetch("/api/help/conversations", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mode: "sales", title: firstMessage.slice(0, 120) }),
+        });
+        if (!r.ok) return null;
+        const d = await r.json();
+        if (d.conversation?.id) {
+          setConversationId(d.conversation.id);
+          return d.conversation.id;
+        }
+      } catch {
+        // non-fatal — chat still works without persistence
       }
-    } catch {
-      // non-fatal — chat still works without persistence
+      return null;
+    })();
+    convInFlightRef.current = inFlight;
+    try {
+      return await inFlight;
+    } finally {
+      convInFlightRef.current = null;
     }
-    return null;
   }, [conversationId]);
 
   const send = useCallback(async (q: string) => {

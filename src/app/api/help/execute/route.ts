@@ -517,7 +517,12 @@ export async function POST(req: NextRequest) {
         result = { ok: false, detail: { error: `Unknown action: ${proposal.action}` } };
     }
   } catch (e) {
-    result = { ok: false, detail: { error: e instanceof Error ? e.message : String(e) } };
+    // Log the raw error server-side for debugging, but don't ship it
+    // to the client — Postgres stack hints / schema names leak when
+    // we echo e.message back. Generic string, correlated via the
+    // conversation log which captures the real detail.
+    console.error("/api/help/execute action crashed", { action: proposal.action, err: e });
+    result = { ok: false, detail: { error: "Action failed — check server logs or try again." } };
   }
 
   await logToolMessage(conversationId, proposal, result);
