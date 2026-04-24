@@ -54,12 +54,57 @@ export async function POST(
   if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
 
   // Auto-wire only global, accepted patches with a non-empty patch string.
+  // We append to BOTH the legacy `templates` table (read by the fallback
+  // email-generator path) AND `email_templates.intro_prompt` for the
+  // global row (read by the new template-assembler path). Without the
+  // second append, accepted patterns were invisible to new drafts — the
+  // Templates UI's "pipeline_intro_prompt" was no longer the actual
+  // source of truth once email_templates got seeded.
   let patchApplied = false;
+  let patchAppliedToNewTemplate = false;
   if (action === "accept" && pattern.rep_id === null && typeof pattern.prompt_patch === "string" && pattern.prompt_patch.trim()) {
-    patchApplied = await appendPatchToTemplate(String(pattern.prompt_patch).trim(), String(pattern.ai_phrase ?? ""));
+    const patch = String(pattern.prompt_patch).trim();
+    const phrase = String(pattern.ai_phrase ?? "");
+    patchApplied = await appendPatchToTemplate(patch, phrase);
+    patchAppliedToNewTemplate = await appendPatchToEmailTemplate(patch, phrase);
   }
 
-  return NextResponse.json({ ok: true, status: newStatus, patchApplied });
+  return NextResponse.json({ ok: true, status: newStatus, patchApplied, patchAppliedToNewTemplate });
+}
+
+/**
+ * Mirrors appendPatchToTemplate but writes to email_templates.intro_prompt
+ * for name='global'. The new template-assembler reads from this field
+ * when generating drafts; without this write, accepted drift patterns
+ * would only reach the legacy `templates` table (read by the fallback
+ * hardcoded path) and never influence the template-driven pipeline.
+ *
+ * Same sentinel block + per-phrase dedup as the legacy path, so both
+ * tables can be kept in sync without running into double-insert.
+ */
+async function appendPatchToEmailTemplate(patch: string, aiPhrase: string): Promise<boolean> {
+  const { data: row } = await supabase
+    .from("email_templates")
+    .select("id, intro_prompt")
+    .eq("name", "global")
+    .limit(1)
+    .maybeSingle();
+  if (!row?.id) return false; // global row not seeded — skip, don't fail
+
+  const current = (row.intro_prompt as string | null) ?? "";
+  const tag = `<!-- ai_phrase: ${aiPhrase.replace(/-->/g, "—>").slice(0, 120)} -->`;
+  const newLine = `- ${patch}  ${tag}`;
+  if (current.includes(newLine) || current.includes(tag)) return false;
+
+  const next = current.includes(PATCH_BLOCK_HEADER)
+    ? current.replace(PATCH_BLOCK_FOOTER, `${newLine}\n${PATCH_BLOCK_FOOTER}`)
+    : `${current}\n\n${PATCH_BLOCK_HEADER}\n${newLine}\n${PATCH_BLOCK_FOOTER}\n`;
+
+  const { error } = await supabase
+    .from("email_templates")
+    .update({ intro_prompt: next, updated_at: new Date().toISOString() })
+    .eq("id", row.id);
+  return !error;
 }
 
 /**

@@ -90,6 +90,14 @@ export async function POST(req: NextRequest) {
     // wrong rep. Clear it and flip back to 'queued' so the draft-queue
     // worker regenerates with the new rep's identity. Only re-queue leads
     // that have not been sent yet — sent rows keep their historical draft.
+    //
+    // Also clear draft_original_* on re-queue. Previously only
+    // draft_subject / draft_html were nulled, so the snapshotted
+    // "AI original" still held the OLD rep's signature. Drift mining
+    // then compared the new rep's edits to the old rep's baseline
+    // and attributed changes to the wrong voice. Now both the current
+    // draft and the baseline get reset, so draft-queue's next snapshot
+    // captures a clean baseline for the new rep.
     const updatePayload: Record<string, unknown> = {
       lead_tier: newTier,
       assigned_rep_id: newRepId,
@@ -100,6 +108,9 @@ export async function POST(req: NextRequest) {
       updatePayload.status = "queued";
       updatePayload.draft_subject = null;
       updatePayload.draft_html = null;
+      updatePayload.draft_original_subject = null;
+      updatePayload.draft_original_html = null;
+      updatePayload.draft_edit_distance = null;
     }
 
     const { error: updateError } = await supabase

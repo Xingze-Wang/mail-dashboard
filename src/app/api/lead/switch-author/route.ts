@@ -80,11 +80,15 @@ export async function POST(req: NextRequest) {
 
   // Log the switch — this is a training signal, the original assignment
   // was wrong. Don't fail the request if the audit insert errors (table
-  // may not exist yet on dev).
+  // may not exist yet on dev). Records BOTH rep_id (canonical FK, used
+  // by drift Human Signals) and corrected_by (legacy email field); the
+  // insert on /api/lead/correct had this pair fixed earlier, this one
+  // was previously still email-only.
   await supabase
     .from("lead_corrections")
     .insert({
       lead_id: leadId,
+      rep_id: session.repId,
       type: "wrong_author",
       reason: `Switched recipient: ${lead.author_name} → ${newAuthorName}`,
       payload: {
