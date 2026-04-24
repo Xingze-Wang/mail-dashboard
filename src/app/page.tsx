@@ -183,6 +183,9 @@ export default function OverviewPage() {
             <h1 className="page-title">My Pipeline</h1>
             <span className="lead-count">{me?.repName} · personal view</span>
           </div>
+          <a href="/pipeline#mode=review" className="btn btn-primary" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            Open next batch
+          </a>
         </div>
 
         {/* Pipeline counters (from /api/metrics/me) */}
@@ -250,40 +253,6 @@ export default function OverviewPage() {
           </div>
         )}
 
-        {/* Primary CTA below the chart — this is the natural next
-            action after sales reviews their numbers. Previously lived
-            in the top-right header, disconnected from the content. */}
-        <a
-          href="/pipeline#mode=review"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            padding: "18px 24px",
-            background: "linear-gradient(135deg, #6366F1 0%, #4F46E5 100%)",
-            color: "white",
-            borderRadius: 12,
-            textDecoration: "none",
-            boxShadow: "0 4px 12px rgba(99,102,241,0.25)",
-            transition: "transform 120ms",
-          }}
-          onMouseEnter={(e) => (e.currentTarget.style.transform = "translateY(-1px)")}
-          onMouseLeave={(e) => (e.currentTarget.style.transform = "translateY(0)")}
-        >
-          <div>
-            <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 4 }}>
-              {m?.ready && m.ready > 0 ? `${m.ready} leads ready to review` : "No leads ready right now"}
-            </div>
-            <div style={{ fontSize: 12, opacity: 0.85 }}>
-              {m?.ready && m.ready > 0
-                ? "Open Review mode to go through them one by one."
-                : "Check back after the next scan, or browse the full pipeline."}
-            </div>
-          </div>
-          <div style={{ fontSize: 14, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 6 }}>
-            Open next batch →
-          </div>
-        </a>
       </div>
     );
   }
