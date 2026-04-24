@@ -164,6 +164,7 @@ async function runScan() {
         matchedDirections: lead.matchedDirections,
         repName: rep?.sender_name,
         repWechatId: rep?.wechat_id,
+        assignedRepId: repId,
       });
     } catch (err) {
       stats.errors.push(`draft ${lead.arxivId}: ${err instanceof Error ? err.message : String(err)}`);

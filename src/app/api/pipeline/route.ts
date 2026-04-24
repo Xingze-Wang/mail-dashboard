@@ -258,6 +258,7 @@ export async function POST(req: NextRequest) {
           matchedDirections: lead.matchedDirections,
           repName: rep?.sender_name,
           repWechatId: rep?.wechat_id,
+          assignedRepId: repId,
         });
       } catch (err) {
         console.error("manual-scan draft failed", { arxivId: lead.arxivId, err: String(err) });

@@ -121,6 +121,7 @@ async function processOne(row: Record<string, unknown>): Promise<boolean> {
       matchedDirections: matchedDirs,
       repName: rep?.sender_name,
       repWechatId: rep?.wechat_id,
+      assignedRepId: newRepId,
     });
 
     await supabase

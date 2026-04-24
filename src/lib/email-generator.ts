@@ -1,4 +1,15 @@
-// Email draft generator — ported from resend0331.py lines 636-741
+// Email draft generator — ported from resend0331.py lines 636-741.
+//
+// NOTE (2026-04-23): Draft assembly has moved behind
+// `lib/template-assembler.ts`. generateDraft() now tries to load an
+// active `email_templates` row for the assigned rep and, if one
+// exists, delegates assembly to the template-driven path so per-rep
+// voice + prompt customization become possible. The legacy
+// hardcoded path below is kept as a fallback so the system keeps
+// producing drafts when migrations 010/011 haven't been applied
+// (e.g. during staged rollout). Once migrations are live in prod
+// and the global template is verified byte-identical, we can start
+// deleting the legacy bits here.
 import {
   SCHOOL_DATA,
   APPLY_URL_CTA,
@@ -6,6 +17,7 @@ import {
   type SchoolInfo,
 } from "./scanner-config";
 import { supabase } from "./db";
+import { assembleDraft, loadEffectiveTemplate } from "./template-assembler";
 
 // ============ HTML escaping ============
 
@@ -233,7 +245,41 @@ export async function generateDraft(lead: {
   matchedDirections: string[];
   repName?: string;
   repWechatId?: string;
+  // Optional — when provided, we look up a per-rep email_templates
+  // row before falling back to the global template. Callers that
+  // don't have repId (legacy code paths) still work: they just skip
+  // per-rep overrides.
+  assignedRepId?: number | null;
 }): Promise<{ subject: string; html: string }> {
+  // Template-driven path — preferred. If either the migration hasn't
+  // been applied or the table is empty, loadEffectiveTemplate returns
+  // null and we fall through to the legacy hardcoded assembly below.
+  const repName = lead.repName || "Leo";
+  const repWechat = lead.repWechatId || "Lorenserus1";
+  try {
+    const tpl = await loadEffectiveTemplate(lead.assignedRepId ?? null);
+    if (tpl) {
+      return await assembleDraft(tpl, {
+        title: lead.title,
+        abstract: lead.abstract,
+        authorEmail: lead.authorEmail,
+        firstName: lead.firstName,
+        schoolName: lead.schoolName,
+        schoolTier: lead.schoolTier,
+        matchedDirections: lead.matchedDirections,
+        repName,
+        repWechatId: repWechat,
+      });
+    }
+  } catch (err) {
+    // Template path failed — fall through to legacy. Log so it's
+    // visible but don't break draft generation.
+    console.warn("generateDraft: template path failed, using legacy", {
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  // ─── Legacy hardcoded path (kept for fallback) ───
   const schoolInfo = getSchoolInfo(lead.authorEmail);
   const greeting = lead.firstName
     ? `${escapeHtml(lead.firstName)}你好，`
@@ -252,7 +298,8 @@ export async function generateDraft(lead: {
 
   // Default to Leo only when the caller genuinely has no rep (should be rare —
   // every pipeline_leads row is assigned at insert time). Log when we fall back
-  // so a silent Leo-default doesn't sneak past us.
+  // so a silent Leo-default doesn't sneak past us. (repName / repWechat are
+  // already defined above, shared with the template-driven path.)
   if (!lead.repName || !lead.repWechatId) {
     console.warn("generateDraft: missing rep identity, falling back to Leo", {
       authorEmail: lead.authorEmail,
@@ -260,8 +307,6 @@ export async function generateDraft(lead: {
       hasWechat: !!lead.repWechatId,
     });
   }
-  const repName = lead.repName || "Leo";
-  const repWechat = lead.repWechatId || "Lorenserus1";
 
   const fullTitle = lead.title.replace(/\n/g, " ").trim();
   const closingName = lead.firstName

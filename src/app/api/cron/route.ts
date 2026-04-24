@@ -89,6 +89,7 @@ export async function GET(req: NextRequest) {
           matchedDirections: lead.matchedDirections,
           repName: rep?.sender_name,
           repWechatId: rep?.wechat_id,
+          assignedRepId: repId,
         });
       } catch (err) {
         console.error("cron draft generation failed", { arxivId: lead.arxivId, err: String(err) });
