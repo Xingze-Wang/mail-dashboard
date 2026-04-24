@@ -29,6 +29,7 @@ import { Loader2, Send, SkipForward, ArrowLeft, Flag, UserCheck, X } from "lucid
 import { sanitizeHtml } from "@/lib/sanitize";
 import { Lead, shortDate } from "./types";
 import { isAgeGated, leadAgeDays, MIN_AGE_DAYS } from "@/lib/policy";
+import { lintBrand, findsNewHits, type BrandLintHit } from "@/lib/brand-lint";
 
 /** Extracts a stable arxiv id from any of arxiv.org/abs/..., /pdf/..., with
  *  optional version suffix and .pdf extension. Returns null for non-arxiv URLs. */
@@ -148,6 +149,24 @@ export function ReviewPane({ leads, onExit, onSent, onSkipped, initialLeadId }: 
   const [idx, setIdx] = useState(0);
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
+  // Brand-lint watcher: debounce-runs against subject + body every
+  // 400ms of keystroke inactivity, fires a `brand-typo` event on any
+  // NEW hit. HelpBot listens for this and does a one-shot wave + toast
+  // so sales sees the correction even if the chat is closed. Keeping
+  // state in a ref so the effect doesn't re-render the pane on every
+  // keystroke; only the event dispatch matters.
+  const brandLintRef = useRef<BrandLintHit[]>([]);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const hits = lintBrand(`${subject}\n${body}`);
+      const fresh = findsNewHits(brandLintRef.current, hits);
+      brandLintRef.current = hits;
+      if (fresh.length > 0 && typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("brand-typo", { detail: fresh[0] }));
+      }
+    }, 400);
+    return () => clearTimeout(t);
+  }, [subject, body]);
   const [override, setOverride] = useState(false);
   const [sending, setSending] = useState(false);
   const [skipping, setSkipping] = useState(false);

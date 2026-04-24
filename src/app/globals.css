@@ -2031,6 +2031,34 @@ button { font-family: inherit; }
   70%, 100% { transform: rotate(0); }
 }
 
+/* alert — fires when a brand-typo is caught. Short + urgent: arm
+   does two fast wave arcs and the chest light flashes red. Meant to
+   interrupt for exactly 3s, then the CSS animation finishes and the
+   component flips back to its prior mood. */
+.help-bot-button[data-robot-mood="alert"] svg .robot-body {
+  animation: robot-alert-body 0.9s ease-in-out 3;
+}
+.help-bot-button[data-robot-mood="alert"] svg .robot-arm-right {
+  animation: robot-arm-alert 0.6s ease-in-out 5;
+}
+.help-bot-button[data-robot-mood="alert"] svg .robot-chest-light {
+  fill: #dc2626;
+  animation: robot-chest-alert 0.5s ease-in-out infinite;
+}
+@keyframes robot-alert-body {
+  0%, 100% { transform: translateY(0) rotate(0); }
+  25%      { transform: translateY(-1px) rotate(-6deg); }
+  75%      { transform: translateY(-1px) rotate(6deg); }
+}
+@keyframes robot-arm-alert {
+  0%, 100% { transform: rotate(-10deg); }
+  50%      { transform: rotate(-70deg); }
+}
+@keyframes robot-chest-alert {
+  0%, 100% { transform: scale(1);   opacity: 1;   }
+  50%      { transform: scale(1.5); opacity: 0.5; }
+}
+
 /* Respect reduced-motion: keep the character but drop the movement. */
 @media (prefers-reduced-motion: reduce) {
   .help-bot-button svg .robot-body,

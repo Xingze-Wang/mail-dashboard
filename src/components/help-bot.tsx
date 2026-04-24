@@ -26,7 +26,7 @@ import { Sparkles, X, Send, Loader2, Plus, Clock, Check } from "lucide-react";
  * past the circle's top edge. Colors stay on-brand with the existing
  * indigo→pink gradient — robot is white with subtle shading.
  */
-function CuteRobot({ mood }: { mood: "idle" | "wave" | "peek" }) {
+function CuteRobot({ mood }: { mood: "idle" | "wave" | "peek" | "alert" }) {
   return (
     <svg
       data-mood={mood}
@@ -298,14 +298,35 @@ export function HelpBot() {
     }
   }
 
-  // Robot mood drives the CSS animation. peek > wave > idle. Peek when a
-  // signal-based chime-in is pending (wants attention). Wave when a daily
-  // opener is ready but no chime-in (friendly hi). Idle otherwise.
-  const robotMood: "idle" | "wave" | "peek" = pendingChimeIn
-    ? "peek"
-    : pendingOpener
-      ? "wave"
-      : "idle";
+  // Brand-typo alert — surfaces as a one-shot "alert" mood on the
+  // robot + a short toast. Listens for 'brand-typo' dispatched by
+  // ReviewPane's brand-lint watcher. Auto-clears after 3s so the
+  // robot returns to its prior mood.
+  const [brandAlert, setBrandAlert] = useState<{ found: string; expected: string; note?: string } | null>(null);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onTypo = (e: Event) => {
+      const hit = (e as CustomEvent).detail as { found: string; expected: string; note?: string } | undefined;
+      if (!hit) return;
+      setBrandAlert({ found: hit.found, expected: hit.expected, note: hit.note });
+      setTimeout(() => setBrandAlert(null), 3500);
+    };
+    window.addEventListener("brand-typo", onTypo);
+    return () => window.removeEventListener("brand-typo", onTypo);
+  }, []);
+
+  // Robot mood drives the CSS animation. alert > peek > wave > idle.
+  // Alert when a brand-typo was just dispatched (wave-and-warn).
+  // Peek when a signal-based chime-in is pending (wants attention).
+  // Wave when a daily opener is ready but no chime-in (friendly hi).
+  // Idle otherwise.
+  const robotMood: "idle" | "wave" | "peek" | "alert" = brandAlert
+    ? "alert"
+    : pendingChimeIn
+      ? "peek"
+      : pendingOpener
+        ? "wave"
+        : "idle";
 
   return (
     <>
@@ -387,6 +408,49 @@ export function HelpBot() {
         </div>
       )}
 
+      {/* Brand-typo toast — pops next to the robot when ReviewPane's
+          brand-lint watcher spots a disallowed variant. Intentionally
+          lightweight: no action buttons, just the correction. Auto-
+          dismisses after 3.5s (same timer as the 'alert' mood). */}
+      {brandAlert && (
+        <div
+          style={{
+            position: "fixed",
+            bottom: pos.y + 8,
+            right: pos.x + 64,
+            zIndex: 62,
+            background: "#FEF2F2",
+            color: "#991B1B",
+            borderRadius: 12,
+            padding: "10px 14px",
+            maxWidth: 300,
+            fontSize: 12.5,
+            lineHeight: 1.45,
+            boxShadow: "0 8px 24px rgba(220,38,38,0.18)",
+            border: "1px solid #FCA5A5",
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 8,
+          }}
+        >
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 600, marginBottom: 2 }}>
+              「{brandAlert.found}」 → 「{brandAlert.expected}」
+            </div>
+            {brandAlert.note && (
+              <div style={{ fontSize: 11.5, color: "#7F1D1D", opacity: 0.85 }}>{brandAlert.note}</div>
+            )}
+          </div>
+          <button
+            onClick={() => setBrandAlert(null)}
+            title="Dismiss"
+            style={{ background: "transparent", border: 0, color: "#991B1B", cursor: "pointer", padding: 0, lineHeight: 0, opacity: 0.6 }}
+          >
+            <X style={{ width: 13, height: 13 }} />
+          </button>
+        </div>
+      )}
+
       {open && (
         <HelpModal
           pathname={pathname}
@@ -416,10 +480,29 @@ function HelpModal({
   chimeIn?: { type: string; message: string } | null;
   onConsumeSeed?: () => void;
 }) {
-  const [currentLead] = useState<CurrentReviewLead | null>(() => {
+  // Keep currentLead in sync with the paper the rep is actually
+  // looking at. Previously this was a one-shot read on modal mount,
+  // so if sales J/Ks through leads in ReviewPane while the helper
+  // is open, the LLM kept thinking they were asking about the
+  // original paper — answers about "this paper" drifted.
+  const [currentLead, setCurrentLead] = useState<CurrentReviewLead | null>(() => {
     if (typeof window === "undefined") return null;
     return window.__currentReviewLead ?? null;
   });
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const tick = () => {
+      const next = window.__currentReviewLead ?? null;
+      setCurrentLead((prev) => {
+        if ((prev?.id ?? null) === (next?.id ?? null)) return prev;
+        return next;
+      });
+    };
+    // 1s poll is cheap (identity check + setState no-op when unchanged)
+    // and matches the same cadence used for the review-linger nudge.
+    const iv = setInterval(tick, 1000);
+    return () => clearInterval(iv);
+  }, []);
 
   // Seed chime-in (proactive signal) first, then daily opener. Both
   // get their own message bubble so the rep can see they're distinct
