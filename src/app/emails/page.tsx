@@ -28,7 +28,7 @@ interface Email {
 }
 
 interface BriefData {
-  id: string;
+  id: string | null;
   personName: string;
   firstName: string | null;
   paper: {
@@ -38,7 +38,7 @@ interface BriefData {
     abstract: string | null;
     authors: string | null;
     publishedAt: string | null;
-  };
+  } | null;
   research: {
     computeLevel: string | null;
     computeConfidence: number | null;
@@ -54,6 +54,7 @@ interface BriefData {
     sentAt: string | null;
   };
   authorMismatch: { note: string } | null;
+  source?: "pipeline_lead" | "paper_author" | "email-only";
 }
 
 function computeBadgeClass(level: string | null) {
@@ -70,6 +71,7 @@ function BriefPanel({ email }: { email: Email }) {
   const [talkingPoints, setTalkingPoints] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [summaryLoading, setSummaryLoading] = useState(false);
+  const [wechatError, setWechatError] = useState<string | null>(null);
 
   // Reset when email changes
   useEffect(() => {
@@ -77,6 +79,7 @@ function BriefPanel({ email }: { email: Email }) {
     setBrief(null);
     setSummary(null);
     setTalkingPoints([]);
+    setWechatError(null);
   }, [email.to]);
 
   const handleActivate = async () => {
@@ -87,22 +90,48 @@ function BriefPanel({ email }: { email: Email }) {
       // 1. Fetch brief data
       const res = await fetch(`/api/brief?email=${encodeURIComponent(email.to)}`);
       const data = await res.json();
-      const match = data.briefs?.[0] ?? null;
+      const match: BriefData | null = data.briefs?.[0] ?? null;
       setBrief(match);
 
-      if (match) {
-        // 2. Record WeChat addition
-        fetch("/api/brief/wechat", {
+      // 2. Record WeChat addition — fire regardless of whether we have a
+      // real pipeline_lead match. The /api/brief/wechat route accepts
+      // null lead_id / arxiv_id (plain insert path), so legacy emails
+      // with no pipeline_lead row can still record the conversion.
+      //
+      // For legacy paper-author hits, the brief may set `id` to the arxiv
+      // string (not a UUID); in that case we send null so the API takes
+      // the plain-insert branch instead of upserting against a non-FK id.
+      const candidateLeadId = typeof match?.id === "string" && /^[0-9a-f-]{36}$/i.test(match.id)
+        ? match.id
+        : null;
+      try {
+        const wechatRes = await fetch("/api/brief/wechat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             query: email.to,
-            arxiv_id: match.paper.arxivId,
-            lead_id: match.id,
+            arxiv_id: match?.paper?.arxivId ?? null,
+            lead_id: candidateLeadId,
           }),
-        }).catch(() => {});
+        });
+        if (!wechatRes.ok) {
+          const body = await wechatRes.json().catch(() => ({}));
+          // Surface the failure so the rep doesn't see a green "recorded"
+          // badge for a conversion that didn't actually land in the DB.
+          // Common failure mode for legacy emails: marked_by_rep_id /
+          // wechat_at column missing in this prod's brief_lookups.
+          setWechatError(body.error || `Failed (HTTP ${wechatRes.status})`);
+        } else {
+          setWechatError(null);
+        }
+      } catch (err) {
+        setWechatError(err instanceof Error ? err.message : "Network error");
+      }
 
-        // 3. Fetch AI summary + talking points
+      // 3. Fetch AI summary + talking points — only when we have a real
+      // lead with a paper; the synthetic email-only brief has no id and
+      // nothing for the summarizer to chew on.
+      if (match && match.id && match.paper && match.source !== "email-only") {
         setSummaryLoading(true);
         const sumRes = await fetch(`/api/brief/summary?id=${encodeURIComponent(match.id)}`);
         const sumData = await sumRes.json();
@@ -154,7 +183,9 @@ function BriefPanel({ email }: { email: Email }) {
     );
   }
 
-  // No match found
+  // No brief at all (shouldn't happen now — /api/brief returns a synthetic
+  // email-only brief as a fallback — but keep this as a defensive empty state
+  // for the truly-empty case, e.g. an API error).
   if (!brief) {
     return (
       <div className="section-card" style={{ padding: 16 }}>
@@ -166,6 +197,38 @@ function BriefPanel({ email }: { email: Email }) {
   }
 
   const { paper, research } = brief;
+  const isEmailOnly = brief.source === "email-only" || !paper;
+
+  // Synthetic / legacy email-only brief: no paper match in pipeline_leads.
+  // Render a minimal card so the rep can still see the WeChat-recorded
+  // confirmation and (the API call already fired in handleActivate) know
+  // the conversion was logged.
+  if (isEmailOnly) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        {wechatError ? (
+          <div style={{ borderRadius: 8, background: "#FEF2F2", border: "1px solid #FCA5A5", padding: "8px 14px" }}>
+            <p style={{ fontSize: 11, color: "#B91C1C", fontWeight: 600 }}>WeChat conversion NOT recorded</p>
+            <p style={{ fontSize: 11, color: "#B91C1C", opacity: 0.9, marginTop: 2 }}>{wechatError}</p>
+          </div>
+        ) : (
+          <div style={{ borderRadius: 8, background: "var(--green-bg)", border: "1px solid #BBF7D0", padding: "8px 14px" }}>
+            <p style={{ fontSize: 11, color: "var(--green)", fontWeight: 600 }}>Added on WeChat — recorded</p>
+          </div>
+        )}
+        <div className="section-card" style={{ padding: 16 }}>
+          <p style={{ fontSize: 11, color: "var(--text-tertiary)", fontWeight: 600, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+            Recipient
+          </p>
+          <p style={{ fontSize: 13, color: "var(--text)", fontWeight: 600, marginBottom: 4 }}>{brief.personName}</p>
+          <p style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 8 }}>{email.to}</p>
+          <p style={{ fontSize: 11.5, color: "var(--text-secondary)", lineHeight: 1.6 }}>
+            No matching paper in the pipeline for this email (sent via legacy path). The WeChat conversion has still been recorded.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>

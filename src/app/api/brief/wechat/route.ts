@@ -53,6 +53,16 @@ export async function POST(req: NextRequest) {
         .single();
 
   if (error) {
+    // Log so we can diagnose legacy-email failures (e.g. missing
+    // marked_by_rep_id column, partial-index conflicts, FK rejections).
+    // The fire-and-forget UI used to swallow these silently.
+    console.error("brief/wechat insert failed", {
+      query,
+      lead_id: lead_id || null,
+      arxiv_id: arxiv_id || null,
+      err: error.message,
+      code: (error as { code?: string }).code,
+    });
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 

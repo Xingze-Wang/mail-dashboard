@@ -177,13 +177,18 @@ function normalizeConfig(raw: unknown): AssignmentConfig {
   };
 }
 
+// "Active" gates new-lead routing eligibility (see assignRep config logic),
+// not name/identity resolution. Once we have a rep_id, we always want the
+// real row — historical leads, sends, drift edits, etc. all need to render
+// correctly even after a rep is marked inactive. Filtering by active here
+// caused "Unknown rep" labels and silent fallback to env defaults in
+// pipeline/send when an inactive rep tried to resend.
 export async function getRep(id: number): Promise<SalesRep | null> {
   try {
     const { data } = await supabase
       .from("sales_reps")
       .select("*")
       .eq("id", id)
-      .eq("active", true)
       .single();
     return data as SalesRep | null;
   } catch {
@@ -196,7 +201,6 @@ export async function getAllReps(): Promise<SalesRep[]> {
     const { data } = await supabase
       .from("sales_reps")
       .select("*")
-      .eq("active", true)
       .order("id");
     return (data ?? []) as SalesRep[];
   } catch {

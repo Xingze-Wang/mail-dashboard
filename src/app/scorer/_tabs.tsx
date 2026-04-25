@@ -712,6 +712,8 @@ interface LRModelDoc {
   iterations: number;
   trained_at?: string;
   trained_by?: string;
+  label_stats?: { recipients: number; clicked: number; wechat: number; either: number };
+  label_weights?: { wechat: number; click: number };
 }
 
 export function ConversionTrainer() {
@@ -799,6 +801,31 @@ export function ConversionTrainer() {
               </tr>
             </tbody>
           </table>
+          {model.label_stats && (
+            <div style={{
+              marginTop: 10,
+              padding: "8px 10px",
+              border: "1px solid var(--border-light)",
+              borderRadius: 6,
+              background: "var(--bg)",
+              fontSize: 11,
+              color: "var(--text-secondary)",
+              lineHeight: 1.6,
+            }}>
+              <strong style={{ color: "var(--text)" }}>Label composition:</strong>{" "}
+              {model.label_stats.wechat} WeChat · {model.label_stats.clicked} clicks · {model.label_stats.either} positives of {model.label_stats.recipients} recipients
+              {model.label_weights && (
+                <>
+                  {" "}· weights {model.label_weights.wechat}:{model.label_weights.click}:1 (wechat:click:negative)
+                </>
+              )}
+              {model.label_stats.either < 20 && (
+                <div style={{ color: "#d97706", marginTop: 4 }}>
+                  ⚠ Small positive class — AUC and weights are unstable. Treat numbers as directional.
+                </div>
+              )}
+            </div>
+          )}
           {model.trained_at && (
             <p style={{ fontSize: 10.5, color: "var(--text-tertiary)", marginTop: 10 }}>
               Trained {new Date(model.trained_at).toLocaleString()}

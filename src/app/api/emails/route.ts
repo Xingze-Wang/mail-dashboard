@@ -42,37 +42,34 @@ export async function GET(req: NextRequest) {
 
     if (status) q = q.eq("status", status);
     if (senderEmail) q = q.ilike("from", `%${senderEmail}%`);
+    if (search) {
+      // Search across recipient, subject, AND body content (text + html)
+      // in one OR query. Previously the route only hit `to` then fell
+      // back to `subject` if `to` was empty — which silently shadowed
+      // subject matches whenever any recipient happened to match, and
+      // never searched body content at all. Postgrest .or() escapes
+      // commas inside the value if we wrap with quotes; we strip any
+      // commas from the term to keep the syntax simple.
+      const safe = search.replace(/[,()]/g, " ").trim();
+      const needle = `%${safe}%`;
+      q = q.or(
+        [
+          `to.ilike.${needle}`,
+          `subject.ilike.${needle}`,
+          `text.ilike.${needle}`,
+          `html.ilike.${needle}`,
+        ].join(","),
+      );
+    }
     return q;
   }
 
-  let emails: Record<string, unknown>[] = [];
-  let total = 0;
-
-  if (search) {
-    // Priority 1: search by recipient email (to field)
-    let q = buildQuery(false).ilike("to", `%${search}%`);
-    let cq = buildQuery(true).ilike("to", `%${search}%`);
-    const [{ data: toResults }, { count: toCount }] = await Promise.all([q, cq]);
-
-    if (toResults && toResults.length > 0) {
-      emails = toResults;
-      total = toCount || 0;
-    } else {
-      // Priority 2: fall back to subject search
-      q = buildQuery(false).ilike("subject", `%${search}%`);
-      cq = buildQuery(true).ilike("subject", `%${search}%`);
-      const [{ data: subResults }, { count: subCount }] = await Promise.all([q, cq]);
-      emails = subResults || [];
-      total = subCount || 0;
-    }
-  } else {
-    const [{ data }, { count }] = await Promise.all([
-      buildQuery(false),
-      buildQuery(true),
-    ]);
-    emails = data || [];
-    total = count || 0;
-  }
+  const [{ data }, { count }] = await Promise.all([
+    buildQuery(false),
+    buildQuery(true),
+  ]);
+  const emails: Record<string, unknown>[] = data || [];
+  const total = count || 0;
 
   let mapped = emails.map((e) => ({
     id: e.id,
