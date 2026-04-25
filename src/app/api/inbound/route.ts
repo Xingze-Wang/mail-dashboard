@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { requireSession } from "@/lib/auth-helpers";
 import { getRep } from "@/lib/assignment";
+import { resolveInboundRepId } from "@/lib/inbound-attribution";
 
 /** Clean up `to` field — handles JSON array strings like '["a@b.com"]' */
 function cleanToField(to: string | null): string {
@@ -55,11 +56,13 @@ export async function POST(req: NextRequest) {
       threadId = `thread_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
     }
 
+    const toField = Array.isArray(to) ? to.join(", ") : (to || "");
+    const repId = await resolveInboundRepId(toField, threadId);
     const { data: inbound, error } = await supabase
       .from("inbound_emails")
       .insert({
         from: from || "unknown",
-        to: Array.isArray(to) ? to.join(", ") : (to || ""),
+        to: toField,
         subject: subject || "(no subject)",
         html: html || null,
         text: text || null,
@@ -67,6 +70,7 @@ export async function POST(req: NextRequest) {
         in_reply_to: in_reply_to || null,
         references: references || null,
         thread_id: threadId,
+        rep_id: repId,
         headers: headers ? JSON.stringify(headers) : null,
       })
       .select()
@@ -97,11 +101,14 @@ export async function POST(req: NextRequest) {
       const outboundToRaw = outbound?.[0]?.to as string | undefined;
       const recipient = outboundToRaw ? cleanToField(outboundToRaw).split(",")[0].trim().toLowerCase() : "";
       if (recipient) {
-        // Only flip 'sent' → 'replied'. Don't overwrite 'skipped' /
-        // 'wechat_added' if a reply lands after a later state flip.
+        // Only flip 'sent' → 'replied', and ONLY on the lead tied to
+        // this thread. Previously this matched by author_email alone
+        // and could flip an unrelated lead to the same email that
+        // happened to be in 'sent' state for a different paper.
         await supabase
           .from("pipeline_leads")
           .update({ status: "replied" })
+          .eq("thread_id", threadId)
           .ilike("author_email", recipient)
           .eq("status", "sent");
       }
@@ -132,7 +139,19 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const isPrivileged = session.role === "admin";
-  let threadIds: string[] | null = null;
+
+  // Per-rep scope: a row is "this rep's" if EITHER
+  //   (a) inbound_emails.rep_id = session.repId  (canonical, stamped by
+  //       resolveInboundRepId at write time), OR
+  //   (b) the inbound's thread_id is one this rep sent on (covers
+  //       legacy rows written before rep_id was added in migration 014,
+  //       and rows where the inbound came in on a thread but the
+  //       resolver couldn't pin a rep, e.g. team-alias To).
+  // Previously we ONLY used (b) — which silently hid correctly
+  // attributed inbound from the rep when the originating outbound was
+  // missing or had no thread_id link. That's the "replies in the wrong
+  // mailbox" symptom.
+  let allowedThreadIds: string[] | null = null;
   if (!isPrivileged) {
     const rep = await getRep(session.repId);
     if (!rep?.sender_email) {
@@ -141,12 +160,28 @@ export async function GET(req: NextRequest) {
     const { data: outbound } = await supabase
       .from("emails")
       .select("thread_id")
-      .ilike("from", `%${rep.sender_email}%`)
+      .or(`rep_id.eq.${session.repId},from.ilike.%${rep.sender_email}%`)
       .not("thread_id", "is", null);
-    threadIds = (outbound ?? [])
-      .map((r) => r.thread_id as string | null)
-      .filter((t): t is string => !!t);
-    if (threadIds.length === 0) return NextResponse.json({ emails: [], total: 0, page, limit });
+    allowedThreadIds = Array.from(
+      new Set(
+        (outbound ?? [])
+          .map((r) => r.thread_id as string | null)
+          .filter((t): t is string => !!t),
+      ),
+    );
+  }
+
+  // Build the per-rep OR filter once: "rep_id = X OR thread_id IN (...)".
+  // Postgrest .or() takes a comma-separated string of filters. List
+  // values inside .in.() must be paren-wrapped. Quote thread ids so any
+  // commas in the id string don't terminate the list early.
+  let scopeFilter: string | null = null;
+  if (!isPrivileged) {
+    const parts = [`rep_id.eq.${session.repId}`];
+    if (allowedThreadIds && allowedThreadIds.length > 0) {
+      parts.push(`thread_id.in.(${allowedThreadIds.map((t) => `"${t}"`).join(",")})`);
+    }
+    scopeFilter = parts.join(",");
   }
 
   let listQuery = supabase
@@ -157,14 +192,14 @@ export async function GET(req: NextRequest) {
   let countQuery = supabase
     .from("inbound_emails")
     .select("*", { count: "exact", head: true });
-  if (threadIds) {
-    listQuery = listQuery.in("thread_id", threadIds);
-    countQuery = countQuery.in("thread_id", threadIds);
+  if (scopeFilter) {
+    listQuery = listQuery.or(scopeFilter);
+    countQuery = countQuery.or(scopeFilter);
   }
   const [{ data: emails }, { count: total }] = await Promise.all([listQuery, countQuery]);
 
   // Map snake_case DB fields to camelCase for frontend
-  let mapped = (emails || []).map((e) => ({
+  const mapped = (emails || []).map((e) => ({
     id: e.id,
     from: e.from,
     to: cleanToField(e.to),
@@ -177,11 +212,5 @@ export async function GET(req: NextRequest) {
     threadId: e.thread_id,
   }));
 
-  // Defense in depth: restrict to ids in the rep's thread scope.
-  if (threadIds) {
-    const scope = new Set(threadIds);
-    mapped = mapped.filter((m) => !!m.threadId && scope.has(m.threadId));
-  }
-
-  return NextResponse.json({ emails: mapped, total: threadIds ? mapped.length : (total || 0), page, limit });
+  return NextResponse.json({ emails: mapped, total: total ?? mapped.length, page, limit });
 }
