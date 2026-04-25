@@ -44,22 +44,30 @@ export async function GET(req: NextRequest) {
     if (senderEmail) q = q.ilike("from", `%${senderEmail}%`);
     if (search) {
       // Search across recipient, subject, AND body content (text + html)
-      // in one OR query. Previously the route only hit `to` then fell
-      // back to `subject` if `to` was empty — which silently shadowed
-      // subject matches whenever any recipient happened to match, and
-      // never searched body content at all. Postgrest .or() escapes
-      // commas inside the value if we wrap with quotes; we strip any
-      // commas from the term to keep the syntax simple.
-      const safe = search.replace(/[,()]/g, " ").trim();
-      const needle = `%${safe}%`;
-      q = q.or(
-        [
-          `to.ilike.${needle}`,
-          `subject.ilike.${needle}`,
-          `text.ilike.${needle}`,
-          `html.ilike.${needle}`,
-        ].join(","),
-      );
+      // in one OR query.
+      //
+      // Postgrest .or() syntax is *different* from a chained .ilike():
+      //   - chained .ilike("col", "%foo%")  uses SQL '%' wildcard
+      //   - inside .or() the wildcard is '*' (it's translated server-side)
+      //
+      // The previous version used '%' inside .or() which postgrest treats
+      // as a literal — so search returned 0 rows for every body-content
+      // query unless the email contained a literal percent sign. Use '*'
+      // here. Also strip commas/parens/asterisks from the user term so
+      // they can't break .or()'s comma-separated parser, and wrap with
+      // quotes for safety on terms with spaces.
+      const safe = search.replace(/[,()*"]/g, " ").trim();
+      if (safe.length > 0) {
+        const needle = `*${safe}*`;
+        q = q.or(
+          [
+            `to.ilike.${needle}`,
+            `subject.ilike.${needle}`,
+            `text.ilike.${needle}`,
+            `html.ilike.${needle}`,
+          ].join(","),
+        );
+      }
     }
     return q;
   }
