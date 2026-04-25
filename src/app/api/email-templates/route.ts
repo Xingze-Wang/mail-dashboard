@@ -26,7 +26,20 @@ export async function GET(req: NextRequest) {
     .order("name", { ascending: true });
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  return NextResponse.json({ templates: data ?? [] });
+  // Attach rep_name so the UI shows "Leo" instead of "rep #3" on per-rep rows.
+  const { data: repsRaw } = await supabase.from("sales_reps").select("id, name, sender_name");
+  const repNameById = new Map<number, string>();
+  for (const r of repsRaw ?? []) {
+    const id = r.id as number;
+    const display = (r.sender_name as string | null) || (r.name as string | null) || "Unknown rep";
+    repNameById.set(id, display);
+  }
+  const templates = (data ?? []).map((t) => ({
+    ...t,
+    rep_name: t.rep_id == null ? null : (repNameById.get(t.rep_id as number) ?? "Unknown rep"),
+  }));
+
+  return NextResponse.json({ templates });
 }
 
 export async function PATCH(req: NextRequest) {

@@ -88,9 +88,28 @@ export async function GET(req: NextRequest) {
     correctionTypeCount[c.type] = (correctionTypeCount[c.type] ?? 0) + 1;
   }
 
+  // Attach rep_name to each row so the UI can show "· Leo" instead of
+  // "· rep #3". Load all reps including inactive — historical edits and
+  // corrections may belong to someone who's since been deactivated.
+  const { data: repsRaw } = await supabase.from("sales_reps").select("id, name, sender_name");
+  const repNameById = new Map<number, string>();
+  for (const r of repsRaw ?? []) {
+    const id = r.id as number;
+    const display = (r.sender_name as string | null) || (r.name as string | null) || "Unknown rep";
+    repNameById.set(id, display);
+  }
+  const editsWithName = edits.map((e) => ({
+    ...e,
+    rep_name: e.assigned_rep_id == null ? null : (repNameById.get(e.assigned_rep_id) ?? "Unknown rep"),
+  }));
+  const correctionsWithName = corrections.map((c) => ({
+    ...c,
+    rep_name: c.rep_id == null ? null : (repNameById.get(c.rep_id) ?? "Unknown rep"),
+  }));
+
   return NextResponse.json({
-    edits,
-    corrections,
+    edits: editsWithName,
+    corrections: correctionsWithName,
     stats: {
       editsShown: edits.length,
       editsWithNote,

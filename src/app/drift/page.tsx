@@ -10,6 +10,7 @@ interface Pattern {
   id: string;
   detected_at: string;
   rep_id: number | null;
+  rep_name: string | null;
   category: string;
   ai_phrase: string;
   sales_phrase: string | null;
@@ -59,6 +60,11 @@ export default function DriftPage() {
   const [mineNote, setMineNote] = useState<string | null>(null);
   const [actingId, setActingId] = useState<string | null>(null);
   const [setupHint, setSetupHint] = useState<string | null>(null);
+  // Most recent prompt_drift_patterns.detected_at across all rows — gives
+  // admin a quick "is the miner actually running?" signal at the top of
+  // the page. Pulled with an unfiltered, status=all, limit=1 query so
+  // current filters don't hide a fresh miner run.
+  const [lastMinedAt, setLastMinedAt] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/auth/me")
@@ -93,6 +99,29 @@ export default function DriftPage() {
     if (gated !== "allowed") return;
     reload();
   }, [gated, reload]);
+
+  // Independent of `reload` so filter changes don't refetch this. We just
+  // want the newest detected_at across the whole table.
+  useEffect(() => {
+    if (gated !== "allowed") return;
+    let cancelled = false;
+    (async () => {
+      try {
+        // status param is ignored when value is "all" (server treats null as
+        // all), so we just omit it. Patterns come back newest-first.
+        const r = await fetch("/api/drift/patterns", { cache: "no-store" });
+        const d = await r.json();
+        if (cancelled) return;
+        const newest = Array.isArray(d.patterns) && d.patterns.length > 0
+          ? (d.patterns[0] as Pattern).detected_at
+          : null;
+        setLastMinedAt(newest);
+      } catch {
+        // non-fatal — the hint just won't render
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [gated, patterns]);
 
   async function runMiner() {
     setMining(true);
@@ -155,6 +184,9 @@ export default function DriftPage() {
           </h1>
           <p style={{ color: "var(--muted)", marginTop: 6, fontSize: 13 }}>
             Patterns mined from sales edits. Accepted patterns are appended to <code>pipeline_intro_prompt</code>.
+          </p>
+          <p style={{ color: "var(--muted)", marginTop: 4, fontSize: 12 }}>
+            last mined at: {lastMinedAt ? new Date(lastMinedAt).toLocaleString() : "never run"}
           </p>
         </div>
         {tab === "patterns" && (
@@ -695,7 +727,7 @@ function PatternCard({
           </span>
           <span style={{ fontSize: 12, color: "var(--muted)" }}>×{p.occurrence_count}</span>
           {p.rep_id !== null && (
-            <span style={{ fontSize: 11, color: "var(--muted)" }}>· rep {p.rep_id}</span>
+            <span style={{ fontSize: 11, color: "var(--muted)" }}>· {p.rep_name ?? `rep #${p.rep_id}`}</span>
           )}
           {p.status !== "pending" && (
             <span
@@ -810,12 +842,14 @@ interface HumanSignalsEdit {
   draft_edit_distance: number | null;
   sent_at: string | null;
   assigned_rep_id: number | null;
+  rep_name: string | null;
 }
 
 interface HumanSignalsCorrection {
   id: string;
   lead_id: string;
   rep_id: number | null;
+  rep_name: string | null;
   type: string;
   reason: string | null;
   severity: string | null;
@@ -1088,7 +1122,7 @@ function EditRow({ edit }: { edit: HumanSignalsEdit }) {
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
         <span style={{ fontSize: 11, color: "var(--muted)" }}>{sentAt}</span>
         {edit.assigned_rep_id !== null && (
-          <span style={{ fontSize: 11, color: "var(--muted)" }}>· rep #{edit.assigned_rep_id}</span>
+          <span style={{ fontSize: 11, color: "var(--muted)" }}>· {edit.rep_name ?? `rep #${edit.assigned_rep_id}`}</span>
         )}
         {edit.draft_edit_distance !== null && (
           <span style={{ fontSize: 11, color: "var(--muted)" }}>· {edit.draft_edit_distance}字 edit distance</span>
@@ -1138,7 +1172,7 @@ function CorrectionRow({ correction }: { correction: HumanSignalsCorrection }) {
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
         <span style={{ fontSize: 11, color: "var(--muted)" }}>{createdAt}</span>
         {correction.rep_id !== null && (
-          <span style={{ fontSize: 11, color: "var(--muted)" }}>· rep #{correction.rep_id}</span>
+          <span style={{ fontSize: 11, color: "var(--muted)" }}>· {correction.rep_name ?? `rep #${correction.rep_id}`}</span>
         )}
         <span style={{
           fontSize: 10, padding: "2px 7px", borderRadius: 999,

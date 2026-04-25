@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { requireAdmin } from "@/lib/auth-helpers";
 import { getAssignmentConfig, classifyLead, assignRep, getRep } from "@/lib/assignment";
+import { isContactedLeadStatus, REACHABLE_EMAIL_STATUSES } from "@/lib/status";
 
 export const dynamic = "force-dynamic";
 
@@ -119,9 +120,7 @@ export async function GET(req: NextRequest) {
     );
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   const leads = (leadsRaw ?? []) as LeadRow[];
-  const sent = leads.filter((l) =>
-    l.status === "sent" || l.status === "replied" || l.status === "wechat_added",
-  );
+  const sent = leads.filter((l) => isContactedLeadStatus(l.status));
 
   const { data: wechatRaw } = await supabase
     .from("brief_lookups")
@@ -141,7 +140,7 @@ export async function GET(req: NextRequest) {
     const { data: page } = await supabase
       .from("emails")
       .select("from, to, status")
-      .in("status", ["delivered", "clicked", "sent", "replied"])
+      .in("status", [...REACHABLE_EMAIL_STATUSES])
       .range(cursor, cursor + pageSize - 1);
     if (!page || page.length === 0) break;
     allEmails.push(...page);
@@ -150,13 +149,15 @@ export async function GET(req: NextRequest) {
     if (cursor > 20_000) break;
   }
 
-  const { data: repsRaw } = await supabase.from("sales_reps").select("id, sender_name, sender_email").eq("active", true);
+  // Load all reps including inactive — they still own historical sends and
+  // we want their actual name on the by-rep table, not "rep 5".
+  const { data: repsRaw } = await supabase.from("sales_reps").select("id, name, sender_name, sender_email");
   const repsByEmail = new Map<string, { id: number; name: string }>();
   const repsById = new Map<number, { id: number; name: string; email: string }>();
   for (const r of repsRaw ?? []) {
     const id = r.id as number;
     const email = String(r.sender_email ?? "").toLowerCase().trim();
-    const name = String(r.sender_name ?? `rep ${id}`);
+    const name = String(r.sender_name || r.name || "Unknown rep");
     if (email) repsByEmail.set(email, { id, name });
     repsById.set(id, { id, name, email });
   }
@@ -192,7 +193,7 @@ export async function GET(req: NextRequest) {
 
   const byRep = Array.from(repContacts.entries()).map(([repId, v]) => ({
     repId,
-    repName: repsById.get(repId)?.name ?? `rep ${repId}`,
+    repName: repsById.get(repId)?.name ?? "Unknown rep",
     sent: v.recipients.size,
     converted: v.converted,
     convRate: v.recipients.size > 0 ? Math.round((v.converted / v.recipients.size) * 1000) / 10 : 0,

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { requireAdmin } from "@/lib/auth-helpers";
+import { REACHABLE_EMAIL_STATUSES } from "@/lib/status";
 
 export const dynamic = "force-dynamic";
 
@@ -60,7 +61,7 @@ export async function GET(req: NextRequest) {
   // Only count sends that actually landed in an inbox — bounced doesn't
   // count toward the denominator because the recipient never saw it.
   const deliveredEmails = allEmails.filter((e) =>
-    e.status === "delivered" || e.status === "clicked" || e.status === "sent" || e.status === "replied",
+    (REACHABLE_EMAIL_STATUSES as readonly string[]).includes(e.status ?? ""),
   );
   const firstByRecipient = new Map<string, EmailRow>();
   for (const e of deliveredEmails) {
@@ -80,6 +81,17 @@ export async function GET(req: NextRequest) {
   for (const l of (leadsRaw ?? []) as LeadRow[]) {
     const em = (l.author_email ?? "").toLowerCase().trim();
     if (em) leadsByEmail.set(em, l);
+  }
+
+  // ── Reps (for the by-rep bucket label) — load all, including inactive ──
+  const { data: repsRaw } = await supabase
+    .from("sales_reps")
+    .select("id, name, sender_name");
+  const repNameById = new Map<number, string>();
+  for (const r of repsRaw ?? []) {
+    const id = r.id as number;
+    const display = (r.sender_name as string | null) || (r.name as string | null) || "Unknown rep";
+    repNameById.set(id, display);
   }
 
   // ── WeChat conversions ──
@@ -177,7 +189,7 @@ export async function GET(req: NextRequest) {
 
   const repBucket = bucketize((r) => {
     if (!r.lead || r.lead.assigned_rep_id === null) return "(unassigned)";
-    return `rep ${r.lead.assigned_rep_id}`;
+    return repNameById.get(r.lead.assigned_rep_id) ?? "Unknown rep";
   });
 
   const dirBucket = bucketize((r) => {

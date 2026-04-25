@@ -21,6 +21,7 @@ interface EmailTemplate {
   id: string;
   name: string;
   rep_id: number | null;
+  rep_name: string | null;
   active: boolean;
   subject_format: string;
   intro_prompt: string;
@@ -245,7 +246,7 @@ function TemplateCard({
               </span>
             )}
             {template.rep_id !== null && (
-              <span style={{ fontSize: 11, color: "var(--muted)" }}>rep #{template.rep_id}</span>
+              <span style={{ fontSize: 11, color: "var(--muted)" }}>{template.rep_name ?? `rep #${template.rep_id}`}</span>
             )}
           </div>
           {template.notes && (

@@ -11,6 +11,9 @@ import {
   extractReadToolCalls,
   stripReadToolCalls,
 } from "@/lib/helper-read-tools";
+import { loadPatterns, type Pattern } from "@/lib/patterns";
+import { loadActiveLearnings, formatLearningsForPrompt } from "@/lib/helper-learnings";
+import { extractEvidence, EVIDENCE_PROMPT_EXAMPLES, type HelperEvidence } from "@/lib/helper-evidence";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;  // agent loop may take 2 LLM round-trips
@@ -58,6 +61,8 @@ const SYSTEM_BASE = `你是 rep 的搭档. 像一个有分寸的同事, 不是�
 - 这是「奇绩算力」program. 严禁回答「奇绩创业营」相关 (投资额 / 股权 / batch 时间).
 - 不瞎编数字, 不确定就说 "不确定, 找 Xingze".
 - **不要在聊天里直接写完整邮件正文**. 要改草稿只能通过 redraft_lead 工具 (propose + confirm 流程).
+- **任何数字声明都要附 evidence 块** (见下方"证据系统"). 没数据就说没数据, 别拍脑袋. 引用方式: 在文字里写 [E1] [E2], 末尾附对应 evidence fence.
+- **要敢于反驳 rep**. 当上面"数据驱动的模式"或"累积经验"和 rep 的说法相左, 直接说出来, 附 evidence. 不绕弯子. (但要基于真实数据, 不要为了反驳而反驳.)
 
 ## 语言
 - 默认中文.
@@ -202,16 +207,58 @@ abstract 前 800 字: ${((lead.abstract as string) ?? "").slice(0, 800)}
     }
   }
 
+  // Pull current data-driven patterns: rep-specific first (most
+  // relevant), then org-wide fallback. These are mined from
+  // pipeline_leads + brief_lookups (see lib/patterns.ts) — concrete
+  // findings like "in 'location' = CN, wechat rate is 8.2% (2.1× baseline)".
+  // The helper uses them when the rep asks tactical questions ("我应该
+  // focus 哪类 lead", "为什么 .edu 难转化"). Stays a passive context
+  // source — we don't volunteer them unless asked.
+  let patternsHint = "";
+  try {
+    const [repPatterns, orgPatterns] = await Promise.all([
+      loadPatterns(session.repId),
+      loadPatterns(null),
+    ]);
+    const top = (arr: Pattern[], n: number) => arr.slice(0, n).map((p) => `- ${p.summary}`).join("\n");
+    const sections: string[] = [];
+    if (repPatterns.length > 0) {
+      sections.push(`### 你 (${session.repName ?? `rep ${session.repId}`}) 当前的数据信号\n${top(repPatterns, 6)}`);
+    }
+    if (orgPatterns.length > 0) {
+      sections.push(`### 全团队当前的数据信号\n${top(orgPatterns, 6)}`);
+    }
+    if (sections.length > 0) {
+      patternsHint = `\n## 数据驱动的模式 (参考资料, 回答策略性问题时用)\n${sections.join("\n\n")}\n`;
+    }
+  } catch {
+    // Patterns table missing or DB blip — degrade silently. The helper
+    // still works, just without the data-driven context layer.
+  }
+
+  // Load qualitative learnings — distinct from `patterns` (measured).
+  // These are things the helper itself decided to remember across
+  // sessions: rep preferences, tactical wins, self-critiques. Loaded
+  // every turn so the helper doesn't ask the same thing twice and can
+  // build on prior conversations.
+  let learningsHint = "";
+  try {
+    const learnings = await loadActiveLearnings(session.repId, 20);
+    learningsHint = formatLearningsForPrompt(learnings);
+  } catch {
+    // Table missing → silent skip.
+  }
+
   // System prompt is already big (tool catalog + rules). Put the
   // reference corpora in the user message so the LLM treats them as
   // lookup material, not behavior directives.
-  const system = SYSTEM_BASE + "\n" + TOOLS_PROMPT;
+  const system = SYSTEM_BASE + "\n" + TOOLS_PROMPT + "\n" + EVIDENCE_PROMPT_EXAMPLES;
   let userPrompt = `## Sales Guide (参考资料, 回答 UI 操作问题时用)
 ${SALES_GUIDE.slice(0, 3500)}
 
 ## Qiji Compute Facts (参考资料, 回答话术问题时用)
 ${QIJI_PROGRAM_FACTS.slice(0, 3500)}
-${pathHint}${currentLeadHint}${historyText}
+${patternsHint}${learningsHint}${pathHint}${currentLeadHint}${historyText}
 ## 用户问题
 ${question}
 
@@ -274,19 +321,43 @@ ${lookupSummary}
   // In case the model leaked a lookup into the final answer, strip it.
   finalText = stripReadToolCalls(finalText);
 
-  const { cleaned, proposal, proposalError } = extractToolProposal(finalText);
+  // Pull evidence blocks BEFORE tool-proposal extraction. Both are
+  // independent fenced blocks; order doesn't matter, but doing evidence
+  // first keeps the cleaned text unambiguous when a response has both.
+  const { cleaned: textNoEvidence, evidence } = extractEvidence(finalText);
+
+  const { cleaned, proposal, proposalError } = extractToolProposal(textNoEvidence);
   // If the model tried to propose an action with a bad lead_id, append
   // a hint to the answer so the user sees what went wrong and can rephrase.
   const finalAnswer = proposalError
     ? `${cleaned}\n\n⚠️ 我本来想执行一个操作, 但参数有问题 (${proposalError}). 请明确告诉我要操作哪条 lead (说名字或 paper title 就行, 我会先查).`
     : cleaned;
 
-  // Persist.
+  // Persist. Evidence is stored as part of the assistant message so the
+  // chat history can re-render expandable cards on a page reload.
+  // helper_messages.evidence is added by migration 024. If the column
+  // doesn't exist yet (pre-migration), the insert fails the whole
+  // transaction and we lose the chat record. Try with evidence; on
+  // schema-mismatch error, retry without it so the message still lands.
   if (conversationId) {
-    await supabase.from("helper_messages").insert([
-      { conversation_id: conversationId, role: "user", text: question },
-      { conversation_id: conversationId, role: "assistant", text: finalAnswer, tool_proposal: proposal },
-    ]);
+    const userMsg = { conversation_id: conversationId, role: "user", text: question };
+    const assistantMsg: Record<string, unknown> = {
+      conversation_id: conversationId,
+      role: "assistant",
+      text: finalAnswer,
+      tool_proposal: proposal,
+      evidence: evidence.length > 0 ? evidence : null,
+    };
+    let { error: insertError } = await supabase.from("helper_messages").insert([userMsg, assistantMsg]);
+    if (insertError && /evidence/i.test(insertError.message)) {
+      // Migration 024 hasn't run — drop the field and retry.
+      delete assistantMsg.evidence;
+      const retry = await supabase.from("helper_messages").insert([userMsg, assistantMsg]);
+      insertError = retry.error;
+    }
+    if (insertError) {
+      console.warn("helper_messages insert failed after retry:", insertError.message);
+    }
     await supabase
       .from("helper_conversations")
       .update({
@@ -299,6 +370,7 @@ ${lookupSummary}
   return NextResponse.json({
     answer: finalAnswer,
     proposal,
+    evidence,
     model,
     toolTrail: toolTrail.map((t) => ({
       tool: t.tool,

@@ -63,5 +63,20 @@ export async function GET(req: NextRequest) {
     byCategory[c] = (byCategory[c] ?? 0) + 1;
   }
 
-  return NextResponse.json({ patterns: data ?? [], counts, byCategory });
+  // Attach rep_name so the UI can render "· Leo" instead of "· rep #3".
+  // Load all reps (including inactive) — historical patterns may belong to
+  // someone who's since been deactivated.
+  const { data: repsRaw } = await supabase.from("sales_reps").select("id, name, sender_name");
+  const repNameById = new Map<number, string>();
+  for (const r of repsRaw ?? []) {
+    const id = r.id as number;
+    const display = (r.sender_name as string | null) || (r.name as string | null) || "Unknown rep";
+    repNameById.set(id, display);
+  }
+  const patterns = (data ?? []).map((p) => ({
+    ...p,
+    rep_name: p.rep_id == null ? null : (repNameById.get(p.rep_id as number) ?? "Unknown rep"),
+  }));
+
+  return NextResponse.json({ patterns, counts, byCategory });
 }

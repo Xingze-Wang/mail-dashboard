@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { requireSession } from "@/lib/auth-helpers";
 import { beijingDaysAgoStartUtc } from "@/lib/override-quota";
+import { REACHABLE_EMAIL_STATUSES, CONTACTED_LEAD_STATUSES } from "@/lib/status";
 
 // Analytics must always reflect the live DB — "This week" is time-sensitive
 // and drifts by a full day if cached. Force a fresh query on every hit.
@@ -50,6 +51,8 @@ export async function GET(req: NextRequest) {
     supabase
       .from("pipeline_leads")
       .select("id, status, lead_tier, assigned_rep_id, h_index, source, created_at, sent_at, author_email, matched_directions"),
+    // No active filter: an inactive rep still owns historical leads and we
+    // want their actual name on the chart, not "Rep #5".
     supabase.from("sales_reps").select("*").order("id"),
     supabase
       .from("brief_lookups")
@@ -58,7 +61,7 @@ export async function GET(req: NextRequest) {
     supabase
       .from("pipeline_leads")
       .select("created_at, lead_tier, assigned_rep_id")
-      .gte("created_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()),
+      .gte("created_at", beijingDaysAgoStartUtc(30).toISOString()),
     fetchDiscoveryCounts(),
     fetchDeliveredRecipients(),
     fetchRepRecipientCounts(),
@@ -102,7 +105,7 @@ export async function GET(req: NextRequest) {
   // ── Channel stats ──
   const totalLeads = leads.length;
   const strongLeads = leads.filter((l) => l.lead_tier === "strong").length;
-  const sentLeads = leads.filter((l) => l.status === "sent" || l.status === "replied").length;
+  const sentLeads = leads.filter((l) => (CONTACTED_LEAD_STATUSES as readonly string[]).includes(l.status)).length;
   const hIndexValues = leads.map((l) => l.h_index).filter((v): v is number => v !== null);
   const avgHIndex = hIndexValues.length > 0
     ? Math.round((hIndexValues.reduce((a, b) => a + b, 0) / hIndexValues.length) * 10) / 10
@@ -273,6 +276,7 @@ interface RawLead {
 interface RawRep {
   id: number;
   name: string;
+  sender_name: string | null;
 }
 
 interface RawWechat {
@@ -292,7 +296,7 @@ async function fetchDeliveredRecipients(): Promise<Set<string>> {
     const { data, error } = await supabase
       .from("emails")
       .select("to")
-      .in("status", ["delivered", "clicked", "sent", "replied"])
+      .in("status", [...REACHABLE_EMAIL_STATUSES])
       .range(cursor, cursor + pageSize - 1);
     if (error || !data || data.length === 0) break;
     for (const r of data) {
@@ -319,7 +323,7 @@ async function fetchRepRecipientCounts(): Promise<Map<string, Set<string>>> {
     const { data, error } = await supabase
       .from("emails")
       .select("from, to")
-      .in("status", ["delivered", "clicked", "sent", "replied"])
+      .in("status", [...REACHABLE_EMAIL_STATUSES])
       .range(cursor, cursor + pageSize - 1);
     if (error || !data || data.length === 0) break;
     for (const r of data) {
@@ -386,7 +390,10 @@ function buildSourceBreakdown(
     grouped.get(channel)!.push(lead);
   }
 
-  const repNameById = new Map(reps.map((r) => [r.id, r.name]));
+  // Prefer sender_name (the human-friendly display name shown to recipients)
+  // and fall back to the internal short `name`. Only mint a synthetic label
+  // if the rep row is genuinely missing from the DB.
+  const repNameById = new Map(reps.map((r) => [r.id, r.sender_name || r.name]));
 
   return Array.from(grouped.entries()).map(([source, channelLeads]) => {
     const total = channelLeads.length;
@@ -423,7 +430,7 @@ function buildSourceBreakdown(
     const reps = Array.from(repCounts.entries())
       .map(([repId, count]) => ({
         repId,
-        repName: repId === null ? "Unassigned" : (repNameById.get(repId) ?? `Rep #${repId}`),
+        repName: repId === null ? "Unassigned" : (repNameById.get(repId) ?? "Unknown rep"),
         count,
       }))
       .sort((a, b) => b.count - a.count);
