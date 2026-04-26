@@ -263,6 +263,52 @@ async function doReviewNext(): Promise<{ ok: boolean; detail: Record<string, unk
   return { ok: true, detail: { navigate: "/pipeline#mode=review" } };
 }
 
+async function doRememberAboutRep(
+  session: { repId: number; role: string },
+  params: Record<string, unknown>,
+): Promise<{ ok: boolean; detail: Record<string, unknown> }> {
+  // Write a long-term memory about this rep. Sales can write rep-scoped
+  // memories about themselves; admin can additionally write org-wide
+  // memories. We deliberately gate `scope: "org"` to admin so a rep can't
+  // smuggle org-level guidance into the team prompt.
+  const kindRaw = typeof params.kind === "string" ? params.kind : "other";
+  const allowedKinds = ["rep_pref", "tactic", "self_critique", "other"] as const;
+  type Kind = (typeof allowedKinds)[number];
+  const kind: Kind = (allowedKinds as readonly string[]).includes(kindRaw) ? (kindRaw as Kind) : "other";
+  const body = typeof params.body === "string" ? params.body.trim() : "";
+  if (!body || body.length < 3) {
+    return { ok: false, detail: { error: "body must be a non-empty string ≥3 chars" } };
+  }
+  if (body.length > 600) {
+    return { ok: false, detail: { error: "body too long — keep memory entries under 600 chars; learnings should be a sentence, not a paragraph" } };
+  }
+  const scope = params.scope === "org" && session.role === "admin" ? "org" : "rep";
+  const scope_rep_id = scope === "org" ? null : session.repId;
+
+  // Lazy-import so we don't pay the helper-learnings module load cost on
+  // every action. Same shape as the doRedraft llmChat lazy-import below.
+  const { recordLearning } = await import("@/lib/helper-learnings");
+  const learning = await recordLearning({
+    scope_rep_id,
+    kind,
+    body,
+    confidence: 0.8,  // helper-suggested + rep-confirmed
+    evidence: { source: "helper_chat", session_rep: session.repId },
+  });
+  if (!learning) {
+    return { ok: false, detail: { error: "failed to record learning — check server logs" } };
+  }
+  return {
+    ok: true,
+    detail: {
+      learning_id: learning.id,
+      kind: learning.kind,
+      scope: learning.scope_rep_id == null ? "org" : "rep",
+      body: learning.body,
+    },
+  };
+}
+
 /**
  * open_split_view — frontend-conjured overlay with the paper PDF on
  * the left and an editable draft on the right. Server-side we do two
@@ -571,6 +617,9 @@ export async function POST(req: NextRequest) {
         break;
       case "open_split_view":
         result = await doOpenSplitView(session, proposal);
+        break;
+      case "remember_about_rep":
+        result = await doRememberAboutRep(session, proposal);
         break;
       default:
         result = { ok: false, detail: { error: `Unknown action: ${proposal.action}` } };

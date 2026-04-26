@@ -31,6 +31,7 @@ export const ACTION_TOOL_NAMES = new Set([
   "review_next",
   "build_rep_template",
   "open_split_view",
+  "remember_about_rep",
 ]);
 
 export const READ_TOOL_NAMES = new Set([
@@ -38,6 +39,9 @@ export const READ_TOOL_NAMES = new Set([
   "get_lead",
   "get_my_stats",
   "get_rep_info",
+  "get_my_growth",
+  "get_my_memory",
+  "get_admin_alerts",
 ]);
 
 export interface ToolProposal {
@@ -69,6 +73,9 @@ export const TOOLS_PROMPT = `## 工具系统
 - get_lead — 单 lead 详情. args: { lead_id: string }. 返回: 完整 lead 行.
 - get_my_stats — 当前 rep 的统计. args: {}. 返回: { assigned, ready, sent, replied, wechat, override_used_today, override_cap }
 - get_rep_info — 当前 rep 自己的信息. args: {}. 返回: { id, name, email, role }
+- get_my_growth — 当前 rep 的成长打分 (4 个维度: 选 lead 眼光 / AI 草稿契合度 / 跟进节奏 / 回信温度), 每维 1-5 rung + 证据 + 下一步解锁. args: {}. 返回: { dimensions[], overall_rung, top_strength, top_opportunity }. **什么时候用**: rep 问 "我做得怎么样 / 怎么提高 / 我的水平" 时, 或者你想用证据回答 "下一步该练什么"; 也可以在每天第一次开 panel 时主动调用作为 opener.
+- get_my_memory — 当前 rep 跨 session 的长期记忆 (helper 记下来的偏好 / 战术 / 自我反思). args: { limit?: number }. 返回: [{kind, body, scope, confidence, created_at}, ...]. **什么时候用**: 任何 session 第一次回答前都应该 lookup 一次, 这样你的回答可以延续上次的话题, 不会忘记 rep 之前告诉你的偏好.
+- get_admin_alerts — **admin only**. 当前需要 admin 注意的事 (drift 待审, 销售卡住, 团队点击率异常, 模型样本不够等). args: {}. 返回: { alerts: [{ kind, severity, headline, evidence, action_hint }, ...] }. **什么时候用**: 当用户 role=admin 时, 每天第一次开 panel 应该主动 lookup 一次, 把最重要的 1-3 条以 "今天值得看一眼:" 的格式开场.
 
 **B. 执行工具 (需要用户 confirm)** — 这些改变数据库. 你只是建议, UI 会弹卡让用户决定.
 
@@ -87,6 +94,7 @@ export const TOOLS_PROMPT = `## 工具系统
 - review_next — 打开 Review 模式下一条 ready lead (前端跳转, 不改数据). 参数: {}.
 - build_rep_template — 根据 rep 最近改过的草稿 (draft_original_html vs draft_html 的 diff), 用 LLM 生成一份属于这个 rep 的邮件模板 (inactive, 等 admin 审核). 参数: { rep_id?: number (admin 可指定, sales 省略=自己) }. **什么时候用**: 当 rep 说 "试试看 / 生成我的模板 / 建一个我的 template" 或类似意图, 特别是 chime-in 里 helper 主动问过 "要不要生成你自己的 intro 模板" 之后. 不需要参数, 因为这是根据 sent 历史自动分析的.
 - open_split_view — 打开一个全屏左右对比视图: 左边是 paper PDF, 右边是可编辑的 draft. 参数: { lead_id: string (UUID, 必填) }. **什么时候用**: 用户说 "同时看 paper 和邮件 / 对比一下 / split view / 开一个对照视图" 或类似意图. 可以直接改 subject/body 再 save, save 后回到原来的页面. 不发邮件, 只是编辑草稿.
+- remember_about_rep — 把一条关于这位 rep 的事实写进长期记忆 (跨 session 保留). 参数: { kind: "rep_pref"|"tactic"|"self_critique"|"other", body: string (一句话, 中英文都行), scope?: "rep"|"org" (默认 rep, admin 可指定 org) }. **什么时候用**: 当 rep 主动告诉你他的偏好 ("我喜欢简短" / "别再提算力具体额度了" / "Tsinghua 的 lead 我都用 citation hook"), 或者发现一个有效战术时. **写之前先 lookup get_my_memory** 看看是不是已经有了同义条目, 别重复写. 不要把吐槽 / 临时情绪当 memory 存.
 
 ## 工具使用规则 (很重要)
 
@@ -99,8 +107,8 @@ export const TOOLS_PROMPT = `## 工具系统
 
 **格式提醒**:
 - lookup 块放在回答的**前面**或**中间**, tool 块放在**最后一行**.
-- lookup JSON 的 tool 字段必须是: list_leads / get_lead / get_my_stats / get_rep_info.
-- tool JSON 的 action 字段必须是: batch_send / skip_lead / flag_lead / bulk_flag / redraft_lead / review_next.
+- lookup JSON 的 tool 字段必须是: list_leads / get_lead / get_my_stats / get_rep_info / get_my_growth / get_my_memory / get_admin_alerts.
+- tool JSON 的 action 字段必须是: batch_send / skip_lead / flag_lead / bulk_flag / redraft_lead / review_next / build_rep_template / open_split_view / remember_about_rep.
 
 **反面例子 (不要这样做)**:
 用户: "skip 那个 Yanye 的 lead"

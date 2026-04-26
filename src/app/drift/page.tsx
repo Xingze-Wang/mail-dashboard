@@ -341,8 +341,9 @@ function PatternsView(props: {
           <div className="empty-icon">
             <AlertTriangle style={{ width: 22, height: 22 }} />
           </div>
-          <h3>No patterns match these filters</h3>
-          <p>Run the miner to scan recent sales edits, or loosen the filters above.</p>
+          <h3>No patterns yet</h3>
+          <p>The miner needs ≥3 edited drafts (with edit_reasons or notes) in the last 30 days to find a pattern. If the page stays empty, it usually means there hasn't been enough recent rework — keep editing drafts honestly with the reason chips and the miner will start finding patterns.</p>
+          <p style={{ marginTop: 8 }}>You can also click <b>Run miner</b> above to force a pass with the current data.</p>
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>

@@ -16,6 +16,10 @@
 
 import { supabase } from "@/lib/db";
 import { DAILY_OVERRIDE_CAP, countOverridesTodayByRep } from "@/lib/override-quota";
+import { CONTACTED_LEAD_STATUSES } from "@/lib/status";
+import { computeGrowth } from "@/lib/rep-growth";
+import { loadActiveLearnings } from "@/lib/helper-learnings";
+import { getAdminAlerts } from "@/lib/admin-alerts";
 import type { ToolCall } from "@/lib/helper-tools";
 
 type Session = { repId: number; role: string; repName?: string; email?: string };
@@ -84,30 +88,27 @@ async function getLead(session: Session, args: Record<string, unknown>) {
 
 async function getMyStats(session: Session) {
   const repId = session.repId;
-  // Kept in sync with /api/metrics/me so the helper's answers match
-  // what the sales rep sees on the overview page. Two derivations
-  // matter:
-  //   - `sent` is status='sent' PLUS status='replied' (reply is a
-  //     later phase of the same send; splitting them made reps see
-  //     their sent count drop when replies came in).
-  //   - `wechat` is attributed via brief_lookups.marked_by_rep_id —
-  //     the rep who clicked "Added on WeChat", not the lead's owner.
-  //     Pre-migration-012 rows (marked_by_rep_id=null) are excluded
-  //     because their attribution is genuinely unknown.
+  // Kept in sync with /api/metrics/me via CONTACTED_LEAD_STATUSES in
+  // @/lib/status, so the helper's answers match what the rep sees on
+  // the overview page. `wechat` is attributed via
+  // brief_lookups.marked_by_rep_id — the rep who clicked "Added on
+  // WeChat", not the lead's owner. Pre-migration-012 rows
+  // (marked_by_rep_id=null) are excluded because their attribution
+  // is genuinely unknown.
   const [
     { count: assigned },
     { count: ready },
-    { count: sentOnly },
+    { count: sent },
     { count: replied },
     { data: wechatRows },
   ] = await Promise.all([
     supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId),
     supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).eq("status", "ready"),
-    supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).eq("status", "sent"),
+    supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).in("status", [...CONTACTED_LEAD_STATUSES]),
     supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).eq("status", "replied"),
     supabase.from("brief_lookups").select("lead_id").eq("added_wechat", true).eq("marked_by_rep_id", repId).not("lead_id", "is", null),
   ]);
-  const sent = (sentOnly ?? 0) + (replied ?? 0);
+  const sentCount = sent ?? 0;
   const wechatDistinct = new Set<string>();
   for (const r of wechatRows ?? []) {
     const id = (r as { lead_id: string | null }).lead_id;
@@ -119,7 +120,7 @@ async function getMyStats(session: Session) {
     stats: {
       assigned: assigned ?? 0,
       ready: ready ?? 0,
-      sent,
+      sent: sentCount,
       replied: replied ?? 0,
       wechat,
       override_used_today: overrideUsed,
@@ -137,6 +138,31 @@ function getRepInfo(session: Session) {
       email: session.email ?? null,
       role: session.role,
     },
+  };
+}
+
+async function getMyGrowth(session: Session, args: Record<string, unknown>) {
+  // Admin can inspect a specific rep with repId arg.
+  const target = scopeRepId(session, args) ?? session.repId;
+  const snap = await computeGrowth(target);
+  return { growth: snap };
+}
+
+async function getMyMemory(session: Session, args: Record<string, unknown>) {
+  // What does the helper know about this rep across past sessions?
+  // Returns active (non-superseded) learnings tagged for this rep + org-wide.
+  const target = scopeRepId(session, args) ?? session.repId;
+  const limit = Math.max(1, Math.min(50, Number(args.limit) || 20));
+  const learnings = await loadActiveLearnings(target, limit);
+  return {
+    memory: learnings.map((l) => ({
+      id: l.id,
+      kind: l.kind,
+      body: l.body,
+      scope: l.scope_rep_id == null ? "org" : "rep",
+      confidence: l.confidence,
+      created_at: l.created_at,
+    })),
   };
 }
 
@@ -159,6 +185,15 @@ export async function runReadTool(
         return { tool: call.tool, result: await getMyStats(session) };
       case "get_rep_info":
         return { tool: call.tool, result: getRepInfo(session) };
+      case "get_my_growth":
+        return { tool: call.tool, result: await getMyGrowth(session, args) };
+      case "get_my_memory":
+        return { tool: call.tool, result: await getMyMemory(session, args) };
+      case "get_admin_alerts":
+        if (session.role !== "admin") {
+          return { tool: call.tool, result: { error: "admin only" } };
+        }
+        return { tool: call.tool, result: await getAdminAlerts() };
       default:
         return { tool: call.tool, result: { error: `unknown tool: ${call.tool}` } };
     }
