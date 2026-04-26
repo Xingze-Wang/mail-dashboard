@@ -7,13 +7,17 @@
 
 import { supabase } from "@/lib/db";
 import { CONTACTED_LEAD_STATUSES } from "@/lib/status";
+import { getStaleWechatFollowups } from "@/lib/wechat-followup";
+import { detectQuestionClusters } from "@/lib/helper-question-clusters";
 
 export type AlertKind =
   | "drift_pending"
   | "rep_idle"
   | "click_rate_drop"
   | "model_undertrained"
-  | "wechat_attribution_gap";
+  | "wechat_attribution_gap"
+  | "stale_wechat_followups"
+  | "shared_helper_questions";
 export type Severity = "info" | "warn" | "high";
 
 export interface Alert {
@@ -147,13 +151,49 @@ async function checkWechatAttributionGap(): Promise<Alert | null> {
   };
 }
 
+async function checkSharedHelperQuestions(): Promise<Alert[]> {
+  // When ≥2 reps ask the helper-bot about the same topic, surface it as
+  // a doc/UI gap admin should fix. Each cluster becomes one alert; we
+  // cap to top 3 so the opener doesn't get spammy.
+  const clusters = await detectQuestionClusters();
+  if (clusters.length === 0) return [];
+  return clusters.slice(0, 3).map((c) => ({
+    kind: "shared_helper_questions" as const,
+    severity: c.rep_ids.length >= 3 ? "warn" : "info",
+    headline: `${c.rep_ids.length} reps asked the helper about "${c.topic}" — likely a docs/tool gap`,
+    evidence: {
+      rep_ids: c.rep_ids,
+      example_quotes: c.example_quotes,
+      message_count: c.count,
+      most_recent_days_ago: c.recency_days,
+    },
+    action_hint: "Update the Sales Guide or add a tool/UI affordance so reps don't have to ask.",
+  }));
+}
+
+async function checkStaleWechatFollowups(): Promise<Alert | null> {
+  // Org-wide: any rep with WeChat marks ≥3 days old and no inbound since.
+  const stale = await getStaleWechatFollowups(null);
+  if (stale.length === 0) return null;
+  const oldest = stale.reduce((a, b) => (a.days_stale > b.days_stale ? a : b));
+  return {
+    kind: "stale_wechat_followups",
+    severity: stale.length >= 5 ? "warn" : "info",
+    headline: `${stale.length} WeChat conversion${stale.length === 1 ? "" : "s"} ≥3 days old without a reply (oldest: ${oldest.days_stale}d, ${oldest.recipient ?? "unknown"})`,
+    evidence: { count: stale.length, oldest_days: oldest.days_stale },
+    action_hint: "Each rep's helper will surface their own stale follow-ups on next session-open.",
+  };
+}
+
 export async function getAdminAlerts(): Promise<{ alerts: Alert[] }> {
-  const [drift, idle, clickDrop, modelUnder, wechatGap] = await Promise.all([
+  const [drift, idle, clickDrop, modelUnder, wechatGap, staleWechat, sharedQs] = await Promise.all([
     checkDriftPending(),
     checkRepIdle(),
     checkClickRateDrop(),
     checkModelUndertrained(),
     checkWechatAttributionGap(),
+    checkStaleWechatFollowups(),
+    checkSharedHelperQuestions(),
   ]);
   const alerts: Alert[] = [];
   if (drift) alerts.push(drift);
@@ -161,6 +201,8 @@ export async function getAdminAlerts(): Promise<{ alerts: Alert[] }> {
   if (clickDrop) alerts.push(clickDrop);
   if (modelUnder) alerts.push(modelUnder);
   if (wechatGap) alerts.push(wechatGap);
+  if (staleWechat) alerts.push(staleWechat);
+  alerts.push(...sharedQs);
   // Order: high → warn → info, then by kind for stability.
   const sevRank: Record<Severity, number> = { high: 0, warn: 1, info: 2 };
   alerts.sort((a, b) => sevRank[a.severity] - sevRank[b.severity] || a.kind.localeCompare(b.kind));

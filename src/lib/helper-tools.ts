@@ -42,6 +42,7 @@ export const READ_TOOL_NAMES = new Set([
   "get_my_growth",
   "get_my_memory",
   "get_admin_alerts",
+  "get_wechat_followups",
 ]);
 
 export interface ToolProposal {
@@ -76,6 +77,7 @@ export const TOOLS_PROMPT = `## 工具系统
 - get_my_growth — 当前 rep 的成长打分 (4 个维度: 选 lead 眼光 / AI 草稿契合度 / 跟进节奏 / 回信温度), 每维 1-5 rung + 证据 + 下一步解锁. args: {}. 返回: { dimensions[], overall_rung, top_strength, top_opportunity }. **什么时候用**: rep 问 "我做得怎么样 / 怎么提高 / 我的水平" 时, 或者你想用证据回答 "下一步该练什么"; 也可以在每天第一次开 panel 时主动调用作为 opener.
 - get_my_memory — 当前 rep 跨 session 的长期记忆 (helper 记下来的偏好 / 战术 / 自我反思). args: { limit?: number }. 返回: [{kind, body, scope, confidence, created_at}, ...]. **什么时候用**: 任何 session 第一次回答前都应该 lookup 一次, 这样你的回答可以延续上次的话题, 不会忘记 rep 之前告诉你的偏好.
 - get_admin_alerts — **admin only**. 当前需要 admin 注意的事 (drift 待审, 销售卡住, 团队点击率异常, 模型样本不够等). args: {}. 返回: { alerts: [{ kind, severity, headline, evidence, action_hint }, ...] }. **什么时候用**: 当用户 role=admin 时, 每天第一次开 panel 应该主动 lookup 一次, 把最重要的 1-3 条以 "今天值得看一眼:" 的格式开场.
+- get_wechat_followups — 当前 rep 标了 "Added on WeChat" 但 ≥3 天没有 reply 的 leads. args: {}. 返回: { stale: [{ lead_id, recipient, lead_title, days_stale, marked_at }, ...] }. **什么时候用**: session 开场如果 rep 是 sales 角色 (不是 admin), 主动 lookup 一次. 如果有 stale 条目, 用 "你 X 天前在微信加了 Y, 可能值得 chime back 一下" 的方式提一句, 不要列全部, 挑 1-2 个最久的就行.
 
 **B. 执行工具 (需要用户 confirm)** — 这些改变数据库. 你只是建议, UI 会弹卡让用户决定.
 
@@ -107,7 +109,7 @@ export const TOOLS_PROMPT = `## 工具系统
 
 **格式提醒**:
 - lookup 块放在回答的**前面**或**中间**, tool 块放在**最后一行**.
-- lookup JSON 的 tool 字段必须是: list_leads / get_lead / get_my_stats / get_rep_info / get_my_growth / get_my_memory / get_admin_alerts.
+- lookup JSON 的 tool 字段必须是: list_leads / get_lead / get_my_stats / get_rep_info / get_my_growth / get_my_memory / get_admin_alerts / get_wechat_followups.
 - tool JSON 的 action 字段必须是: batch_send / skip_lead / flag_lead / bulk_flag / redraft_lead / review_next / build_rep_template / open_split_view / remember_about_rep.
 
 **反面例子 (不要这样做)**:

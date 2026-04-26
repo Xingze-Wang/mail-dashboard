@@ -20,6 +20,7 @@ import { CONTACTED_LEAD_STATUSES } from "@/lib/status";
 import { computeGrowth } from "@/lib/rep-growth";
 import { loadActiveLearnings } from "@/lib/helper-learnings";
 import { getAdminAlerts } from "@/lib/admin-alerts";
+import { getStaleWechatFollowups } from "@/lib/wechat-followup";
 import type { ToolCall } from "@/lib/helper-tools";
 
 type Session = { repId: number; role: string; repName?: string; email?: string };
@@ -194,6 +195,13 @@ export async function runReadTool(
           return { tool: call.tool, result: { error: "admin only" } };
         }
         return { tool: call.tool, result: await getAdminAlerts() };
+      case "get_wechat_followups": {
+        // Sales sees only their own stale wechat marks. Admin can pass
+        // repId in args to inspect a rep, or omit for org-wide.
+        const target = scopeRepId(session, args);
+        const stale = await getStaleWechatFollowups(target);
+        return { tool: call.tool, result: { stale } };
+      }
       default:
         return { tool: call.tool, result: { error: `unknown tool: ${call.tool}` } };
     }
