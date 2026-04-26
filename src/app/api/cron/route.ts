@@ -4,6 +4,8 @@ import { scanArxiv } from "@/lib/scanner";
 import { generateDraft } from "@/lib/email-generator";
 import { supabase } from "@/lib/db";
 import { lookupAuthor } from "@/lib/semantic-scholar";
+import { runDriftMine } from "@/app/api/drift/mine/route";
+import { emitRetrainSignals, buildProposal } from "@/lib/retrain-signals";
 import {
   getAssignmentConfig,
   classifyLead,
@@ -132,9 +134,38 @@ export async function GET(req: NextRequest) {
     results.pipeline = { error: String(err) };
   }
 
+  // ── Step 3: Mine prompt drift from recent sales edits ──
+  // Capped at 60 leads so the LLM call stays under cron's 300s budget
+  // even when the previous two steps ran long. Failure is non-blocking.
+  //
+  // Lookback is 90 days, not 30: at the current team volume (a handful
+  // of edited drafts per month) a 30-day window often falls below the
+  // miner's ≥3-pair threshold and the page stays empty for weeks.
+  // 90 days is a safer floor for finding patterns without losing
+  // recency — the miner ranks by occurrence_count anyway, so old
+  // one-offs naturally fall off.
+  try {
+    const driftResult = await runDriftMine(60, 90);
+    results.drift = driftResult;
+  } catch (err) {
+    results.drift = { error: String(err) };
+  }
+
+  // ── Step 4: Emit retrain signals + build proposal ──
+  // Daily check whether enough new signal has accumulated to justify
+  // proposing a model retrain to admin. Cheap (a few SELECTs); doesn't
+  // actually retrain. Admin sees the proposal at /api/retrain/proposal.
+  try {
+    const emitResult = await emitRetrainSignals();
+    const proposal = await buildProposal();
+    results.retrain = { signalsEmitted: emitResult.emitted, proposal: proposal ? { id: proposal.id, signal_count: proposal.signal_count } : null };
+  } catch (err) {
+    results.retrain = { error: String(err) };
+  }
+
   // ── Future steps ──
-  // Step 3: GitHub startup finder
-  // Step 4: Jike founder radar
+  // Step 5: GitHub startup finder
+  // Step 6: Jike founder radar
 
   return NextResponse.json(results);
 }

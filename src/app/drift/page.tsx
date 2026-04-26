@@ -130,7 +130,7 @@ export default function DriftPage() {
       const r = await fetch("/api/drift/mine", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ days: 30 }),
+        body: JSON.stringify({ days: 90 }),
       });
       const d = await r.json();
       if (!r.ok) {
@@ -197,7 +197,7 @@ export default function DriftPage() {
             style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
           >
             <Play className="h-4 w-4" />
-            {mining ? "Mining…" : "Run miner (30d)"}
+            {mining ? "Mining…" : "Run miner (90d)"}
           </button>
         )}
       </div>
@@ -232,6 +232,7 @@ export default function DriftPage() {
         patterns={patterns}
         actingId={actingId}
         actOn={actOn}
+        onSwitchToHuman={() => setTab("human")}
       />}
     </div>
   );
@@ -247,6 +248,7 @@ function PatternsView(props: {
   setStatusFilter: (s: "pending" | "accepted" | "ignored" | "all") => void;
   categoryFilter: string;
   setCategoryFilter: (s: string) => void;
+  onSwitchToHuman: () => void;
   repFilter: string;
   setRepFilter: (s: string) => void;
   loading: boolean;
@@ -254,7 +256,7 @@ function PatternsView(props: {
   actingId: string | null;
   actOn: (id: string, action: "accept" | "ignore") => void;
 }) {
-  const { mineNote, setupHint, counts, byCategory, statusFilter, setStatusFilter, categoryFilter, setCategoryFilter, repFilter, setRepFilter, loading, patterns, actingId, actOn } = props;
+  const { mineNote, setupHint, counts, byCategory, statusFilter, setStatusFilter, categoryFilter, setCategoryFilter, repFilter, setRepFilter, loading, patterns, actingId, actOn, onSwitchToHuman } = props;
   return (
     <div>
 
@@ -341,9 +343,15 @@ function PatternsView(props: {
           <div className="empty-icon">
             <AlertTriangle style={{ width: 22, height: 22 }} />
           </div>
-          <h3>No patterns yet</h3>
-          <p>The miner needs ≥3 edited drafts (with edit_reasons or notes) in the last 30 days to find a pattern. If the page stays empty, it usually means there hasn't been enough recent rework — keep editing drafts honestly with the reason chips and the miner will start finding patterns.</p>
-          <p style={{ marginTop: 8 }}>You can also click <b>Run miner</b> above to force a pass with the current data.</p>
+          <h3>No mined patterns yet</h3>
+          <p>The LLM miner needs ≥3 edited drafts (with edit_reasons or notes) within the lookback window to detect a pattern. At the team's current edit volume that threshold often isn't met — but the raw qualitative signal is still there.</p>
+          <p style={{ marginTop: 8 }}>
+            <button className="btn" onClick={onSwitchToHuman} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <MessageSquare className="h-4 w-4" /> See raw human signals →
+            </button>
+            {" "}— every edit reason, edit note, and lead-correction the team has logged, even when there's not enough volume to mine a pattern.
+          </p>
+          <p style={{ marginTop: 8, fontSize: 12, color: "var(--text-tertiary)" }}>You can also click <b>Run miner</b> above to force a fresh pass.</p>
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
