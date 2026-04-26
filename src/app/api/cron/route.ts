@@ -43,8 +43,14 @@ export async function GET(req: NextRequest) {
   const results: Record<string, unknown> = {};
 
   // ── Step 1: Sync emails from Resend ──
+  // 60s budget — at ~700ms per Resend page (paced to stay under 5 rps)
+  // and ~14 pages for our current volume, we need ~15s on the happy
+  // path with margin for the inbound phase. The previous 10s budget
+  // truncated at ~6 pages and missed daily click/bounce updates on
+  // older rows, which is what eventually showed up as totals lagging
+  // reality. Cron's overall maxDuration is 300s so we have room.
   try {
-    const syncResult = await syncFromResend(10_000);
+    const syncResult = await syncFromResend(60_000);
     results.sync = syncResult;
   } catch (err) {
     results.sync = { error: String(err) };
