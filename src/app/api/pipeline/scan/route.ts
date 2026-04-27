@@ -27,6 +27,13 @@ async function insertLead(
     localScore?: number | null;
   },
 ) {
+  // Hard-reject missing/invalid email — see the twin guard in
+  // /src/app/api/pipeline/route.ts. Empty-string author_email rows poison
+  // dedup across the entire pipeline.
+  const email = (lead.authorEmail ?? "").trim();
+  if (!email.includes("@")) {
+    return { error: { message: "author_email missing or invalid" } } as const;
+  }
   return supabase.from("pipeline_leads").insert({
     arxiv_id: lead.arxivId,
     title: lead.title,
@@ -35,7 +42,7 @@ async function insertLead(
     pdf_url: lead.pdfUrl,
     published_at: lead.publishedAt,
     author_name: lead.authorName,
-    author_email: lead.authorEmail,
+    author_email: email,
     first_name: lead.firstName,
     school_name: lead.schoolName,
     school_tier: lead.schoolTier,

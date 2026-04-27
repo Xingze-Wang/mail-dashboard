@@ -26,7 +26,7 @@ function parseDirections(raw: string | null): string[] {
 }
 
 interface BriefResult {
-  id: string;
+  id: string | null;
   personName: string;
   firstName: string | null;
   paper: {
@@ -36,7 +36,7 @@ interface BriefResult {
     abstract: string | null;
     authors: string | null;
     publishedAt: string | null;
-  };
+  } | null;
   research: {
     computeLevel: string | null;
     computeConfidence: number | null;
@@ -59,6 +59,25 @@ interface BriefResult {
   } | null;
   matchTypes: string[];
   createdAt: string;
+  source?: "pipeline_lead" | "paper_author" | "email-only";
+}
+
+// Infer a display name from an email address. We only use this when
+// pipeline_leads has no row for this email (legacy emails sent before
+// pipeline_leads was wired up). The local part with separators stripped
+// gives us a reasonable label like "John Smith" from "john.smith@x.edu".
+function inferNameFromEmail(email: string): string {
+  const local = email.split("@")[0] || "";
+  if (!local) return "(unknown)";
+  const cleaned = local
+    .replace(/[._\-+]+/g, " ")
+    .replace(/\d+/g, "")
+    .trim();
+  if (!cleaned) return "(unknown)";
+  return cleaned
+    .split(/\s+/)
+    .map((w) => (w.length ? w[0].toUpperCase() + w.slice(1) : w))
+    .join(" ");
 }
 
 export async function GET(req: NextRequest) {
@@ -236,6 +255,7 @@ export async function GET(req: NextRequest) {
             : null,
           matchTypes: ["paper_author"],
           createdAt: (p.created_at as string) || new Date().toISOString(),
+          source: "paper_author",
         };
 
         results.set(p.arxiv_id as string, brief);
@@ -252,6 +272,42 @@ export async function GET(req: NextRequest) {
     if (aScore !== bScore) return bScore - aScore;
     return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
   });
+
+  // ─── Fallback: synthetic brief for legacy emails ────────────────────────
+  // When the lookup is by email and we found no pipeline_lead / paper_author
+  // match, return a minimal "email-only" brief so the sidebar can still render
+  // a useful card and (critically) show the WeChat conversion button. This
+  // covers emails sent through the old Python paths before pipeline_leads
+  // was wired up — there's no lead row, but the rep still wants to mark
+  // the WeChat conversion.
+  if (briefs.length === 0 && email) {
+    const synthetic: BriefResult = {
+      id: null,
+      personName: inferNameFromEmail(email),
+      firstName: null,
+      paper: null,
+      research: {
+        computeLevel: null,
+        computeConfidence: null,
+        computeReason: null,
+        directions: [],
+        schoolName: null,
+        schoolTier: null,
+      },
+      outreach: {
+        emailedTo: email,
+        emailedName: null,
+        subject: null,
+        status: null,
+        sentAt: null,
+      },
+      authorMismatch: null,
+      matchTypes: [],
+      createdAt: new Date().toISOString(),
+      source: "email-only",
+    };
+    briefs.push(synthetic);
+  }
 
   return NextResponse.json({
     query: name || email,
@@ -309,5 +365,6 @@ function buildFromLead(
       : null,
     matchTypes,
     createdAt: l.created_at as string,
+    source: "pipeline_lead",
   };
 }

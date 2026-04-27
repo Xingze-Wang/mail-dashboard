@@ -1,15 +1,7 @@
 import { resend } from "@/lib/resend";
 import { supabase } from "@/lib/db";
-
-const STATUS_MAP: Record<string, string> = {
-  sent: "sent",
-  delivered: "delivered",
-  opened: "opened",
-  clicked: "clicked",
-  bounced: "bounced",
-  complained: "complained",
-  delivery_delayed: "sent",
-};
+import { mapResendEventToStatus } from "@/lib/status";
+import { resolveInboundRepId } from "@/lib/inbound-attribution";
 
 /**
  * Sync ALL sent emails and inbound emails from Resend into Supabase.
@@ -60,7 +52,7 @@ export async function syncFromResend(
     const toUpdate: { id: string; status: string }[] = [];
 
     for (const email of emails) {
-      const status = STATUS_MAP[email.last_event] || "sent";
+      const status = mapResendEventToStatus(email.last_event);
       const existing = existingMap.get(email.id);
 
       if (existing) {
@@ -104,8 +96,16 @@ export async function syncFromResend(
       updated += toUpdate.length;
     }
 
-    // If entire page already existed with correct statuses, sent sync is caught up
-    if (toInsert.length === 0 && toUpdate.length === 0) break;
+    // Do NOT break when a page has zero changes. Resend returns emails
+    // newest-first, but click/open/bounce events commonly land on OLDER
+    // rows (a click happens days/weeks after the send). If we bail on
+    // the first all-synced page, we never paginate back to where the
+    // real status updates are — and "clicked" stays at 0 forever in
+    // metrics that depend on emails.status.
+    //
+    // Pagination is already bounded by has_more + the time budget
+    // checked at the top of the loop, so run until Resend says we've
+    // seen everything (or time runs out).
 
     after = emails[emails.length - 1].id;
   }
@@ -168,15 +168,19 @@ export async function syncFromResend(
         // Use real email Message-ID if available, fall back to Resend UUID
         const realMessageId = (email as Record<string, unknown>).message_id as string || email.id;
 
+        const toField = Array.isArray(email.to) ? email.to.join(", ") : (email.to || "");
+        const newThreadId = `thread_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+        const repIdSync = await resolveInboundRepId(toField, newThreadId);
         const { error } = await supabase.from("inbound_emails").insert({
           from: email.from,
-          to: Array.isArray(email.to) ? email.to.join(", ") : (email.to || ""),
+          to: toField,
           subject: email.subject || "(no subject)",
           html,
           text,
           message_id: realMessageId,
           in_reply_to: (email as Record<string, unknown>).in_reply_to as string || null,
-          thread_id: `thread_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+          thread_id: newThreadId,
+          rep_id: repIdSync,
           created_at: email.created_at,
         });
 

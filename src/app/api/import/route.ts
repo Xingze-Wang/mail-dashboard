@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { resend } from "@/lib/resend";
 import { requireAdmin } from "@/lib/auth-helpers";
+import { mapResendEventToStatus } from "@/lib/status";
 
 // Import historical emails from Resend API — admin-only.
 export async function POST(req: NextRequest) {
@@ -45,13 +46,7 @@ export async function POST(req: NextRequest) {
           continue;
         }
 
-        // Map Resend status
-        let status = "sent";
-        if (email.last_event === "delivered") status = "delivered";
-        else if (email.last_event === "opened") status = "opened";
-        else if (email.last_event === "clicked") status = "clicked";
-        else if (email.last_event === "bounced") status = "bounced";
-        else if (email.last_event === "complained") status = "complained";
+        const status = mapResendEventToStatus(email.last_event);
 
         const threadId = `thread_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 

@@ -118,6 +118,7 @@ const mainNav = [
 const toolsNav = [
   { href: "/brief",     label: "Brief",     Icon: BriefIcon,     adminOnly: false },
   { href: "/templates", label: "Templates", Icon: TemplatesIcon, adminOnly: false },
+  { href: "/analysis",  label: "Analysis",  Icon: ScorerIcon,    adminOnly: false },
   { href: "/scorer",    label: "Scorer",    Icon: ScorerIcon,    adminOnly: true  },
   { href: "/bench",     label: "Bench",     Icon: ScorerIcon,    adminOnly: true  },
   { href: "/drift",     label: "Drift",     Icon: DriftIcon,     adminOnly: true  },

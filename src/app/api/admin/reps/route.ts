@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { requireAdmin } from "@/lib/auth-helpers";
+import { REACHABLE_EMAIL_STATUSES } from "@/lib/status";
+import { beijingDaysAgoStartUtc } from "@/lib/override-quota";
 
 export const dynamic = "force-dynamic";
 
@@ -32,7 +34,7 @@ export async function GET(req: NextRequest) {
     .order("id");
 
   // Per-rep activity over the last 30 days
-  const since = new Date(Date.now() - 30 * 86400_000).toISOString();
+  const since = beijingDaysAgoStartUtc(30).toISOString();
   const repsArr = (reps ?? []) as RepRow[];
 
   // Count assignments per rep (existing pipeline_leads)
@@ -51,7 +53,7 @@ export async function GET(req: NextRequest) {
     .from("emails")
     .select("from")
     .gte("created_at", since)
-    .in("status", ["delivered", "clicked", "sent", "replied"]);
+    .in("status", [...REACHABLE_EMAIL_STATUSES]);
   const sentByEmail = new Map<string, number>();
   for (const e of emailRows ?? []) {
     const m = (e.from as string | null)?.match(/<([^>]+)>/);

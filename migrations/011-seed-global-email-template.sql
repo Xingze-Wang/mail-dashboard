@@ -74,12 +74,9 @@ values (
   '如果{{closing_name}}对算力支持感兴趣，欢迎<a href="{{apply_url}}">申请</a>或加我微信交流（{{rep_wechat}}）。',
   'Baseline global template — mirrors email-generator.ts hardcoded output as of migration 011.'
 )
-on conflict (name) do update set
-  subject_format     = excluded.subject_format,
-  intro_prompt       = excluded.intro_prompt,
-  greeting_format    = excluded.greeting_format,
-  rep_intro_format   = excluded.rep_intro_format,
-  school_pitch_format= excluded.school_pitch_format,
-  cta_signoff_format = excluded.cta_signoff_format,
-  notes              = excluded.notes,
-  updated_at         = now();
+-- Only seed if missing. Previously this was `do update set ...` which
+-- overwrote UI edits on every migration re-run — admins would tweak the
+-- global template via /settings/voice-templates, someone would re-paste
+-- APPLY_008_TO_018.sql, and their work vanished silently.
+-- If you need to reset the global row, do it deliberately via the UI.
+on conflict (name) do nothing;

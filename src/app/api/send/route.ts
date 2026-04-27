@@ -63,6 +63,7 @@ export async function POST(req: NextRequest) {
         // Low-level admin sends — attribute to the admin session so
         // these don't become orphaned rep_id=null rows after migration 014.
         rep_id: gate.session.repId,
+        actor_rep_id: gate.session.repId,
       })
       .select()
       .single();

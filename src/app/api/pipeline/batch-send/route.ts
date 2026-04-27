@@ -257,6 +257,9 @@ export async function POST(req: NextRequest) {
         thread_id: threadId,
         paper_arxiv_id: lead.arxiv_id ?? null,
         rep_id: lead.assigned_rep_id ?? actingRepId,
+        // Actor (who actually pressed send). See pipeline/send for the
+        // rep_id vs actor_rep_id distinction.
+        actor_rep_id: actingRepId,
       });
       if (emailInsertErr) {
         console.error("batch emails insert failed", { id, resendId: result.data?.id, err: emailInsertErr });

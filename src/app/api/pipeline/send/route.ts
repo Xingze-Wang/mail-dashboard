@@ -310,10 +310,17 @@ export async function POST(req: NextRequest) {
         status: "sent",
         thread_id: threadId,
         paper_arxiv_id: lead.arxiv_id ?? null,
-        // Canonical rep attribution (migration 014). Carried on the
-        // emails row so future queries can scope by rep_id instead of
-        // the fragile `from ilike sender_email` proxy filter.
+        // rep_id = OWNER (canonical, migration 014). Used to route
+        // inbox views, scope dashboards, etc. Mirrors the lead's
+        // assigned_rep_id so ownership is always retrievable off the
+        // emails row even if the lead later gets reassigned.
         rep_id: lead.assigned_rep_id ?? actingRepId,
+        // actor_rep_id = WHO PERFORMED THE SEND (migration 019). Used
+        // for audit and for bounce/reply attribution math that should
+        // credit/debit the rep who actually did the work, not the
+        // rep who happens to own the lead. Diverges from rep_id when
+        // admin/senior sends on behalf of another rep.
+        actor_rep_id: actingRepId,
       })
       .select()
       .single();

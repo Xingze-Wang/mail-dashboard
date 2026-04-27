@@ -84,8 +84,8 @@ export async function POST(req: NextRequest) {
 
     for (const lead of leads) {
       const rawEmail = lead.authorEmail as string;
-      if (!rawEmail) {
-        errors.push("Missing authorEmail");
+      if (!rawEmail || typeof rawEmail !== "string" || !rawEmail.includes("@")) {
+        errors.push("Missing or invalid authorEmail");
         skipped++;
         continue;
       }
@@ -156,6 +156,20 @@ export async function POST(req: NextRequest) {
       const source = (lead.source as string) || "external";
       const authorName = (lead.authorName as string) || null;
       const schoolTier = (lead.schoolTier as number) || null;
+
+      // `authors` is the full co-author list from arxiv. Python sends it as
+      // a comma-joined string; some callers may pass an array. Either way,
+      // normalize to a string for the `authors` column. Falls back to
+      // authorName (single recipient) when caller doesn't send it.
+      const incomingAuthors = lead.authors;
+      let authorsField: string | null = authorName;
+      if (typeof incomingAuthors === "string" && incomingAuthors.trim()) {
+        authorsField = incomingAuthors.trim();
+      } else if (Array.isArray(incomingAuthors) && incomingAuthors.length > 0) {
+        authorsField = incomingAuthors
+          .filter((a) => typeof a === "string" && a.trim())
+          .join(", ") || authorName;
+      }
 
       // Classification uses what Python sent us. If Python missed citation
       // data (most leads — Python's S2 path is flaky), fall back to a quick
@@ -260,7 +274,7 @@ export async function POST(req: NextRequest) {
         arxiv_id: arxivId,
         title,
         abstract: (lead.abstract as string) || null,
-        authors: authorName,
+        authors: authorsField,
         pdf_url: (lead.pdfUrl as string) || null,
         published_at: (lead.publishedAt as string) || null,
         author_name: authorName,
