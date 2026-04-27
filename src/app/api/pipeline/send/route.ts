@@ -8,6 +8,7 @@ import { MIN_AGE_DAYS, leadAgeDays } from "@/lib/policy";
 import { canonicalizeEmail } from "@/lib/email-id";
 import { checkBlocked } from "@/lib/blocklist";
 import { requireSession } from "@/lib/auth-helpers";
+import { loadEffectiveTemplate } from "@/lib/template-assembler";
 import { buildQuotaCheck, countOverridesTodayByRep } from "@/lib/override-quota";
 
 export async function POST(req: NextRequest) {
@@ -298,6 +299,18 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Record which template was active when this draft was sent
+    // (migration 032). Cheap re-lookup at send time — within a few
+    // days of scan, the answer matches what was actually used. NULL
+    // is fine if loadEffectiveTemplate fails or no template exists.
+    let templateId: string | null = null;
+    try {
+      const tpl = await loadEffectiveTemplate(lead.assigned_rep_id ?? null);
+      templateId = tpl?.id ?? null;
+    } catch {
+      // best-effort — template_id is for analytics, not delivery
+    }
+
     const { data: email, error: emailError } = await supabase
       .from("emails")
       .insert({
@@ -321,6 +334,7 @@ export async function POST(req: NextRequest) {
         // rep who happens to own the lead. Diverges from rep_id when
         // admin/senior sends on behalf of another rep.
         actor_rep_id: actingRepId,
+        template_id: templateId,
       })
       .select()
       .single();

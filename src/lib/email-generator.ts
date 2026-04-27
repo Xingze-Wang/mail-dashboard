@@ -251,7 +251,7 @@ export async function generateDraft(lead: {
   // don't have repId (legacy code paths) still work: they just skip
   // per-rep overrides.
   assignedRepId?: number | null;
-}): Promise<{ subject: string; html: string }> {
+}): Promise<{ subject: string; html: string; templateId: string | null }> {
   // Template-driven path — preferred. If either the migration hasn't
   // been applied or the table is empty, loadEffectiveTemplate returns
   // null and we fall through to the legacy hardcoded assembly below.
@@ -281,9 +281,9 @@ export async function generateDraft(lead: {
           schoolTier: lead.schoolTier,
           matchedDirections: lead.matchedDirections,
         });
-        return { subject: ab.subject, html: draft.html };
+        return { subject: ab.subject, html: draft.html, templateId: tpl.id };
       }
-      return draft;
+      return { ...draft, templateId: tpl.id };
     }
   } catch (err) {
     // Template path failed — fall through to legacy. Log so it's
@@ -352,5 +352,5 @@ ${thirdParagraph}<br><br>
 <span style="font-size: 14px; color: #333; line-height: 1.6;">${escapeHtml(repName)}<br>奇绩创坛</span>
 </body></html>`;
 
-  return { subject, html };
+  return { subject, html, templateId: null };
 }

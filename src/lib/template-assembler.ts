@@ -231,14 +231,79 @@ function substituteRaw(fmt: string, vars: Record<string, string>): string {
 }
 
 // ── Main assembler ───────────────────────────────────────────────────
+/**
+ * Segment context derived from the lead. Lives only here — the values
+ * are computed from AssemblyInput, never stored.
+ */
+interface SegmentContext {
+  geo: "cn" | "edu" | "other";
+  school_tier: number | null;
+}
+
+function deriveSegmentContext(input: AssemblyInput): SegmentContext {
+  const lower = (input.authorEmail ?? "").toLowerCase();
+  const geo: "cn" | "edu" | "other" =
+    lower.endsWith(".cn") ? "cn"
+    : (lower.endsWith(".edu") || lower.endsWith(".edu.cn")) ? "edu"
+    : "other";
+  return { geo, school_tier: input.schoolTier };
+}
+
+interface SlotOverride { slot_name: string; when: Record<string, unknown>; value: string }
+
+/**
+ * Pick the effective value for a slot. Returns the first matching
+ * override (oldest first — matches insertion order) or the template
+ * row's default. An override matches when every key in `when` is
+ * present in ctx with the same value (string === string,
+ * number === number).
+ */
+function pickSlot(
+  template: EmailTemplate,
+  slot: "subject_format" | "intro_prompt" | "greeting_format" | "rep_intro_format" | "school_pitch_format" | "cta_signoff_format",
+  overrides: SlotOverride[],
+  ctx: SegmentContext,
+): string {
+  const candidates = overrides.filter((o) => o.slot_name === slot);
+  for (const o of candidates) {
+    if (matchesContext(o.when, ctx)) return o.value;
+  }
+  return template[slot];
+}
+
+function matchesContext(when: Record<string, unknown>, ctx: SegmentContext): boolean {
+  for (const [k, v] of Object.entries(when ?? {})) {
+    if (k === "geo" && v !== ctx.geo) return false;
+    if (k === "school_tier" && Number(v) !== ctx.school_tier) return false;
+    // unknown keys are silently ignored — keeps additions forward-compat
+  }
+  return true;
+}
+
 export async function assembleDraft(
   template: EmailTemplate,
   input: AssemblyInput,
 ): Promise<{ subject: string; html: string }> {
   const schoolInfo = getSchoolInfo(input.authorEmail);
+  const segmentCtx = deriveSegmentContext(input);
+
+  // Pull all segment overrides for this template once. Cheap query
+  // (indexed on template_id) and lets every slot pick from the same
+  // in-memory list. Empty array if migration 034 hasn't run yet.
+  let overrides: SlotOverride[] = [];
+  try {
+    const { data } = await supabase
+      .from("email_template_overrides")
+      .select("slot_name, when, value")
+      .eq("template_id", template.id)
+      .order("created_at", { ascending: true });
+    overrides = (data ?? []) as SlotOverride[];
+  } catch {
+    // table missing — segment-aware path silently no-ops
+  }
 
   const personalizedIntro = await generatePersonalizedIntro(
-    template.intro_prompt,
+    pickSlot(template, "intro_prompt", overrides, segmentCtx),
     input.title,
     input.abstract,
   );
@@ -252,19 +317,19 @@ export async function assembleDraft(
   // Subject: un-escaped {{title}} substitution because subject is
   // plain text (not HTML). Truncate at 200 chars.
   const subject = truncateSubject(
-    substituteRaw(template.subject_format, { title: fullTitle }),
+    substituteRaw(pickSlot(template, "subject_format", overrides, segmentCtx), { title: fullTitle }),
   );
 
   // Body parts — each gets its own placeholder set. Escape everywhere
   // except the CTA signoff, which contains an <a> tag that's part of
   // the template.
-  const greeting = substitute(template.greeting_format, {
+  const greeting = substitute(pickSlot(template, "greeting_format", overrides, segmentCtx), {
     first_name_or_you: firstNameOrYou,
   });
-  const repIntro = substitute(template.rep_intro_format, {
+  const repIntro = substitute(pickSlot(template, "rep_intro_format", overrides, segmentCtx), {
     rep_name: input.repName,
   });
-  const schoolPitch = substitute(template.school_pitch_format, {
+  const schoolPitch = substitute(pickSlot(template, "school_pitch_format", overrides, segmentCtx), {
     school_text: pitch.school_text,
     base_info: pitch.base_info,
     directions_text: pitch.directions_text,
@@ -273,7 +338,7 @@ export async function assembleDraft(
   // cta_signoff_format contains a literal <a href="{{apply_url}}"> —
   // we do TWO passes: first unescape-substitute the URL (it's trusted
   // server config), then html-escape the dynamic name/wechat fields.
-  const ctaWithUrl = substituteRaw(template.cta_signoff_format, {
+  const ctaWithUrl = substituteRaw(pickSlot(template, "cta_signoff_format", overrides, segmentCtx), {
     apply_url: APPLY_URL_CTA,
   });
   const ctaSignoff = substitute(ctaWithUrl, {

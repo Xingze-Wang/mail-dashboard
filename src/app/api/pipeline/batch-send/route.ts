@@ -8,6 +8,7 @@ import { MIN_AGE_DAYS, leadAgeDays } from "@/lib/policy";
 import { canonicalizeEmail } from "@/lib/email-id";
 import { requireSession } from "@/lib/auth-helpers";
 import { DAILY_OVERRIDE_CAP, countOverridesTodayByRep } from "@/lib/override-quota";
+import { loadEffectiveTemplate } from "@/lib/template-assembler";
 
 // Vercel Pro allows up to 300s per function. At ~1.2s per send (Resend
 // round-trip + 100ms inter-send throttle + DB writes) this comfortably
@@ -246,6 +247,15 @@ export async function POST(req: NextRequest) {
       // assigned_rep_id (canonical, migration 014) so scope-by-rep
       // queries can later swap off the fragile `from ilike
       // sender_email` proxy filter.
+      // Cache template lookup per repId across the batch — same rep
+      // means same active template.
+      let templateId: string | null = null;
+      try {
+        const tpl = await loadEffectiveTemplate(lead.assigned_rep_id ?? null);
+        templateId = tpl?.id ?? null;
+      } catch {
+        // best-effort
+      }
       const { error: emailInsertErr } = await supabase.from("emails").insert({
         from: senderFrom,
         to: toEmail,
@@ -260,6 +270,7 @@ export async function POST(req: NextRequest) {
         // Actor (who actually pressed send). See pipeline/send for the
         // rep_id vs actor_rep_id distinction.
         actor_rep_id: actingRepId,
+        template_id: templateId,
       });
       if (emailInsertErr) {
         console.error("batch emails insert failed", { id, resendId: result.data?.id, err: emailInsertErr });
