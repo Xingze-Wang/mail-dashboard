@@ -537,6 +537,180 @@ function DisagreementView() {
         rejudgeId={rejudgeId}
         onReJudge={reJudge}
       />
+
+      {/* ── Helper predictions panel — same axis (LLM judgment vs reality)
+          but applied to the helper's claims about leads. Only renders for
+          admin role (predictions/recent enforces this server-side). ── */}
+      <HelperPredictionsPanel />
+    </div>
+  );
+}
+
+interface HelperPredictionRow {
+  id: string;
+  rep_id: number;
+  claim: string;
+  target_event: string;
+  target_lead_id: string | null;
+  resolved_correct: boolean | null;
+  resolution_note: string | null;
+  judge_avg: number | null;
+  judge_verdicts: Array<{ judge: string; score_0_10: number; reasons: string }> | null;
+  made_at: string;
+  resolved_at: string | null;
+}
+
+interface PredictionsRecentResp {
+  predictions: HelperPredictionRow[];
+  accuracy: { resolved: number; correct: number; ratio: number | null };
+}
+
+function HelperPredictionsPanel() {
+  const [data, setData] = useState<PredictionsRecentResp | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/help/predictions/recent", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.error) setErr(d.error);
+        else setData(d);
+      })
+      .catch((e) => setErr(String(e)))
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return null;
+  if (err) {
+    // Forbidden is fine — the panel just hides for non-admin.
+    if (/forbidden|unauthorized/i.test(err)) return null;
+    return null;
+  }
+  if (!data || data.predictions.length === 0) return null;
+
+  const resolved = data.predictions.filter((p) => p.resolved_correct !== null);
+  const buckets = {
+    rightThoughtful: resolved.filter((p) => p.resolved_correct === true && (p.judge_avg ?? 0) >= 7),
+    rightLazy: resolved.filter((p) => p.resolved_correct === true && (p.judge_avg ?? 10) < 5),
+    wrongThoughtful: resolved.filter((p) => p.resolved_correct === false && (p.judge_avg ?? 0) >= 7),
+    wrongLazy: resolved.filter((p) => p.resolved_correct === false && (p.judge_avg ?? 10) < 5),
+  };
+
+  return (
+    <div style={{ marginTop: 32, paddingTop: 24, borderTop: "1px solid var(--border)" }}>
+      <div style={{ marginBottom: 12 }}>
+        <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 4 }}>Helper predictions</h2>
+        <p style={{ fontSize: 12, color: "var(--muted)", margin: 0 }}>
+          Outcome × judge for resolved predictions. Acc{" "}
+          {data.accuracy.ratio != null ? `${Math.round(data.accuracy.ratio * 100)}%` : "—"}
+          {" "}
+          ({data.accuracy.correct}/{data.accuracy.resolved}). Total tracked: {data.predictions.length}.
+        </p>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 16 }}>
+        <PredQuad title="Right + thoughtful" subtitle="outcome correct, judge ≥7" count={buckets.rightThoughtful.length} hint="Validated reasoning" tone="ok" />
+        <PredQuad title="Right + lazy" subtitle="outcome correct, judge <5" count={buckets.rightLazy.length} hint="Right by accident — lower confidence" tone="alert" />
+        <PredQuad title="Wrong + thoughtful" subtitle="outcome wrong, judge ≥7" count={buckets.wrongThoughtful.length} hint="World surprised us" tone="ok" />
+        <PredQuad title="Wrong + lazy" subtitle="outcome wrong, judge <5" count={buckets.wrongLazy.length} hint="Stop making this kind of claim" tone="alert" />
+      </div>
+
+      <div style={{ border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden" }}>
+        <table style={{ width: "100%", fontSize: 12 }}>
+          <thead style={{ background: "var(--bg)" }}>
+            <tr style={{ color: "var(--muted)" }}>
+              <th style={{ textAlign: "left", padding: "8px 12px" }}>Claim</th>
+              <th style={{ textAlign: "center", padding: "8px 12px", width: 80 }}>Outcome</th>
+              <th style={{ textAlign: "center", padding: "8px 12px", width: 100 }}>Judge avg</th>
+              <th style={{ textAlign: "left", padding: "8px 12px", width: 140 }}>Resolution</th>
+              <th style={{ textAlign: "right", padding: "8px 12px", width: 90 }}>Resolved</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.predictions.slice(0, 20).map((p) => {
+              const isOpen = expandedId === p.id;
+              return (
+                <FragmentRow
+                  key={p.id}
+                  pred={p}
+                  isOpen={isOpen}
+                  onToggle={() => setExpandedId(isOpen ? null : p.id)}
+                />
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function FragmentRow({ pred, isOpen, onToggle }: { pred: HelperPredictionRow; isOpen: boolean; onToggle: () => void }) {
+  const outcomeBadge =
+    pred.resolved_correct === null ? (
+      <span style={{ fontSize: 10, color: "var(--muted)" }}>pending</span>
+    ) : pred.resolved_correct ? (
+      <span style={{ fontSize: 11, color: "#16a34a", fontWeight: 600 }}>right</span>
+    ) : (
+      <span style={{ fontSize: 11, color: "#dc2626", fontWeight: 600 }}>wrong</span>
+    );
+  const judgeBadge =
+    pred.judge_avg == null ? (
+      <span style={{ fontSize: 10, color: "var(--muted)" }}>—</span>
+    ) : (
+      <span
+        style={{
+          fontSize: 11,
+          fontWeight: 600,
+          color: pred.judge_avg >= 7 ? "#16a34a" : pred.judge_avg < 5 ? "#dc2626" : "var(--text-secondary)",
+        }}
+      >
+        {pred.judge_avg.toFixed(1)}/10
+      </span>
+    );
+
+  return (
+    <>
+      <tr style={{ borderTop: "1px solid var(--border-light)", cursor: "pointer" }} onClick={onToggle}>
+        <td style={{ padding: "8px 12px", color: "var(--text)" }}>{pred.claim.length > 120 ? `${pred.claim.slice(0, 120)}…` : pred.claim}</td>
+        <td style={{ padding: "8px 12px", textAlign: "center" }}>{outcomeBadge}</td>
+        <td style={{ padding: "8px 12px", textAlign: "center" }}>{judgeBadge}</td>
+        <td style={{ padding: "8px 12px", color: "var(--text-secondary)" }}>{pred.resolution_note ?? "—"}</td>
+        <td style={{ padding: "8px 12px", textAlign: "right", color: "var(--muted)", fontSize: 11 }}>
+          {pred.resolved_at ? new Date(pred.resolved_at).toLocaleDateString() : "—"}
+        </td>
+      </tr>
+      {isOpen && pred.judge_verdicts && (
+        <tr style={{ background: "var(--bg)" }}>
+          <td colSpan={5} style={{ padding: "10px 16px" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {pred.judge_verdicts.map((v) => (
+                <div key={v.judge} style={{ fontSize: 11, color: "var(--text-secondary)" }}>
+                  <strong style={{ color: "var(--text)" }}>{v.judge}</strong>{" "}
+                  <span style={{ color: v.score_0_10 >= 7 ? "#16a34a" : v.score_0_10 < 5 ? "#dc2626" : "var(--text-tertiary)" }}>
+                    {v.score_0_10}/10
+                  </span>{" "}
+                  — {v.reasons}
+                </div>
+              ))}
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+function PredQuad({ title, subtitle, count, hint, tone }: { title: string; subtitle: string; count: number; hint: string; tone: "alert" | "ok" }) {
+  const accent = tone === "alert" ? "#dc2626" : "#16a34a";
+  return (
+    <div style={{ padding: 12, border: "1px solid var(--border)", borderRadius: 10, background: "var(--card)" }}>
+      <div style={{ fontSize: 11, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 0.4 }}>{title}</div>
+      <div style={{ fontSize: 24, fontWeight: 600, color: accent, lineHeight: 1.1, marginTop: 4 }}>{count}</div>
+      <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>{subtitle}</div>
+      <div style={{ fontSize: 11, color: accent, marginTop: 6, fontWeight: 500 }}>{hint}</div>
     </div>
   );
 }
