@@ -2,6 +2,17 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { TrendingUp, Loader2, Filter, Info, Zap, AlertCircle, GitCompare } from "lucide-react";
+import {
+  ScatterChart,
+  Scatter,
+  XAxis,
+  YAxis,
+  ZAxis,
+  CartesianGrid,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip as RechartsTooltip,
+} from "recharts";
 
 interface BucketStats {
   bucket: string;
@@ -268,9 +279,102 @@ function SegmentFunnelsSection({ funnels }: { funnels: SegmentFunnels }) {
         <GeoComparison segments={geoBinary.segments} totals={funnels.totals} />
       )}
 
+      <SegmentScatter funnels={funnels} />
+
       {others.map((dim) => (
         <SegmentMatrix key={dim.dimension} dim={dim} totals={funnels.totals} />
       ))}
+    </div>
+  );
+}
+
+function SegmentScatter({ funnels }: { funnels: SegmentFunnels }) {
+  // Strategic-quadrant view: every (dimension, segment) becomes one
+  // dot positioned by (CTR, post-click conv). The four quadrants tell
+  // you what to do, not just what's true:
+  //   top-right    — high CTR + high conv → 金矿, scale this segment
+  //   bottom-right — high CTR + low conv  → subject 误导, body fails
+  //   top-left     — low CTR + high conv  → opener gap, body works
+  //   bottom-left  — low + low → 别浪费 time on this segment
+  // Dot size is delivered count so noise (lowN) shrinks visually.
+  const data = useMemo(() => {
+    const rows: { dimension: string; segment: string; ctr: number; conv: number; delivered: number; lowN: boolean }[] = [];
+    for (const dim of funnels.dimensions) {
+      for (const seg of dim.segments) {
+        if (seg.delivered < 5) continue; // hard floor — anything smaller is just noise
+        rows.push({
+          dimension: dim.label,
+          segment: seg.segment,
+          ctr: seg.ctr,
+          conv: seg.postClickConv,
+          delivered: seg.delivered,
+          lowN: seg.lowN,
+        });
+      }
+    }
+    return rows;
+  }, [funnels]);
+
+  if (data.length === 0) return null;
+
+  const overallCtr = funnels.totals.overallCtr;
+  const overallConv = funnels.totals.overallPostClick;
+
+  return (
+    <div className="section-card" style={{ padding: 16, marginBottom: 14 }}>
+      <h3 style={{ marginBottom: 4, fontSize: 14, fontWeight: 600 }}>
+        Segment strategy quadrants
+      </h3>
+      <p style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 12 }}>
+        每个点 = 一个 segment. 横轴 = CTR (subject + opener 抓住眼球), 纵轴 = click→WeChat
+        转化 (body + CTA 留住兴趣). 虚线 = 全部 baseline. 右上 = 金矿; 右下 = subject 误导
+        (打开了但留不住); 左上 = subject 弱但内容对; 左下 = 别浪费时间.
+      </p>
+      <div style={{ width: "100%", height: 320 }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <ScatterChart margin={{ top: 10, right: 30, bottom: 36, left: 36 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--border-light)" />
+            <XAxis
+              type="number"
+              dataKey="ctr"
+              name="CTR"
+              domain={[0, "auto"]}
+              tickFormatter={(v) => `${(v * 100).toFixed(1)}%`}
+              label={{ value: "CTR (clicked / delivered)", position: "insideBottom", offset: -8, style: { fontSize: 11, fill: "var(--text-secondary)" } }}
+              tick={{ fontSize: 10 }}
+            />
+            <YAxis
+              type="number"
+              dataKey="conv"
+              name="post-click conv"
+              domain={[0, "auto"]}
+              tickFormatter={(v) => `${(v * 100).toFixed(0)}%`}
+              label={{ value: "click → WeChat", angle: -90, position: "insideLeft", style: { fontSize: 11, fill: "var(--text-secondary)" } }}
+              tick={{ fontSize: 10 }}
+            />
+            <ZAxis type="number" dataKey="delivered" range={[40, 400]} name="sample size" />
+            <ReferenceLine x={overallCtr} stroke="var(--text-tertiary)" strokeDasharray="3 3" />
+            <ReferenceLine y={overallConv} stroke="var(--text-tertiary)" strokeDasharray="3 3" />
+            <RechartsTooltip
+              cursor={{ strokeDasharray: "3 3" }}
+              content={({ active, payload }) => {
+                if (!active || !payload || payload.length === 0) return null;
+                const d = payload[0].payload as typeof data[number];
+                return (
+                  <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 8, padding: 10, fontSize: 12 }}>
+                    <div style={{ fontWeight: 600, marginBottom: 4 }}>{d.segment}</div>
+                    <div style={{ color: "var(--text-secondary)", marginBottom: 6 }}>{d.dimension}</div>
+                    <div>CTR: <strong>{(d.ctr * 100).toFixed(1)}%</strong></div>
+                    <div>Click→WeChat: <strong>{(d.conv * 100).toFixed(1)}%</strong></div>
+                    <div style={{ color: "var(--text-tertiary)", marginTop: 4 }}>{d.delivered} delivered{d.lowN ? " · low N" : ""}</div>
+                  </div>
+                );
+              }}
+            />
+            <Scatter data={data} fill="#6366F1" fillOpacity={0.7} stroke="#4338CA" />
+          </ScatterChart>
+        </ResponsiveContainer>
+      </div>
     </div>
   );
 }

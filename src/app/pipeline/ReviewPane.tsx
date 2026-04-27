@@ -332,6 +332,32 @@ export function ReviewPane({ leads, onExit, onSent, onSkipped, initialLeadId }: 
       // naturally slides into the current idx. Calling advance() *and*
       // refetching would skip ahead by 2 (looks like "sent two at once").
       onSent(lead);
+
+      // Action-triggered chime probe (Dream #1). Fire-and-forget. If
+      // the route returns a chime, broadcast a CustomEvent that the
+      // global HelpBot listens for and renders as a nudge bubble.
+      // Most calls return chime: null — silent skip is the design.
+      void (async () => {
+        try {
+          const r = await fetch("/api/help/chime-in/check", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              trigger: "send_email",
+              context: { lead_id: lead.id, subject },
+            }),
+          });
+          if (!r.ok) return;
+          const d = await r.json();
+          if (d?.chime?.reason) {
+            window.dispatchEvent(
+              new CustomEvent("helper-action-chime", { detail: { reason: String(d.chime.reason) } }),
+            );
+          }
+        } catch {
+          /* fail-quiet */
+        }
+      })();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Network error");
     } finally {
@@ -1088,18 +1114,23 @@ function FlagButton({ leadId, onSkipped }: { leadId: string; onSkipped: () => vo
     <>
       <button
         onClick={() => setOpen(true)}
-        title="Flag this lead"
+        title="Flag this lead — wrong author / bad direction / etc."
         style={{
           display: "inline-flex",
           alignItems: "center",
           gap: 4,
           padding: "4px 10px",
           fontSize: 11,
-          color: "var(--dx-text-3)",
-          background: "transparent",
-          border: "1px solid var(--dx-border-soft)",
+          // Solid muted-amber so the button reads as a real action.
+          // Previously transparent + soft border made it look disabled
+          // and reps missed it entirely → too few flag signals → drift
+          // training had nothing to learn from.
+          color: "#92400E",
+          background: "#FEF3C7",
+          border: "1px solid #FCD34D",
           borderRadius: 999,
           cursor: "pointer",
+          fontWeight: 500,
         }}
       >
         <Flag style={{ width: 11, height: 11 }} />

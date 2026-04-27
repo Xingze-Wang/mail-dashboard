@@ -205,6 +205,19 @@ interface Msg {
   // Rendered as a muted strip above the bubble so sales can see what
   // data the helper looked at.
   toolTrail?: Array<{ tool: string; summary: string }>;
+  // Structured citations the helper attached to this answer. Each item
+  // renders as an expandable card under the bubble — "show the data"
+  // for any numeric claim. Shape: lib/helper-evidence.ts::HelperEvidence.
+  evidence?: HelperEvidence[];
+}
+
+// Structured evidence shape, mirrored from lib/helper-evidence.ts so we
+// can render without importing server-only code.
+interface HelperEvidence {
+  id: string;
+  kind: "leads" | "pattern" | "stat" | "thread" | "comparison";
+  label: string;
+  data: Record<string, unknown>;
 }
 
 /** Shape of the window global that ReviewPane publishes when a lead is on
@@ -258,7 +271,25 @@ export function HelpBot() {
   // Pending nudge — when the helper proactively wants to say something.
   // Rendered as a speech bubble next to the sparkles button until
   // the user opens the modal (which consumes it) or dismisses.
+  // Two sources today: the per-lead linger nudge (15s on the same
+  // lead) and the action-triggered chime (Dream #1) fired right after
+  // a send. Both write here.
   const [pendingNudge, setPendingNudge] = useState<string | null>(null);
+
+  // Listen for action-triggered chime events broadcast by send paths
+  // (currently ReviewPane). Fire-and-forget on the dispatch side; we
+  // just adopt the message into pendingNudge if the helper isn't
+  // already showing something.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ reason?: string }>).detail;
+      if (!detail?.reason) return;
+      // Don't stomp on an existing nudge — the rep hasn't seen it yet.
+      setPendingNudge((prev) => prev ?? detail.reason ?? null);
+    };
+    window.addEventListener("helper-action-chime", handler);
+    return () => window.removeEventListener("helper-action-chime", handler);
+  }, []);
   // Pending opener — the daily greeting. Seeded once per Beijing day
   // when the user first opens the modal.
   const [pendingOpener, setPendingOpener] = useState<string | null>(null);
@@ -760,6 +791,7 @@ function HelpModal({
           text: d.answer ?? "",
           proposal: d.proposal ?? null,
           toolTrail: Array.isArray(d.toolTrail) ? d.toolTrail : undefined,
+          evidence: Array.isArray(d.evidence) ? d.evidence : undefined,
         }]);
       }
     } catch (e) {
@@ -840,12 +872,13 @@ function HelpModal({
       const d = await r.json();
       setConversationId(id);
       setMessages(
-        (d.messages ?? []).map((m: { id: string; role: string; text: string | null; tool_proposal: ToolProposal | null; tool_result: { ok: boolean; detail?: Record<string, unknown> } | null }, i: number) => ({
+        (d.messages ?? []).map((m: { id: string; role: string; text: string | null; tool_proposal: ToolProposal | null; tool_result: { ok: boolean; detail?: Record<string, unknown> } | null; evidence?: HelperEvidence[] | null }, i: number) => ({
           id: Date.now() + i,
           role: (m.role as "user" | "assistant" | "tool"),
           text: m.text ?? "",
           proposal: m.tool_proposal ?? null,
           toolResult: m.tool_result ?? null,
+          evidence: Array.isArray(m.evidence) ? m.evidence : undefined,
         })),
       );
       setShowHistory(false);
@@ -878,29 +911,28 @@ function HelpModal({
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages, busy]);
 
+  // Non-modal floating panel: anchored to bottom-right, no backdrop,
+  // no click-outside-to-close. The user can still click around the
+  // app (open emails, scroll the pipeline, etc.) while the helper
+  // stays open. Close via the X button or Escape.
   return (
     <div
-      onClick={onClose}
       style={{
-        position: "fixed", inset: 0,
-        background: "rgba(0,0,0,0.4)",
-        display: "flex", alignItems: "flex-end", justifyContent: "flex-end",
-        zIndex: 70, padding: 24,
+        position: "fixed",
+        bottom: 24,
+        right: 24,
+        width: "min(440px, 92vw)",
+        height: "min(640px, 80vh)",
+        background: "var(--card, #fff)",
+        borderRadius: 14,
+        border: "1px solid var(--border, #e5e7eb)",
+        boxShadow: "0 20px 60px rgba(0,0,0,0.18)",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        zIndex: 70,
       }}
     >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: "min(440px, 92vw)", height: "min(640px, 80vh)",
-          background: "var(--card, #fff)",
-          borderRadius: 14,
-          border: "1px solid var(--border, #e5e7eb)",
-          boxShadow: "0 20px 60px rgba(0,0,0,0.18)",
-          display: "flex", flexDirection: "column",
-          overflow: "hidden",
-          position: "relative",
-        }}
-      >
         {/* header — title reflects active mode so sales knows whether
             they're in sales-script territory or paper-comprehension territory */}
         <div style={{
@@ -1104,6 +1136,13 @@ function HelpModal({
                 >
                   {renderMessageContent(m.text)}
                 </div>
+                {/* Evidence cards — "show the data" expansion for any
+                    numeric claim. Helper attaches structured citations
+                    via `evidence` blocks; we render one collapsible card
+                    per item below the bubble. */}
+                {m.role === "assistant" && m.evidence && m.evidence.length > 0 && (
+                  <EvidenceList items={m.evidence} />
+                )}
                 {/* Tool proposal card — rendered when the LLM suggested
                     an action. User MUST click Confirm for it to execute.
                     No auto-firing, ever. */}
@@ -1186,8 +1225,186 @@ function HelpModal({
           </button>
         </div>
       </div>
+  );
+}
+
+/* ─── Evidence rendering ──────────────────────────────────────────────
+ * "Show the data" cards. Each helper answer that makes a numeric claim
+ * attaches one or more `evidence` items; we render them as a compact
+ * stack of expandable cards under the bubble. Clicking opens the
+ * structured payload inline — lead_ids become links into /pipeline,
+ * thread excerpts show with their outcome, patterns show their
+ * underlying counts.
+ *
+ * Defensive: any evidence item with a malformed payload is rendered
+ * as a single line of "evidence parse failed" rather than crashing
+ * the chat.
+ * ──────────────────────────────────────────────────────────────────── */
+function EvidenceList({ items }: { items: HelperEvidence[] }) {
+  return (
+    <div style={{ alignSelf: "stretch", display: "flex", flexDirection: "column", gap: 4, marginTop: 2 }}>
+      {items.map((ev) => (
+        <EvidenceCard key={ev.id} ev={ev} />
+      ))}
     </div>
   );
+}
+
+function EvidenceCard({ ev }: { ev: HelperEvidence }) {
+  const [open, setOpen] = useState(false);
+  const tag = ev.kind.toUpperCase();
+  return (
+    <div
+      style={{
+        alignSelf: "flex-start",
+        maxWidth: "88%",
+        border: "1px solid var(--border-light, #eef0f3)",
+        borderRadius: 8,
+        background: "var(--bg-subtle, #fafbfc)",
+        fontSize: 12,
+        overflow: "hidden",
+      }}
+    >
+      <button
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          width: "100%",
+          padding: "6px 10px",
+          background: "transparent",
+          border: "none",
+          textAlign: "left",
+          cursor: "pointer",
+          color: "var(--text-secondary, #4b5563)",
+          fontFamily: "inherit",
+          fontSize: 12,
+        }}
+      >
+        <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 10, color: "var(--text-tertiary, #9ca3af)" }}>
+          [{ev.id}]
+        </span>
+        <span style={{ fontWeight: 600, fontSize: 10, letterSpacing: 0.3, color: "var(--text-tertiary, #9ca3af)" }}>{tag}</span>
+        <span style={{ flex: 1 }}>{ev.label}</span>
+        <span style={{ fontSize: 10, color: "var(--text-tertiary, #9ca3af)" }}>{open ? "▴" : "▾"}</span>
+      </button>
+      {open && (
+        <div style={{ padding: "8px 10px", borderTop: "1px solid var(--border-light, #eef0f3)" }}>
+          <EvidenceBody ev={ev} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EvidenceBody({ ev }: { ev: HelperEvidence }) {
+  try {
+    const d = ev.data as Record<string, unknown>;
+    if (ev.kind === "leads") {
+      const ids = (d.lead_ids as string[]) ?? [];
+      const notes = (d.notes as Record<string, string>) ?? {};
+      return (
+        <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 3 }}>
+          {ids.map((id) => (
+            <li key={id} style={{ fontFamily: "ui-monospace, monospace", fontSize: 11, color: "var(--text-secondary, #4b5563)" }}>
+              <a href={`/pipeline?leadId=${encodeURIComponent(id)}`} target="_blank" rel="noreferrer" style={{ color: "#6366F1", textDecoration: "none" }}>
+                {id.slice(0, 8)}
+              </a>
+              {notes[id] ? <span style={{ marginLeft: 6, color: "var(--text-tertiary, #9ca3af)" }}>· {notes[id]}</span> : null}
+            </li>
+          ))}
+        </ul>
+      );
+    }
+    if (ev.kind === "pattern") {
+      const sample = (d.sample_lead_ids as string[] | undefined) ?? [];
+      return (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12 }}>
+          <div><strong>{String(d.dimension)}</strong> = <em>{String(d.bucket)}</em></div>
+          <div style={{ color: "var(--text-secondary, #4b5563)" }}>
+            {String(d.sent)} sent · {String(d.wechat)} wechat ({fmtPct(d.wechat_rate)}) · {String(d.replied)} replied ({fmtPct(d.reply_rate)})
+          </div>
+          <div style={{ color: "var(--text-secondary, #4b5563)" }}>
+            WeChat lift vs baseline: <strong>{fmtLift(d.wechat_lift)}</strong>
+          </div>
+          {sample.length > 0 && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 2 }}>
+              {sample.slice(0, 8).map((id) => (
+                <a key={id} href={`/pipeline?leadId=${encodeURIComponent(id)}`} target="_blank" rel="noreferrer" style={{ fontFamily: "ui-monospace, monospace", fontSize: 11, color: "#6366F1", textDecoration: "none" }}>
+                  {id.slice(0, 8)}
+                </a>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+    if (ev.kind === "stat") {
+      return (
+        <div style={{ fontSize: 12, color: "var(--text-secondary, #4b5563)" }}>
+          {String(d.description)}: <strong>{String(d.numerator)}/{String(d.denominator)}</strong> ({fmtPct(((d.numerator as number) ?? 0) / Math.max(1, (d.denominator as number) ?? 0))})
+          {typeof d.baseline === "number" && (
+            <span style={{ marginLeft: 6, color: "var(--text-tertiary, #9ca3af)" }}>baseline: {fmtPct(d.baseline as number)}</span>
+          )}
+        </div>
+      );
+    }
+    if (ev.kind === "thread") {
+      return (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12 }}>
+          <div style={{ color: "var(--text-tertiary, #9ca3af)", fontFamily: "ui-monospace, monospace", fontSize: 10 }}>
+            {String(d.source_ref)} · {new Date(String(d.occurred_at)).toLocaleDateString()}
+            {d.outcome ? <span style={{ marginLeft: 6 }}>· outcome: <strong>{String(d.outcome)}</strong></span> : null}
+          </div>
+          <blockquote style={{ margin: 0, padding: "4px 8px", borderLeft: "2px solid var(--border-light, #eef0f3)", color: "var(--text, #111827)", fontStyle: "italic" }}>
+            {String(d.excerpt)}
+          </blockquote>
+        </div>
+      );
+    }
+    if (ev.kind === "comparison") {
+      const groups = (d.groups as Array<{ label: string; sent: number; wechat: number; replied: number }>) ?? [];
+      return (
+        <table style={{ borderCollapse: "collapse", fontSize: 11, width: "100%" }}>
+          <thead>
+            <tr style={{ color: "var(--text-tertiary, #9ca3af)" }}>
+              <th style={{ textAlign: "left", padding: "2px 6px" }}>group</th>
+              <th style={{ textAlign: "right", padding: "2px 6px" }}>sent</th>
+              <th style={{ textAlign: "right", padding: "2px 6px" }}>wechat</th>
+              <th style={{ textAlign: "right", padding: "2px 6px" }}>replied</th>
+              <th style={{ textAlign: "right", padding: "2px 6px" }}>wechat %</th>
+            </tr>
+          </thead>
+          <tbody>
+            {groups.map((g) => (
+              <tr key={g.label} style={{ borderTop: "1px solid var(--border-light, #eef0f3)" }}>
+                <td style={{ padding: "2px 6px" }}>{g.label}</td>
+                <td style={{ padding: "2px 6px", textAlign: "right" }}>{g.sent}</td>
+                <td style={{ padding: "2px 6px", textAlign: "right" }}>{g.wechat}</td>
+                <td style={{ padding: "2px 6px", textAlign: "right" }}>{g.replied}</td>
+                <td style={{ padding: "2px 6px", textAlign: "right" }}>{fmtPct(g.sent > 0 ? g.wechat / g.sent : 0)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      );
+    }
+    return <pre style={{ margin: 0, fontSize: 10, color: "var(--text-tertiary, #9ca3af)" }}>{JSON.stringify(d, null, 2).slice(0, 500)}</pre>;
+  } catch {
+    return <span style={{ fontSize: 11, color: "var(--text-tertiary, #9ca3af)" }}>evidence parse failed</span>;
+  }
+}
+
+function fmtPct(x: unknown): string {
+  const n = typeof x === "number" ? x : Number(x);
+  if (!Number.isFinite(n)) return "—";
+  return `${(n * 100).toFixed(1)}%`;
+}
+function fmtLift(x: unknown): string {
+  const n = typeof x === "number" ? x : Number(x);
+  if (!Number.isFinite(n)) return "—";
+  return `${n.toFixed(2)}×`;
 }
 
 function renderMessageContent(text: string): React.ReactNode {

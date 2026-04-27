@@ -18,6 +18,7 @@ import {
 } from "./scanner-config";
 import { supabase } from "./db";
 import { assembleDraft, loadEffectiveTemplate } from "./template-assembler";
+import { applyAutoAb } from "./auto-ab";
 
 // ============ HTML escaping ============
 
@@ -259,7 +260,7 @@ export async function generateDraft(lead: {
   try {
     const tpl = await loadEffectiveTemplate(lead.assignedRepId ?? null);
     if (tpl) {
-      return await assembleDraft(tpl, {
+      const draft = await assembleDraft(tpl, {
         title: lead.title,
         abstract: lead.abstract,
         authorEmail: lead.authorEmail,
@@ -270,6 +271,19 @@ export async function generateDraft(lead: {
         repName,
         repWechatId: repWechat,
       });
+      // Auto-A/B (Dream #4): apply data-driven subject mutations for
+      // reps who opted in. Returns the original subject if rep is
+      // opt-out OR no high-confidence pattern matches this lead.
+      if (lead.assignedRepId != null) {
+        const ab = await applyAutoAb(draft.subject, {
+          repId: lead.assignedRepId,
+          authorEmail: lead.authorEmail,
+          schoolTier: lead.schoolTier,
+          matchedDirections: lead.matchedDirections,
+        });
+        return { subject: ab.subject, html: draft.html };
+      }
+      return draft;
     }
   } catch (err) {
     // Template path failed — fall through to legacy. Log so it's
@@ -313,9 +327,19 @@ export async function generateDraft(lead: {
     ? escapeHtml(lead.firstName)
     : "你";
 
-  const subject = truncateSubject(
+  let subject = truncateSubject(
     `Invitation to Apply - ${fullTitle}的潜在算力支持机会`,
   );
+  // Auto-A/B in legacy path too — same opt-in rules apply.
+  if (lead.assignedRepId != null) {
+    const ab = await applyAutoAb(subject, {
+      repId: lead.assignedRepId,
+      authorEmail: lead.authorEmail,
+      schoolTier: lead.schoolTier,
+      matchedDirections: lead.matchedDirections,
+    });
+    subject = ab.subject;
+  }
 
   const html = `<html>
 <head><meta charset="utf-8"></head>

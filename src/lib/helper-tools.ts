@@ -32,6 +32,7 @@ export const ACTION_TOOL_NAMES = new Set([
   "build_rep_template",
   "open_split_view",
   "remember_about_rep",
+  "track_prediction",
 ]);
 
 export const READ_TOOL_NAMES = new Set([
@@ -40,9 +41,14 @@ export const READ_TOOL_NAMES = new Set([
   "get_my_stats",
   "get_rep_info",
   "get_my_growth",
+  "get_my_weekly_recap",
   "get_my_memory",
   "get_admin_alerts",
   "get_wechat_followups",
+  "get_integrity_report",
+  "get_rep_helper_activity",
+  "diagnose_metric_drop",
+  "find_similar_leads",
 ]);
 
 export interface ToolProposal {
@@ -75,9 +81,14 @@ export const TOOLS_PROMPT = `## 工具系统
 - get_my_stats — 当前 rep 的统计. args: {}. 返回: { assigned, ready, sent, replied, wechat, override_used_today, override_cap }
 - get_rep_info — 当前 rep 自己的信息. args: {}. 返回: { id, name, email, role }
 - get_my_growth — 当前 rep 的成长打分 (4 个维度: 选 lead 眼光 / AI 草稿契合度 / 跟进节奏 / 回信温度), 每维 1-5 rung + 证据 + 下一步解锁. args: {}. 返回: { dimensions[], overall_rung, top_strength, top_opportunity }. **什么时候用**: rep 问 "我做得怎么样 / 怎么提高 / 我的水平" 时, 或者你想用证据回答 "下一步该练什么"; 也可以在每天第一次开 panel 时主动调用作为 opener.
+- get_my_weekly_recap — 当前 rep 过去 7 天的活动总结. args: {}. 返回: { windowDays, sent, clicked, wechat, clickRate, wechatRate, topPerformer: {lead_id, title, recipient, wechat_at} | null }. **什么时候用**: 周一 (Beijing time) session 第一次开 panel 时主动 lookup 一次, 用 "上周你 send 了 X 封, Y 个 click, Z 加了微信. 转化最高的是 \\"<title>\\" — 那封跟之前的有什么不同?" 这种自然语言开场. 不要列表式罗列数字, 选 1-2 个有意思的点. 周二到周日不主动调用, 除非 rep 自己问 "这周怎么样".
 - get_my_memory — 当前 rep 跨 session 的长期记忆 (helper 记下来的偏好 / 战术 / 自我反思). args: { limit?: number }. 返回: [{kind, body, scope, confidence, created_at}, ...]. **什么时候用**: 任何 session 第一次回答前都应该 lookup 一次, 这样你的回答可以延续上次的话题, 不会忘记 rep 之前告诉你的偏好.
 - get_admin_alerts — **admin only**. 当前需要 admin 注意的事 (drift 待审, 销售卡住, 团队点击率异常, 模型样本不够等). args: {}. 返回: { alerts: [{ kind, severity, headline, evidence, action_hint }, ...] }. **什么时候用**: 当用户 role=admin 时, 每天第一次开 panel 应该主动 lookup 一次, 把最重要的 1-3 条以 "今天值得看一眼:" 的格式开场.
 - get_wechat_followups — 当前 rep 标了 "Added on WeChat" 但 ≥3 天没有 reply 的 leads. args: {}. 返回: { stale: [{ lead_id, recipient, lead_title, days_stale, marked_at }, ...] }. **什么时候用**: session 开场如果 rep 是 sales 角色 (不是 admin), 主动 lookup 一次. 如果有 stale 条目, 用 "你 X 天前在微信加了 Y, 可能值得 chime back 一下" 的方式提一句, 不要列全部, 挑 1-2 个最久的就行.
+- get_integrity_report — **admin only**. 数据完整性体检 (webhook 是否在收事件 / inbound 是否都归属到 rep / wechat 标记是否都有 actor / cron 是否还在跑 / etc). args: {}. 返回: { ranAt, checks: [{name, status: "green"|"yellow"|"red", detail}], summary }. **什么时候用**: admin session 第一次开 panel 时, 跟 get_admin_alerts 一起 lookup. 如果有 red 项, **优先**告诉 admin ("数据系统有 1 项 red: webhook 24h 没收到事件 — 这意味着 status 更新只靠每天 cron, 看 dashboard 会有最多 24h 延迟"). yellow 一般不主动提.
+- find_similar_leads — embedding 空间里找跟 reference lead 最像的 N 个 lead. args: { reference_lead_id: string (UUID), n?: 5 }. 返回: { reference_lead_id, similar: [{lead_id, title, distance}, ...] }. **什么时候用**: 当 rep 说 "再来一打那种 lead / 给我找几个像 X 的 / 跟这个类似的还有谁" 时. 注意: pgvector 没启用 / embedding 没回填的话会返回 error 字符串 — 直接说 "embedding 还没准备好, 让 admin 在 Supabase dashboard 启用 vector + 跑 backfill 脚本", 别假装在搜.
+- diagnose_metric_drop — 拿当前 metric (click_rate 或 wechat_rate) 在 cur 7 天 vs prev 7 天的变化, 同时返回 4 个协变量 (subject_length / geo / lead_tier / school_tier) 的分布偏移. args: { metric: "click_rate"|"wechat_rate", days?: 7, repId?: number (admin 可指定) }. 返回: { metric, prevRate, curRate, ratioChange, noise, cards: [{covariate, biggestShift, hypothesis}] }. **什么时候用**: 当 admin 或 rep 问 "为什么 X 在掉 / 为什么这周不好 / 怎么回事" 时, lookup 一次. 用 cards 里的 hypothesis 给一个**带证据的猜测**, 不要拍脑袋. noise=true 表示样本不够 (各窗口 <20 sent), 那就直说 "样本太少, 不能下结论". 不要主动调 — 只有用户问才用.
+- get_rep_helper_activity — **admin only**. 查看某个 rep 最近问 helper 的原话 (跨 session). args: { repId: number, limit?: 10, days?: 14 }. 返回: { repId, windowDays, messages: [{text, createdAt}, ...] }. **什么时候用**: 当 admin 主动问 "X 最近在问什么 / 困在哪 / 你跟 Chenyu 都聊了啥" 时用. 不要主动 lookup — 这是侵入性的, 等 admin 明确说想看再用. 注意: shared_helper_questions cluster 已经聚合了多 rep 共性问题, 这个 tool 是补足那个 (只看一个人).
 
 **B. 执行工具 (需要用户 confirm)** — 这些改变数据库. 你只是建议, UI 会弹卡让用户决定.
 
@@ -96,6 +107,7 @@ export const TOOLS_PROMPT = `## 工具系统
 - review_next — 打开 Review 模式下一条 ready lead (前端跳转, 不改数据). 参数: {}.
 - build_rep_template — 根据 rep 最近改过的草稿 (draft_original_html vs draft_html 的 diff), 用 LLM 生成一份属于这个 rep 的邮件模板 (inactive, 等 admin 审核). 参数: { rep_id?: number (admin 可指定, sales 省略=自己) }. **什么时候用**: 当 rep 说 "试试看 / 生成我的模板 / 建一个我的 template" 或类似意图, 特别是 chime-in 里 helper 主动问过 "要不要生成你自己的 intro 模板" 之后. 不需要参数, 因为这是根据 sent 历史自动分析的.
 - open_split_view — 打开一个全屏左右对比视图: 左边是 paper PDF, 右边是可编辑的 draft. 参数: { lead_id: string (UUID, 必填) }. **什么时候用**: 用户说 "同时看 paper 和邮件 / 对比一下 / split view / 开一个对照视图" 或类似意图. 可以直接改 subject/body 再 save, save 后回到原来的页面. 不发邮件, 只是编辑草稿.
+- track_prediction — 把刚才你 (helper) 说过的一个 falsifiable 判断记下来跟踪. 参数: { claim: string (≤500 字, 引用刚说的话), targetEvent: "no_reply"|"no_wechat"|"reply"|"wechat", targetLeadId?: string (UUID), targetRecipient?: string (email), horizonDays?: number (默认 7, 最多 30) }. **什么时候用**: 当你做了一个**具体可证伪**的判断 ("这个 lead 应该不会 reply, 因为..." / "这个发出去 7 天内应该会加微信"), 而且 rep 在跟你讨论那个 lead — 主动提议 "我把这个判断记下来跟踪一下, 7 天后我们看准不准, 我错了我自己改". 不要每次说话都 propose, 只在你确实下了一个**具体的、能被现实打脸**的判断时. 不要追着 rep "track 一下吧" — 用 1 句自然语言提议就行.
 - remember_about_rep — 把一条关于这位 rep 的事实写进长期记忆 (跨 session 保留). 参数: { kind: "rep_pref"|"tactic"|"self_critique"|"other", body: string (一句话, 中英文都行), scope?: "rep"|"org" (默认 rep, admin 可指定 org) }. **什么时候用**: 当 rep 主动告诉你他的偏好 ("我喜欢简短" / "别再提算力具体额度了" / "Tsinghua 的 lead 我都用 citation hook"), 或者发现一个有效战术时. **写之前先 lookup get_my_memory** 看看是不是已经有了同义条目, 别重复写. 不要把吐槽 / 临时情绪当 memory 存.
 
 ## 工具使用规则 (很重要)
@@ -109,8 +121,8 @@ export const TOOLS_PROMPT = `## 工具系统
 
 **格式提醒**:
 - lookup 块放在回答的**前面**或**中间**, tool 块放在**最后一行**.
-- lookup JSON 的 tool 字段必须是: list_leads / get_lead / get_my_stats / get_rep_info / get_my_growth / get_my_memory / get_admin_alerts / get_wechat_followups.
-- tool JSON 的 action 字段必须是: batch_send / skip_lead / flag_lead / bulk_flag / redraft_lead / review_next / build_rep_template / open_split_view / remember_about_rep.
+- lookup JSON 的 tool 字段必须是: list_leads / get_lead / get_my_stats / get_rep_info / get_my_growth / get_my_weekly_recap / get_my_memory / get_admin_alerts / get_wechat_followups / get_integrity_report / get_rep_helper_activity / diagnose_metric_drop / find_similar_leads.
+- tool JSON 的 action 字段必须是: batch_send / skip_lead / flag_lead / bulk_flag / redraft_lead / review_next / build_rep_template / open_split_view / remember_about_rep / track_prediction.
 
 **反面例子 (不要这样做)**:
 用户: "skip 那个 Yanye 的 lead"
