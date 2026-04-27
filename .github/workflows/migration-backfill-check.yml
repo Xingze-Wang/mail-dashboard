@@ -1,0 +1,33 @@
+# Fails the PR check when a migration file is added/modified but the
+# PR description doesn't mention "backfill". Cheap signal — the
+# template asks the question; this enforces that you actually answered.
+#
+# Security: PR body is passed via env: PR_BODY and quoted "$PR_BODY"
+# in the shell, never inlined into the run: script. See
+# https://github.blog/security/vulnerability-research/how-to-catch-github-actions-workflow-injections-before-attackers-do/
+
+name: migration-backfill-check
+on:
+  pull_request:
+    paths:
+      - "migrations/**"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify PR description mentions backfill
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          if printf '%s' "$PR_BODY" | grep -iqE "backfill"; then
+            echo "OK: PR body mentions backfill"
+            exit 0
+          fi
+          cat <<'EOF' >&2
+          PR touches migrations/ but the description never mentions "backfill".
+          Per docs/DATA_INTEGRITY_PLAN.md Tier 4, every column-adding migration
+          needs an explicit answer for "how do old rows get this populated?"
+          Even "N/A — new table, no old rows" satisfies this check.
+          EOF
+          exit 1

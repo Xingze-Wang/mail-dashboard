@@ -1,32 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { resend } from "@/lib/resend";
-import crypto from "crypto";
-
-const STATUS_MAP: Record<string, string> = {
-  "email.sent": "sent",
-  "email.delivered": "delivered",
-  "email.delivery_delayed": "sent",
-  "email.opened": "opened",
-  "email.clicked": "clicked",
-  "email.bounced": "bounced",
-  "email.complained": "complained",
-};
-
-function verifySignature(payload: string, signature: string | null, secret: string): boolean {
-  if (!signature || !secret) return !secret;
-  const expected = crypto.createHmac("sha256", secret).update(payload).digest("hex");
-  return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
-}
+import { Webhook } from "svix";
+import { mapResendEventToStatus } from "@/lib/status";
+import { resolveInboundRepId } from "@/lib/inbound-attribution";
 
 export async function POST(req: NextRequest) {
   try {
     const rawBody = await req.text();
 
+    // Resend uses Svix webhook signing. Headers: svix-id, svix-timestamp,
+    // svix-signature (or webhook-* aliases). Signature is HMAC-SHA256 of
+    // `${id}.${ts}.${rawBody}` base64-encoded as `v1,<sig>`. The previous
+    // hand-rolled hex HMAC silently rejected every event — webhook_events
+    // had 0 rows ever. Use the svix lib so we never reinvent this.
     const secret = process.env.RESEND_WEBHOOK_SECRET;
     if (secret) {
-      const signature = req.headers.get("svix-signature") || req.headers.get("webhook-signature");
-      if (!verifySignature(rawBody, signature, secret)) {
+      const headers: Record<string, string> = {
+        "svix-id": req.headers.get("svix-id") || req.headers.get("webhook-id") || "",
+        "svix-timestamp": req.headers.get("svix-timestamp") || req.headers.get("webhook-timestamp") || "",
+        "svix-signature": req.headers.get("svix-signature") || req.headers.get("webhook-signature") || "",
+      };
+      try {
+        new Webhook(secret).verify(rawBody, headers);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "verification failed";
+        console.error("[webhook] signature rejected:", msg);
         return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
       }
     }
@@ -53,34 +52,120 @@ export async function POST(req: NextRequest) {
           .eq("message_id", emailId)
           .maybeSingle();
 
+        let storedThreadId: string | null = null;
+        let inReplyTo: string | null = null;
         if (!existing) {
           // Fetch full email details from Resend
           try {
             const fetched = await resend.emails.receiving.get(emailId);
             if (fetched.data) {
               const e = fetched.data;
-              const threadId = `thread_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+              // Try to stitch into an existing thread via in_reply_to /
+              // references headers. Resend exposes these on the email
+              // object. If we find a matching outbound, reuse its
+              // thread_id so reply-counts and inbox views align.
+              const headers = (e as unknown as { headers?: Record<string, string> }).headers ?? {};
+              inReplyTo = headers["in-reply-to"] || headers["In-Reply-To"] || (e as unknown as { in_reply_to?: string }).in_reply_to || null;
+              if (inReplyTo) {
+                const { data: outbound } = await supabase
+                  .from("emails")
+                  .select("thread_id")
+                  .eq("message_id", inReplyTo.replace(/[<>]/g, ""))
+                  .maybeSingle();
+                if (outbound?.thread_id) storedThreadId = outbound.thread_id as string;
+              }
+              // Fallback stitch: emails.message_id was historically never
+              // populated by any send path (bug found by ultrareview), so
+              // the in_reply_to lookup misses every time. Match by
+              // sender↔recipient pair instead — if this inbound's `from`
+              // is someone we've sent to from this `to` address, take
+              // their most recent thread. Loses precision when one rep
+              // sent multiple unrelated threads to the same person, but
+              // that's rare in cold-outreach and beats creating a fresh
+              // thread on every reply (which silently breaks
+              // pipeline_leads.status=replied flipping below).
+              if (!storedThreadId) {
+                const inboundFrom = String(e.from ?? "").match(/[\w.+-]+@[\w.-]+/)?.[0]?.toLowerCase();
+                const inboundTo = (Array.isArray(e.to) ? e.to[0] : e.to ?? "").toString().match(/[\w.+-]+@[\w.-]+/)?.[0]?.toLowerCase();
+                if (inboundFrom && inboundTo) {
+                  const { data: matched } = await supabase
+                    .from("emails")
+                    .select("thread_id, created_at")
+                    .ilike("to", `%${inboundFrom}%`)
+                    .ilike("from", `%${inboundTo}%`)
+                    .not("thread_id", "is", null)
+                    .order("created_at", { ascending: false })
+                    .limit(1);
+                  if (matched?.[0]?.thread_id) storedThreadId = matched[0].thread_id as string;
+                }
+              }
+              if (!storedThreadId) {
+                storedThreadId = `thread_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+              }
 
+              const toField = Array.isArray(e.to) ? e.to.join(", ") : (e.to || "");
+              // Resolve which rep this inbound belongs to. Recipient
+              // address wins; thread_id is fallback. Without this, every
+              // new inbound landed with rep_id=NULL and Chenyu/Ethan's
+              // inbox views were empty.
+              const repId = await resolveInboundRepId(toField, storedThreadId);
               await supabase.from("inbound_emails").insert({
                 from: e.from,
-                to: Array.isArray(e.to) ? e.to.join(", ") : (e.to || ""),
+                to: toField,
                 subject: e.subject || "(no subject)",
                 html: e.html || null,
                 text: e.text || null,
                 message_id: emailId,
-                thread_id: threadId,
+                in_reply_to: inReplyTo,
+                thread_id: storedThreadId,
+                rep_id: repId,
                 created_at: e.created_at,
               });
             }
           } catch {
             // Fallback: store with available webhook data
+            storedThreadId = `thread_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+            const toField = Array.isArray(data.to) ? data.to.join(", ") : (data.to || "");
+            const repId = await resolveInboundRepId(toField, storedThreadId);
             await supabase.from("inbound_emails").insert({
               from: data.from || "unknown",
-              to: Array.isArray(data.to) ? data.to.join(", ") : (data.to || ""),
+              to: toField,
               subject: data.subject || "(no subject)",
               message_id: emailId,
-              thread_id: `thread_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+              thread_id: storedThreadId,
+              rep_id: repId,
             });
+          }
+
+          // Flip the originating pipeline_lead to status='replied'.
+          // Same logic as /api/inbound but tied to the resolved
+          // thread_id so we don't accidentally flip an unrelated lead.
+          // Without this, /api/metrics/me showed 0 replies even though
+          // 21 inbounds existed — the production reply path is
+          // /api/webhook (Resend), not /api/inbound.
+          if (storedThreadId) {
+            try {
+              const { data: outbound } = await supabase
+                .from("emails")
+                .select("to")
+                .eq("thread_id", storedThreadId)
+                .order("created_at", { ascending: true })
+                .limit(1);
+              const recipientRaw = outbound?.[0]?.to as string | undefined;
+              const recipient = recipientRaw
+                ? (recipientRaw.startsWith("[") ? (() => { try { return JSON.parse(recipientRaw)[0]; } catch { return recipientRaw; } })() : recipientRaw).split(",")[0].trim().toLowerCase()
+                : "";
+              if (recipient) {
+                await supabase
+                  .from("pipeline_leads")
+                  .update({ status: "replied" })
+                  .eq("thread_id", storedThreadId)
+                  .ilike("author_email", recipient)
+                  .eq("status", "sent");
+              }
+            } catch (err) {
+              console.warn("webhook email.received: lead flip to 'replied' failed", err);
+            }
           }
         }
       }
@@ -113,7 +198,7 @@ export async function POST(req: NextRequest) {
         if (fetched.data) {
           const e = fetched.data;
           const threadId = `thread_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-          const status = STATUS_MAP[type] || "sent";
+          const status = mapResendEventToStatus(type);
 
           const { data: inserted } = await supabase
             .from("emails")
@@ -146,7 +231,7 @@ export async function POST(req: NextRequest) {
 
     // Update email status
     if (emailId) {
-      const newStatus = STATUS_MAP[type];
+      const newStatus = mapResendEventToStatus(type);
       if (newStatus) {
         await supabase
           .from("emails")

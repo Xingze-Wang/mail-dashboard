@@ -112,6 +112,49 @@ export default function OverviewPage() {
         if (metricsRes.status === "fulfilled" && !metricsRes.value?.error) setMetrics(metricsRes.value);
       })
       .finally(() => setLoading(false));
+
+    // Sync loop for sales. Each /api/sync call paginates Resend (~8s
+    // budget), and each /api/metrics/me also hits getResendFunnel
+    // server-side. Without bounds the loop costs ~80s of Resend traffic
+    // per page mount and can blow the 5rps team-wide quota.
+    //
+    // Two guards:
+    //   1. localStorage cooldown — at most once per 5 minutes per user.
+    //      Hot-reload during dev was the worst offender; this kills it.
+    //   2. iter cap dropped from 10 → 3. Real backlog rarely needs more;
+    //      remaining drift gets caught by the daily 6-AM cron.
+    let cancelled = false;
+    const COOLDOWN_MS = 5 * 60 * 1000;
+    const lastKey = "overview-sync-last-ms";
+    const lastRun = Number(localStorage.getItem(lastKey) || "0");
+    const skip = Date.now() - lastRun < COOLDOWN_MS;
+    const runSync = async () => {
+      if (skip) return;
+      localStorage.setItem(lastKey, String(Date.now()));
+      try {
+        let complete = false;
+        let iter = 0;
+        while (!complete && !cancelled && iter < 3) {
+          const res = await fetch("/api/sync");
+          const data = await res.json();
+          complete = data.complete !== false;
+          const [meRes, metricsRes] = await Promise.all([
+            fetch("/api/metrics/me").then((r) => r.json()),
+            fetch("/api/metrics").then((r) => r.json()),
+          ]);
+          if (!cancelled) {
+            if (meRes && !meRes.error) setMyMetrics(meRes);
+            if (metricsRes && !metricsRes.error) setMetrics(metricsRes);
+          }
+          if (!complete) await new Promise((r) => setTimeout(r, 500));
+          iter++;
+        }
+      } catch {
+        // non-fatal — initial fetch already populated the cards.
+      }
+    };
+    runSync();
+    return () => { cancelled = true; };
   }, [showPerRepOnly]);
 
   useEffect(() => {
@@ -126,14 +169,21 @@ export default function OverviewPage() {
       .catch(console.error)
       .finally(() => setLoading(false));
 
-    // Bounded /api/sync loop — max 10 iterations = 5s. Previously
-    // unbounded while(!complete), could churn forever on a stuck sync.
+    // Same guard as the sales-path loop above: 5min cooldown via
+    // localStorage + iter cap of 3. Previously 10 iterations × Resend
+    // pagination = up to 80s of background work per page mount.
     let cancelled = false;
+    const COOLDOWN_MS = 5 * 60 * 1000;
+    const lastKey = "overview-admin-sync-last-ms";
+    const lastRun = Number(localStorage.getItem(lastKey) || "0");
+    const skip = Date.now() - lastRun < COOLDOWN_MS;
     const runSync = async () => {
+      if (skip) return;
+      localStorage.setItem(lastKey, String(Date.now()));
       try {
         let complete = false;
         let iter = 0;
-        while (!complete && !cancelled && iter < 10) {
+        while (!complete && !cancelled && iter < 3) {
           const res = await fetch("/api/sync");
           const data = await res.json();
           complete = data.complete !== false;
@@ -303,8 +353,12 @@ export default function OverviewPage() {
           { label: "Click Rate", value: o.clickRate, suffix: "%", color: "var(--blue)" },
           {
             label: "Lead Rate (WeChat)",
-            value: metrics.pipeline && metrics.pipeline.sent > 0
-              ? ((metrics.wechat?.total ?? 0) / metrics.pipeline.sent * 100).toFixed(1)
+            // Denominator is Resend-actual totalSent (live), NOT
+            // pipeline_leads.sent (~30 rows). Using pipeline sent here
+            // inflated the rate by ~30x because most historical sends
+            // never transited pipeline_leads.
+            value: o.totalSent > 0
+              ? ((metrics.wechat?.total ?? 0) / o.totalSent * 100).toFixed(1)
               : "0.0",
             suffix: "%",
             color: "var(--green)",

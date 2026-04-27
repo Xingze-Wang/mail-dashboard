@@ -6,6 +6,8 @@ import { supabase } from "@/lib/db";
 import { lookupAuthor } from "@/lib/semantic-scholar";
 import { runDriftMine } from "@/app/api/drift/mine/route";
 import { emitRetrainSignals, buildProposal } from "@/lib/retrain-signals";
+import { runIntegrity } from "@/lib/integrity";
+import { resolveDuePredictions } from "@/lib/predictions";
 import {
   getAssignmentConfig,
   classifyLead,
@@ -169,9 +171,31 @@ export async function GET(req: NextRequest) {
     results.retrain = { error: String(err) };
   }
 
+  // ── Step 5: resolve due helper predictions ──
+  // Dream #5 — wrong predictions self-critique into helper_learnings
+  // so the helper sees its own miss next time it loads memory.
+  try {
+    results.predictions = await resolveDuePredictions();
+  } catch (err) {
+    results.predictions = { error: String(err) };
+  }
+
+  // ── Step 6: integrity report ──
+  // Tier 6 — daily check that the dashboard is still telling the truth.
+  // We attach the report to the cron response (visible to admin via
+  // /api/cron return value when triggered manually) and surface it via
+  // /api/integrity for the admin dashboard tile. Reds are loud — the
+  // alert pipeline already polls admin-alerts.ts and can read the
+  // integrity report there.
+  try {
+    results.integrity = await runIntegrity();
+  } catch (err) {
+    results.integrity = { error: String(err) };
+  }
+
   // ── Future steps ──
-  // Step 5: GitHub startup finder
-  // Step 6: Jike founder radar
+  // Step 6: GitHub startup finder
+  // Step 7: Jike founder radar
 
   return NextResponse.json(results);
 }

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { requireSession } from "@/lib/auth-helpers";
 import { getRep } from "@/lib/assignment";
+import { listEnvelope } from "@/lib/list-envelope";
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -26,7 +27,13 @@ export async function GET(req: NextRequest) {
   if (!isPrivileged) {
     const rep = await getRep(session.repId);
     if (!rep?.sender_email) {
-      return NextResponse.json({ emails: [], total: 0, page, limit });
+      return NextResponse.json({
+        emails: [],
+        total: 0,
+        page,
+        limit,
+        ...listEnvelope({ scannedTotal: 0, requestedTotal: 0, source: "supabase:emails" }),
+      });
     }
     senderEmail = rep.sender_email;
   }
@@ -134,11 +141,35 @@ export async function GET(req: NextRequest) {
     mapped = mapped.slice(offset, offset + limit);
   }
 
+  // Truncation accounting: in browse mode, the cap is `offset + limit`,
+  // so any time `total > (offset + limit)` we are showing a slice.
+  // In search mode the cap is RANK_POOL — if scanned == RANK_POOL we
+  // may have missed matches further back in time and the UI needs to
+  // know it shouldn't claim "no other matches."
+  const scannedTotal = emails.length;
+  const cap = search ? RANK_POOL : offset + limit;
+  // In search mode the candidate pool is RANK_POOL=200, so the unbounded
+  // count would let the UI compute Math.ceil(1374/50)=28 pages while
+  // pages 5-28 are empty (mapped slice exceeds the pool). Cap the
+  // reported total to the pool size so pagination matches reality.
+  // Browse mode (no search) keeps the true total — it's paginated at
+  // the DB level so pages all the way back are real.
+  const reportedTotal = senderEmail
+    ? mapped.length
+    : search
+      ? Math.min(total || 0, RANK_POOL)
+      : (total || 0);
   return NextResponse.json({
     emails: mapped,
-    total: senderEmail ? mapped.length : (total || 0),
+    total: reportedTotal,
     page,
     limit,
     ranked: !!search,
+    ...listEnvelope({
+      scannedTotal,
+      requestedTotal: total || undefined,
+      cap,
+      source: "supabase:emails",
+    }),
   });
 }
