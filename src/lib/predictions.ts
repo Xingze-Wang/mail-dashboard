@@ -137,7 +137,7 @@ async function didEventHappen(
       .gte("wechat_at", since)
       .lte("wechat_at", until);
     if (leadId) q = q.eq("lead_id", leadId);
-    else if (recipient) q = q.ilike("recipient_email", `%${recipient}%`);
+    else if (recipient) q = q.ilike("query", `%${recipient}%`);
     else return false;
     const { count } = await q;
     return (count ?? 0) > 0;

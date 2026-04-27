@@ -500,7 +500,7 @@ interface RecentLead { id: string; title: string; author_name: string | null; au
 function PreviewModal({ template, onClose }: { template: EmailTemplate; onClose: () => void }) {
   const [leads, setLeads] = useState<RecentLead[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [draft, setDraft] = useState<{ subject: string; html: string } | null>(null);
+  const [draft, setDraft] = useState<{ subject: string; html: string; warning?: string | null } | null>(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -528,7 +528,7 @@ function PreviewModal({ template, onClose }: { template: EmailTemplate; onClose:
       .then((r) => r.json())
       .then((d) => {
         if (d.error) setErr(d.error);
-        else setDraft({ subject: d.subject, html: d.html });
+        else setDraft({ subject: d.subject, html: d.html, warning: d.warning ?? null });
       })
       .catch((e) => setErr(String(e)))
       .finally(() => setGenerating(false));
@@ -563,6 +563,11 @@ function PreviewModal({ template, onClose }: { template: EmailTemplate; onClose:
               <div className="skeleton" style={{ height: 200 }} />
             ) : draft ? (
               <>
+                {draft.warning && (
+                  <div style={{ padding: "8px 12px", fontSize: 12, background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a", borderRadius: 6, marginBottom: 12 }}>
+                    Preview degraded: {draft.warning}
+                  </div>
+                )}
                 <div style={{ fontSize: 11, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4 }}>Subject</div>
                 <div style={{ padding: "8px 10px", border: "1px solid var(--border)", borderRadius: 6, background: "var(--bg)", fontSize: 13, marginBottom: 12, fontFamily: "var(--font-mono, ui-monospace, monospace)" }}>
                   {draft.subject}

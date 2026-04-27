@@ -185,7 +185,7 @@ async function getMyWeeklyRecap(session: Session) {
       .eq("was_clicked", true),
     supabase
       .from("brief_lookups")
-      .select("lead_id, recipient_email, wechat_at")
+      .select("lead_id, query, wechat_at")
       .eq("added_wechat", true)
       .eq("marked_by_rep_id", repId)
       .gte("wechat_at", since),
@@ -218,7 +218,7 @@ async function getMyWeeklyRecap(session: Session) {
       topPerformer = {
         lead_id: top.lead_id as string,
         title: lead?.title ?? null,
-        recipient: (top as { recipient_email?: string | null }).recipient_email ?? null,
+        recipient: (top as { query?: string | null }).query ?? null,
         wechat_at: top.wechat_at as string,
       };
     }

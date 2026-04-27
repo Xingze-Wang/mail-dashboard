@@ -56,28 +56,34 @@ export async function GET(req: NextRequest) {
     (emails ?? []).map((e) => String(e.to ?? "").toLowerCase().trim()).filter(Boolean),
   );
 
-  // Click outcomes via email_history (Tier 2 view).
-  const { data: clicks } = emailIds.length > 0
-    ? await supabase
-        .from("email_history")
-        .select("email_id")
-        .in("email_id", emailIds)
-        .eq("was_clicked", true)
-    : { data: [] };
-  const clickedSet = new Set((clicks ?? []).map((r) => r.email_id as string));
+  // Click outcomes via email_history (Tier 2 view). postgrest's `.in()`
+  // builds a URL-length-limited query — over ~200-500 ids returns a
+  // silent 400 with empty body. Chunk to keep each query small. The
+  // sets are union-merged.
+  const clickedSet = new Set<string>();
+  const CHUNK = 150;
+  for (let i = 0; i < emailIds.length; i += CHUNK) {
+    const chunk = emailIds.slice(i, i + CHUNK);
+    const { data: clicks } = await supabase
+      .from("email_history")
+      .select("email_id")
+      .in("email_id", chunk)
+      .eq("was_clicked", true);
+    for (const r of clicks ?? []) clickedSet.add(r.email_id as string);
+  }
 
   // WeChat conversions in window matched to recipients we sent to.
   // brief_lookups is the canonical actor-attributed table.
   const { data: wechatRows } = recipientSet.size > 0
     ? await supabase
         .from("brief_lookups")
-        .select("recipient_email, wechat_at")
+        .select("query, wechat_at")
         .eq("added_wechat", true)
         .gte("wechat_at", since)
     : { data: [] };
   const wechatRecipients = new Set(
     (wechatRows ?? [])
-      .map((r) => String(r.recipient_email ?? "").toLowerCase().trim())
+      .map((r) => String(r.query ?? "").toLowerCase().trim())
       .filter((e) => recipientSet.has(e)),
   );
 

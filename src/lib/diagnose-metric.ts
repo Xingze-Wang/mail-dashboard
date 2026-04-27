@@ -50,7 +50,10 @@ interface EmailHistoryRow {
 }
 
 interface BriefRow {
-  recipient_email: string | null;
+  // brief_lookups stores the recipient address in `query` (the lookup
+  // string the rep used when adding the wechat mark). NOT
+  // recipient_email — that column doesn't exist.
+  query: string | null;
   marked_by_rep_id: number | null;
   wechat_at: string | null;
 }
@@ -181,12 +184,12 @@ export async function diagnoseMetricDrop(opts: {
     const [{ data: curBriefs }, { data: prevBriefs }] = await Promise.all([
       supabase
         .from("brief_lookups")
-        .select("recipient_email, marked_by_rep_id, wechat_at")
+        .select("query, marked_by_rep_id, wechat_at")
         .eq("added_wechat", true)
         .gte("wechat_at", curStart),
       supabase
         .from("brief_lookups")
-        .select("recipient_email, marked_by_rep_id, wechat_at")
+        .select("query, marked_by_rep_id, wechat_at")
         .eq("added_wechat", true)
         .gte("wechat_at", prevStart)
         .lt("wechat_at", curStart),
@@ -196,7 +199,7 @@ export async function diagnoseMetricDrop(opts: {
       let n = 0;
       for (const b of briefs) {
         if (repId != null && b.marked_by_rep_id !== repId) continue;
-        if (b.recipient_email && recips.has(b.recipient_email.toLowerCase().trim())) n++;
+        if (b.query && recips.has(b.query.toLowerCase().trim())) n++;
       }
       return n;
     };
