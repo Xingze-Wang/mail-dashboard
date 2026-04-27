@@ -18,6 +18,7 @@
 
 import { supabase } from "@/lib/db";
 import { recordLearning } from "@/lib/helper-learnings";
+import { judgePrediction, type JudgeVerdict } from "@/lib/bench-judge";
 
 export type TargetEvent = "no_reply" | "no_wechat" | "reply" | "wechat";
 
@@ -35,6 +36,9 @@ export interface PredictionRow {
   resolved_correct: boolean | null;
   resolved_at: string | null;
   resolution_note: string | null;
+  judge_avg?: number | null;
+  judge_at?: string | null;
+  judge_verdicts?: JudgeVerdict[] | null;
 }
 
 export async function recordPrediction(input: {
@@ -164,23 +168,113 @@ export async function resolveDuePredictions(): Promise<{
   let wrong = 0;
   for (const p of rows) {
     const { correct: ok, note } = await evaluate(p);
+
+    // Pull lead context for the judge — much sharper rubric scoring
+    // when judges can see the actual paper instead of just the claim.
+    let leadContext: {
+      title: string | null;
+      abstract: string | null;
+      schoolName: string | null;
+      schoolTier: number | null;
+      authorEmail: string | null;
+    } | null = null;
+    if (p.target_lead_id) {
+      const { data: lead } = await supabase
+        .from("pipeline_leads")
+        .select("title, abstract, school_name, school_tier, author_email")
+        .eq("id", p.target_lead_id)
+        .maybeSingle();
+      if (lead) {
+        leadContext = {
+          title: lead.title as string | null,
+          abstract: lead.abstract as string | null,
+          schoolName: lead.school_name as string | null,
+          schoolTier: lead.school_tier as number | null,
+          authorEmail: lead.author_email as string | null,
+        };
+      }
+    }
+
+    // Run the 3-judge ensemble on reasoning quality. Costs ~3 LLM
+    // calls per prediction; cron is daily-low-volume so this is fine.
+    let verdicts: JudgeVerdict[] = [];
+    let avg: number | null = null;
+    try {
+      verdicts = await judgePrediction({
+        claim: p.claim,
+        targetEvent: p.target_event,
+        outcomeNote: note,
+        outcomeCorrect: ok,
+        leadContext,
+      });
+      const successful = verdicts.filter((v) => v.error === null);
+      avg = successful.length > 0
+        ? successful.reduce((s, v) => s + v.score_0_10, 0) / successful.length
+        : null;
+    } catch (err) {
+      // Judge failure is non-fatal — outcome resolution is still
+      // recorded. Self-critique falls back to outcome-only.
+      console.warn("judgePrediction failed for", p.id, err);
+    }
+
     await supabase
       .from("helper_predictions")
       .update({
         resolved_correct: ok,
         resolved_at: now,
         resolution_note: note,
+        judge_avg: avg,
+        judge_at: avg != null ? now : null,
+        judge_verdicts: verdicts.length > 0 ? verdicts : null,
       })
       .eq("id", p.id);
-    if (ok) correct++;
-    else {
+
+    if (ok) {
+      correct++;
+      // Right-by-accident path: outcome correct but judge thought the
+      // reasoning was lazy. The helper should LOWER confidence here,
+      // not raise it — the world rewarded a bad bet.
+      if (avg != null && avg < 5) {
+        await recordLearning({
+          scope_rep_id: p.rep_id,
+          kind: "self_critique",
+          body: `Predicted "${p.claim.slice(0, 200)}" and got it right, but judges (avg ${avg.toFixed(1)}/10) flagged the reasoning as thin. Don't trust this kind of pattern-matching going forward.`,
+          confidence: 0.5,
+          evidence: { prediction_id: p.id, judge_avg: avg, outcome: note },
+        });
+      }
+    } else {
       wrong++;
-      await recordLearning({
-        scope_rep_id: p.rep_id,
-        kind: "self_critique",
-        body: `Predicted "${p.claim.slice(0, 200)}" — but ${note}. Lower confidence on this kind of judgment.`,
-        confidence: 0.6,
-      });
+      // Wrong outcome — strength of self-critique depends on whether
+      // judges thought the reasoning was sound.
+      if (avg == null) {
+        // No judge run (failure) — fall back to outcome-only critique.
+        await recordLearning({
+          scope_rep_id: p.rep_id,
+          kind: "self_critique",
+          body: `Predicted "${p.claim.slice(0, 200)}" — but ${note}. Lower confidence on this kind of judgment.`,
+          confidence: 0.6,
+          evidence: { prediction_id: p.id, outcome: note },
+        });
+      } else if (avg >= 7) {
+        // Wrong-but-reasoning-was-right: world surprised us, soft critique.
+        await recordLearning({
+          scope_rep_id: p.rep_id,
+          kind: "self_critique",
+          body: `Predicted "${p.claim.slice(0, 200)}" with sound reasoning (judges ${avg.toFixed(1)}/10), but ${note}. Counter-example to add to the model — keep watching for this kind of edge case.`,
+          confidence: 0.45,
+          evidence: { prediction_id: p.id, judge_avg: avg, outcome: note },
+        });
+      } else {
+        // Wrong outcome AND lazy reasoning — strong critique.
+        await recordLearning({
+          scope_rep_id: p.rep_id,
+          kind: "self_critique",
+          body: `Predicted "${p.claim.slice(0, 200)}" — wrong (${note}) AND judges (${avg.toFixed(1)}/10) flagged the reasoning as thin. Stop making this kind of claim without specific evidence.`,
+          confidence: 0.75,
+          evidence: { prediction_id: p.id, judge_avg: avg, outcome: note },
+        });
+      }
     }
   }
   return { checked: rows.length, correct, wrong };

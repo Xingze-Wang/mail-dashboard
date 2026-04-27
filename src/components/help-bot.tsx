@@ -11,6 +11,20 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { Sparkles, X, Send, Loader2, Plus, Clock, Check } from "lucide-react";
 import { AgentSplitView } from "./agent-split-view";
+import {
+  BarChart,
+  Bar,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip as RechartsTooltip,
+  FunnelChart,
+  Funnel,
+  LabelList,
+} from "recharts";
 
 /**
  * Cute robot avatar — pure SVG, no deps. Three moods drive CSS-only
@@ -215,7 +229,7 @@ interface Msg {
 // can render without importing server-only code.
 interface HelperEvidence {
   id: string;
-  kind: "leads" | "pattern" | "stat" | "thread" | "comparison";
+  kind: "leads" | "pattern" | "stat" | "thread" | "comparison" | "bar_chart" | "line_chart" | "funnel_chart";
   label: string;
   data: Record<string, unknown>;
 }
@@ -1388,6 +1402,80 @@ function EvidenceBody({ ev }: { ev: HelperEvidence }) {
             ))}
           </tbody>
         </table>
+      );
+    }
+    if (ev.kind === "bar_chart") {
+      const bars = (d.bars as Array<{ label: string; value: number }>) ?? [];
+      const yLabel = (d.y_label as string | undefined) ?? "value";
+      return (
+        <div>
+          {typeof d.title === "string" && d.title.length > 0 && <div style={{ fontSize: 11, color: "var(--text-secondary, #4b5563)", marginBottom: 6 }}>{d.title}</div>}
+          <div style={{ width: "100%", height: 160 }}>
+            <ResponsiveContainer>
+              <BarChart data={bars} margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-light, #eef0f3)" />
+                <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+                <YAxis tick={{ fontSize: 10 }} width={28} />
+                <RechartsTooltip wrapperStyle={{ fontSize: 11 }} formatter={(v) => [String(v), yLabel] as [string, string]} />
+                <Bar dataKey="value" fill="#6366F1" radius={[3, 3, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      );
+    }
+    if (ev.kind === "line_chart") {
+      const series = (d.series as Array<{ name: string; color?: string }>) ?? [];
+      const points = (d.points as Array<Record<string, unknown>>) ?? [];
+      const colors = ["#6366F1", "#EC4899", "#10B981", "#F59E0B", "#3B82F6"];
+      return (
+        <div>
+          {typeof d.title === "string" && d.title.length > 0 && <div style={{ fontSize: 11, color: "var(--text-secondary, #4b5563)", marginBottom: 6 }}>{d.title}</div>}
+          <div style={{ width: "100%", height: 180 }}>
+            <ResponsiveContainer>
+              <LineChart data={points} margin={{ top: 4, right: 8, bottom: 4, left: 4 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-light, #eef0f3)" />
+                <XAxis dataKey="x" tick={{ fontSize: 10 }} />
+                <YAxis tick={{ fontSize: 10 }} width={28} />
+                <RechartsTooltip wrapperStyle={{ fontSize: 11 }} />
+                {series.map((s, i) => (
+                  <Line
+                    key={s.name}
+                    type="monotone"
+                    dataKey={s.name}
+                    stroke={s.color || colors[i % colors.length]}
+                    strokeWidth={2}
+                    dot={{ r: 2 }}
+                  />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      );
+    }
+    if (ev.kind === "funnel_chart") {
+      const stages = (d.stages as Array<{ label: string; count: number }>) ?? [];
+      // Recharts Funnel needs a flat array with `value` + `name` per stage,
+      // sorted desc by value (otherwise the visual is misleading).
+      const data = stages
+        .map((s, i) => ({ name: s.label, value: s.count, fill: ["#6366F1", "#8B5CF6", "#EC4899", "#F59E0B", "#10B981"][i % 5] }))
+        .sort((a, b) => b.value - a.value);
+      return (
+        <div>
+          {typeof d.title === "string" && d.title.length > 0 && <div style={{ fontSize: 11, color: "var(--text-secondary, #4b5563)", marginBottom: 6 }}>{d.title}</div>}
+          <div style={{ width: "100%", height: 180 }}>
+            <ResponsiveContainer>
+              <FunnelChart>
+                <RechartsTooltip wrapperStyle={{ fontSize: 11 }} />
+                <Funnel dataKey="value" data={data} isAnimationActive>
+                  <LabelList position="right" fill="var(--text, #111827)" stroke="none" dataKey="name" style={{ fontSize: 11 }} />
+                  <LabelList position="center" fill="#fff" stroke="none" dataKey="value" style={{ fontSize: 11, fontWeight: 600 }} />
+                </Funnel>
+              </FunnelChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
       );
     }
     return <pre style={{ margin: 0, fontSize: 10, color: "var(--text-tertiary, #9ca3af)" }}>{JSON.stringify(d, null, 2).slice(0, 500)}</pre>;
