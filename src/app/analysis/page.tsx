@@ -80,6 +80,37 @@ interface SegmentFunnels {
   dimensions: SegmentDim[];
 }
 
+interface InsightSegment {
+  segment: string;
+  dimension: string;
+  ctr: number;
+  postClickConv: number;
+  delivered: number;
+}
+interface DiagnoseCard {
+  covariate: string;
+  prevDistribution: Record<string, number>;
+  curDistribution: Record<string, number>;
+  biggestShift: { bucket: string; from: number; to: number; deltaPct: number };
+  hypothesis: string;
+}
+interface DiagnoseResult {
+  metric: "click_rate" | "wechat_rate";
+  windowDays: number;
+  prevRate: number;
+  curRate: number;
+  ratioChange: number;
+  noise: boolean;
+  cards: DiagnoseCard[];
+}
+interface InsightsResp {
+  scope: { repId: number | null; lookbackDays: number; isAdmin: boolean };
+  totals: SegmentFunnels["totals"];
+  winning: InsightSegment | null;
+  losing: InsightSegment | null;
+  headlineDrop: DiagnoseResult | { error: string };
+}
+
 interface LRModel {
   featureNames: string[];
   weights: number[];
@@ -102,6 +133,8 @@ export default function AnalysisPage() {
   const [funnels, setFunnels] = useState<SegmentFunnels | null>(null);
   const [metrics, setMetrics] = useState<MetricsResp | null>(null);
   const [model, setModel] = useState<LRModel | null>(null);
+  const [insights, setInsights] = useState<InsightsResp | null>(null);
+  const [showRawTables, setShowRawTables] = useState(false);
   const [reps, setReps] = useState<Rep[]>([]);
   const [repFilter, setRepFilter] = useState<string>("all");
   const [lookback, setLookback] = useState<string>("all");
@@ -127,12 +160,14 @@ export default function AnalysisPage() {
       fetch(`/api/analysis/segments?${params}`).then((r) => r.json()),
       fetch(`/api/metrics`).then((r) => r.json()),
       fetch(`/api/scorer/conversion-model`).then((r) => r.json()).catch(() => ({ model: null })),
+      fetch(`/api/analysis/insights?${params}`).then((r) => r.json()).catch(() => null),
     ])
-      .then(([a, f, m, mod]) => {
+      .then(([a, f, m, mod, ins]) => {
         setData(a);
         setFunnels(f);
         setMetrics(m);
         setModel(mod?.model ?? null);
+        setInsights(ins ?? null);
       })
       .catch(console.error)
       .finally(() => setLoading(false));
@@ -184,33 +219,14 @@ export default function AnalysisPage() {
 
       {!loading && data && (
         <>
-          {/* ── Generated takeaways (bottom-line up top) ── */}
-          {takeaways.length > 0 && (
-            <div style={{
-              padding: 14,
-              border: "1px solid var(--border-light)",
-              borderRadius: 8,
-              background: "var(--bg-subtle, #fafafa)",
-              marginBottom: 20,
-            }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>
-                <Zap style={{ width: 13, height: 13 }} /> Takeaways
-              </div>
-              <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13.5, lineHeight: 1.7, color: "var(--text)" }}>
-                {takeaways.map((t, i) => (
-                  <li key={i}>{t}</li>
-                ))}
-              </ul>
-            </div>
-          )}
+          {/* ── Hero: one sentence + a single number ── */}
+          <Hero data={data} insights={insights} />
 
-          {/* ── Segment funnels (the headline finding) ── */}
+          {/* ── 3 question cards: winning / losing / changed ── */}
+          {insights && <QuestionCards insights={insights} funnels={funnels} />}
+
+          {/* ── Segment scatter (the strategic quadrant view) ── */}
           {funnels && <SegmentFunnelsSection funnels={funnels} />}
-
-          {/* ── Funnel waterfall ── */}
-          {metrics && (
-            <FunnelWaterfall metrics={metrics} totalReplied={data.totalReplied} />
-          )}
 
           {data.totalSent < 10 && (
             <div style={{ padding: 12, marginBottom: 16, border: "1px solid var(--border-light)", borderRadius: 6, background: "var(--bg-subtle)", display: "flex", gap: 10, alignItems: "flex-start" }}>
@@ -221,31 +237,368 @@ export default function AnalysisPage() {
             </div>
           )}
 
-          {/* ── Two-column layout: lift bars + model ── */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 20, alignItems: "flex-start" }}>
-            <div>
-              <div style={{ fontSize: 13, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
-                <Filter style={{ width: 13, height: 13 }} /> Per-segment WeChat lift (vs {fmtPct(data.baselineWechatRate)} baseline)
-              </div>
-              {data.dimensions.filter((d) => d.hasSignal && d.buckets.some((b) => !b.lowN)).length === 0 ? (
-                <EmptyDimHint baseline={data.baselineWechatRate} totalSent={data.totalSent} />
-              ) : (
-                data.dimensions
-                  .filter((d) => d.hasSignal)
-                  .map((dim) => (
-                    <DimensionLift
-                      key={dim.dimension}
-                      dim={dim}
-                      baselineWechat={data.baselineWechatRate}
-                    />
-                  ))
-              )}
-            </div>
+          {/* ── Funnel waterfall (kept — it's a single clear chart) ── */}
+          {metrics && (
+            <FunnelWaterfall metrics={metrics} totalReplied={data.totalReplied} />
+          )}
 
-            <ModelCard model={model} />
+          {/* ── Raw tables collapsed by default — power users only ── */}
+          <div style={{ marginTop: 24, marginBottom: 16 }}>
+            <button
+              onClick={() => setShowRawTables((s) => !s)}
+              style={{
+                background: "transparent",
+                border: "1px solid var(--border-light)",
+                borderRadius: 6,
+                padding: "6px 12px",
+                fontSize: 12,
+                color: "var(--text-secondary)",
+                cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              <Filter style={{ width: 12, height: 12 }} />
+              {showRawTables ? "Hide" : "Show"} raw dimension tables + model card
+            </button>
           </div>
+
+          {showRawTables && (
+            <>
+              {takeaways.length > 0 && (
+                <div style={{
+                  padding: 14,
+                  border: "1px solid var(--border-light)",
+                  borderRadius: 8,
+                  background: "var(--bg-subtle, #fafafa)",
+                  marginBottom: 20,
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>
+                    <Zap style={{ width: 13, height: 13 }} /> Auto-generated takeaways (legacy view)
+                  </div>
+                  <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13.5, lineHeight: 1.7, color: "var(--text)" }}>
+                    {takeaways.map((t, i) => (
+                      <li key={i}>{t}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 20, alignItems: "flex-start" }}>
+                <div>
+                  <div style={{ fontSize: 13, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
+                    <Filter style={{ width: 13, height: 13 }} /> Per-segment WeChat lift (vs {fmtPct(data.baselineWechatRate)} baseline)
+                  </div>
+                  {data.dimensions.filter((d) => d.hasSignal && d.buckets.some((b) => !b.lowN)).length === 0 ? (
+                    <EmptyDimHint baseline={data.baselineWechatRate} totalSent={data.totalSent} />
+                  ) : (
+                    data.dimensions
+                      .filter((d) => d.hasSignal)
+                      .map((dim) => (
+                        <DimensionLift
+                          key={dim.dimension}
+                          dim={dim}
+                          baselineWechat={data.baselineWechatRate}
+                        />
+                      ))
+                  )}
+                </div>
+
+                <ModelCard model={model} />
+              </div>
+            </>
+          )}
         </>
       )}
+    </div>
+  );
+}
+
+/* ───────────────────────── Hero + Question Cards ──────────────────────────
+ * The redesign's bottom-line-up-top: instead of a stats dump, the user
+ * lands on (a) one sentence that answers "where am I?" with a single
+ * hero number, and (b) three question-shaped cards that each carry an
+ * action button. Charts and dimension tables are still here, just
+ * pushed below the narrative + collapsed behind a toggle.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+function Hero({ data, insights }: { data: AnalysisResult; insights: InsightsResp | null }) {
+  // Headline metric: WeChat conversion rate (the one number that
+  // matters for compute-program outreach). Delta sentence comes from
+  // insights.headlineDrop when available.
+  const conv = data.baselineWechatRate;
+  const drop = insights?.headlineDrop;
+  let deltaSentence: string | null = null;
+  let deltaTone: "up" | "down" | "flat" | "noise" = "flat";
+  if (drop && "ratioChange" in drop && !drop.noise) {
+    const pp = (drop.curRate - drop.prevRate) * 100;
+    const metricLabel = drop.metric === "click_rate" ? "Click rate" : "WeChat rate";
+    if (Math.abs(pp) < 0.5) {
+      deltaSentence = `${metricLabel} flat vs prev ${drop.windowDays}d (~${(drop.curRate * 100).toFixed(1)}%).`;
+      deltaTone = "flat";
+    } else if (pp > 0) {
+      deltaSentence = `${metricLabel} up ${pp.toFixed(1)}pp vs prev ${drop.windowDays}d → ${(drop.curRate * 100).toFixed(1)}%.`;
+      deltaTone = "up";
+    } else {
+      deltaSentence = `${metricLabel} down ${Math.abs(pp).toFixed(1)}pp vs prev ${drop.windowDays}d → ${(drop.curRate * 100).toFixed(1)}%.`;
+      deltaTone = "down";
+    }
+  } else if (drop && "noise" in drop && drop.noise) {
+    deltaSentence = `Not enough volume in the last ${drop.windowDays}d to call a trend.`;
+    deltaTone = "noise";
+  }
+
+  const toneColor =
+    deltaTone === "up"
+      ? "#10B981"
+      : deltaTone === "down"
+        ? "#EF4444"
+        : deltaTone === "noise"
+          ? "var(--text-tertiary)"
+          : "var(--text-secondary)";
+
+  return (
+    <div
+      style={{
+        padding: "24px 28px",
+        border: "1px solid var(--border-light)",
+        borderRadius: 12,
+        background: "linear-gradient(135deg, rgba(99,102,241,0.04) 0%, rgba(236,72,153,0.03) 100%)",
+        marginBottom: 20,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 24,
+      }}
+    >
+      <div style={{ minWidth: 0 }}>
+        <div
+          style={{
+            fontSize: 11,
+            color: "var(--text-tertiary)",
+            textTransform: "uppercase",
+            letterSpacing: "0.06em",
+            marginBottom: 4,
+          }}
+        >
+          WeChat conversion (lifetime, this scope)
+        </div>
+        <div style={{ fontSize: 40, fontWeight: 700, color: "var(--text)", lineHeight: 1.1 }}>
+          {fmtPct(conv)}
+        </div>
+        <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 4 }}>
+          {fmtNum(data.totalWechat)} wechat / {fmtNum(data.totalSent)} sent
+        </div>
+      </div>
+      {deltaSentence && (
+        <div style={{ flex: 1, textAlign: "right", minWidth: 0 }}>
+          <div style={{ fontSize: 14, color: toneColor, fontWeight: 500, lineHeight: 1.5 }}>
+            {deltaSentence}
+          </div>
+          {drop && "cards" in drop && drop.cards.length > 0 && (
+            <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 6 }}>
+              top driver: {drop.cards[0].covariate.replace(/_/g, " ")} shifted{" "}
+              {drop.cards[0].biggestShift.deltaPct >= 0 ? "+" : ""}
+              {drop.cards[0].biggestShift.deltaPct.toFixed(0)}pp toward "
+              {drop.cards[0].biggestShift.bucket}"
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function QuestionCards({
+  insights,
+  funnels,
+}: {
+  insights: InsightsResp;
+  funnels: SegmentFunnels | null;
+}) {
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(3, 1fr)",
+        gap: 14,
+        marginBottom: 24,
+      }}
+    >
+      <Card
+        question="Where am I winning?"
+        body={
+          insights.winning ? (
+            <WinningBody seg={insights.winning} totals={funnels?.totals} />
+          ) : (
+            <Empty text="No segment has enough volume + signal yet. Send more across more segments." />
+          )
+        }
+      />
+      <Card
+        question="Where am I losing?"
+        body={
+          insights.losing ? (
+            <LosingBody seg={insights.losing} totals={funnels?.totals} />
+          ) : (
+            <Empty text="No segment is dragging the funnel down — every slice is on or above baseline." />
+          )
+        }
+      />
+      <Card
+        question="What changed this week?"
+        body={
+          insights.headlineDrop && "noise" in insights.headlineDrop && insights.headlineDrop.noise ? (
+            <Empty text="Not enough volume in the last 7d to call a trend. Send more, then come back." />
+          ) : insights.headlineDrop && "cards" in insights.headlineDrop ? (
+            <ChangeBody drop={insights.headlineDrop} />
+          ) : (
+            <Empty text="No usable signal — try a longer lookback window above." />
+          )
+        }
+      />
+    </div>
+  );
+}
+
+function Card({ question, body }: { question: string; body: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        padding: "14px 16px",
+        border: "1px solid var(--border-light)",
+        borderRadius: 10,
+        background: "var(--card, #fff)",
+        display: "flex",
+        flexDirection: "column",
+        minHeight: 180,
+      }}
+    >
+      <div
+        style={{
+          fontSize: 11,
+          color: "var(--text-tertiary)",
+          textTransform: "uppercase",
+          letterSpacing: "0.05em",
+          marginBottom: 10,
+        }}
+      >
+        {question}
+      </div>
+      <div style={{ flex: 1 }}>{body}</div>
+    </div>
+  );
+}
+
+function Empty({ text }: { text: string }) {
+  return (
+    <div
+      style={{
+        fontSize: 12,
+        color: "var(--text-tertiary)",
+        fontStyle: "italic",
+        padding: "20px 0",
+      }}
+    >
+      {text}
+    </div>
+  );
+}
+
+function WinningBody({ seg, totals }: { seg: InsightSegment; totals?: SegmentFunnels["totals"] }) {
+  const baseline = totals?.overallPostClick ?? 0;
+  const lift = baseline > 0 ? seg.postClickConv / baseline : 0;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>{seg.segment}</div>
+      <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>{seg.dimension}</div>
+      <div style={{ display: "flex", gap: 12, fontSize: 13, marginTop: 4 }}>
+        <Stat label="click→wechat" value={fmtPct(seg.postClickConv)} highlight color="#10B981" />
+        <Stat label="vs baseline" value={lift > 0 ? `${lift.toFixed(1)}×` : "—"} />
+        <Stat label="delivered" value={fmtNum(seg.delivered)} />
+      </div>
+      <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 6, lineHeight: 1.5 }}>
+        Double down here. The body/CTA already converts curiosity at this rate — find more leads that look like this segment.
+      </div>
+    </div>
+  );
+}
+
+function LosingBody({ seg, totals }: { seg: InsightSegment; totals?: SegmentFunnels["totals"] }) {
+  const baseline = totals?.overallCtr ?? 0;
+  const ratio = baseline > 0 ? seg.ctr / baseline : 0;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>{seg.segment}</div>
+      <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>{seg.dimension}</div>
+      <div style={{ display: "flex", gap: 12, fontSize: 13, marginTop: 4 }}>
+        <Stat label="CTR" value={fmtPct(seg.ctr)} highlight color="#EF4444" />
+        <Stat label="vs baseline" value={ratio > 0 ? `${ratio.toFixed(2)}×` : "—"} />
+        <Stat label="delivered" value={fmtNum(seg.delivered)} />
+      </div>
+      <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 6, lineHeight: 1.5 }}>
+        Subject + opener aren&rsquo;t earning the click here. Either rewrite the hook for this segment, or deprioritise it.
+      </div>
+    </div>
+  );
+}
+
+function ChangeBody({ drop }: { drop: DiagnoseResult }) {
+  const top = drop.cards[0];
+  const metricLabel = drop.metric === "click_rate" ? "Click rate" : "WeChat rate";
+  const direction = drop.curRate >= drop.prevRate ? "up" : "down";
+  const pp = ((drop.curRate - drop.prevRate) * 100).toFixed(1);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>
+        {metricLabel} {direction} {pp}pp
+      </div>
+      <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+        {fmtPct(drop.prevRate)} → {fmtPct(drop.curRate)} (last {drop.windowDays}d vs prev)
+      </div>
+      {top ? (
+        <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 6, lineHeight: 1.5 }}>
+          Most likely driver:{" "}
+          <strong style={{ color: "var(--text)" }}>{top.covariate.replace(/_/g, " ")}</strong>
+          &nbsp;— &ldquo;{top.biggestShift.bucket}&rdquo; share moved{" "}
+          {top.biggestShift.deltaPct >= 0 ? "+" : ""}
+          {top.biggestShift.deltaPct.toFixed(0)}pp.
+        </div>
+      ) : (
+        <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 6 }}>
+          No single covariate explains the move &gt;5pp.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  highlight,
+  color,
+}: {
+  label: string;
+  value: string;
+  highlight?: boolean;
+  color?: string;
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+      <span style={{ fontSize: 10, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+        {label}
+      </span>
+      <span
+        style={{
+          fontSize: 14,
+          fontWeight: highlight ? 700 : 500,
+          color: color ?? "var(--text)",
+        }}
+      >
+        {value}
+      </span>
     </div>
   );
 }
