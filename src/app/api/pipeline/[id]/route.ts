@@ -117,6 +117,27 @@ export async function PATCH(
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
+    // Cascade: when assigned_rep_id changes, the OWNER of the lead
+    // changes — so emails.rep_id (which mirrors ownership for
+    // inbox-routing + scoped dashboards) needs to follow. We do NOT
+    // touch emails.actor_rep_id: that's the rep who literally pressed
+    // send, and reassigning ownership shouldn't rewrite history of
+    // who acted. Same principle as the actor-vs-owner split called
+    // out in CLAUDE.md memory.
+    //
+    // Best-effort — failure here doesn't roll back the lead update
+    // because the lead row is the source of truth and a follow-up
+    // bulk reassign endpoint can repair drift.
+    if (assignedRepId !== undefined && isPrivileged && lead.thread_id) {
+      const { error: cascadeErr } = await supabase
+        .from("emails")
+        .update({ rep_id: assignedRepId })
+        .eq("thread_id", lead.thread_id);
+      if (cascadeErr) {
+        console.warn("rep_id cascade to emails failed", { leadId: id, threadId: lead.thread_id, err: cascadeErr.message });
+      }
+    }
+
     return NextResponse.json(mapLead(lead));
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Failed to update lead";

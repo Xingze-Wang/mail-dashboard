@@ -52,6 +52,7 @@ import { Analytics, DiscoveryLead, Lead, Rep, canSend } from "./types";
 import { LeadRow } from "./LeadRow";
 import { DiscoveryCard } from "./DiscoveryCard";
 import { AddLeadModal } from "./AddLeadModal";
+import { ReassignModal } from "./ReassignModal";
 import { paletteFor, initialsFor } from "./repColors";
 import { isAgeGated } from "@/lib/policy";
 
@@ -305,6 +306,7 @@ export default function PipelinePage() {
   const router = useRouter();
 
   const [addLeadOpen, setAddLeadOpen] = useState(false);
+  const [reassignOpen, setReassignOpen] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [myRepId, setMyRepId] = useState<number | null>(null);
   const [meLoaded, setMeLoaded] = useState(false);
@@ -849,8 +851,8 @@ export default function PipelinePage() {
         </div>
         <div className="dx-topbar-actions">
           {isAdmin && (
-            <button onClick={handleReassignAll} className="dx-secondary">
-              Re-assign
+            <button onClick={() => setReassignOpen(true)} className="dx-secondary">
+              Re-assign…
             </button>
           )}
           <button onClick={handleScan} disabled={scanning} className="dx-secondary">
@@ -898,10 +900,30 @@ export default function PipelinePage() {
       {/* ════ LEADS ════ */}
       {activeTab === "leads" && (
         <>
-          {/* Send-mode toggle (Browse / Review / Bulk) */}
-          <div className="dx-mode-row">
-            <span className="dx-mode-label">Mode</span>
-            <div className="dx-chip-group" role="tablist" aria-label="Send mode">
+          {/* Channel filter bar — only render when multiple channels
+              have leads. With one channel active it's just visual
+              noise. */}
+          {CHANNELS.filter((c) => c.key !== "all" && channelCounts[c.key] > 0).length > 1 && (
+            <div className="dx-channel-bar">
+              {CHANNELS.map((c) => (
+                <button
+                  key={c.key}
+                  type="button"
+                  onClick={() => setChannelFilter(c.key)}
+                  className={`dx-ch-tab ${channelFilter === c.key ? "active" : ""}`}
+                >
+                  <ChannelIcon ch={c.key} />
+                  {c.label}
+                  <span className="dx-ch-count">{channelCounts[c.key].toLocaleString()}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Stream toolbar — mode chips (Browse/Review/Bulk),
+              status chips, rep pills, sort. One row instead of three. */}
+          <div className="dx-stream-toolbar">
+            <div className="dx-chip-group" role="tablist" aria-label="Send mode" style={{ marginRight: 8 }}>
               {SEND_MODES.map((m) => (
                 <button
                   key={m.key}
@@ -916,32 +938,13 @@ export default function PipelinePage() {
               ))}
             </div>
             {sendMode !== "browse" && (
-              <span className="dx-mode-hint">
+              <span className="dx-mode-hint" style={{ marginLeft: 0, marginRight: 12 }}>
                 {sendMode === "review"
-                  ? "Focused review · J/K to navigate · Cmd+Enter to send"
-                  : "Bulk send · select rows then confirm"}
+                  ? "J/K · Cmd+Enter to send"
+                  : "Select rows then confirm"}
               </span>
             )}
-          </div>
 
-          {/* Channel filter bar */}
-          <div className="dx-channel-bar">
-            {CHANNELS.map((c) => (
-              <button
-                key={c.key}
-                type="button"
-                onClick={() => setChannelFilter(c.key)}
-                className={`dx-ch-tab ${channelFilter === c.key ? "active" : ""}`}
-              >
-                <ChannelIcon ch={c.key} />
-                {c.label}
-                <span className="dx-ch-count">{channelCounts[c.key].toLocaleString()}</span>
-              </button>
-            ))}
-          </div>
-
-          {/* Stream toolbar */}
-          <div className="dx-stream-toolbar">
             <div className="dx-chip-group">
               {STATUS_CHIPS.map((s) => {
                 // Apply the same repFilter as the rendered list so chip
@@ -1172,6 +1175,16 @@ export default function PipelinePage() {
         onClose={() => setAddLeadOpen(false)}
         onCreated={handleLeadCreated}
       />
+
+      {reassignOpen && (
+        <ReassignModal
+          reps={reps}
+          onClose={() => setReassignOpen(false)}
+          onAutoRouteAll={handleReassignAll}
+          onSuccess={() => fetchLeads()}
+          toast={toast}
+        />
+      )}
     </div>
   );
 }

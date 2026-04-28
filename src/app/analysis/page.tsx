@@ -225,6 +225,10 @@ export default function AnalysisPage() {
           {/* ── 3 question cards: winning / losing / changed ── */}
           {insights && <QuestionCards insights={insights} funnels={funnels} />}
 
+          {/* ── Rates by segment — quick-look table for the 3 dimensions
+              users actually ask about (lead tier, geo, direction). ── */}
+          {funnels && <RatesBySegment funnels={funnels} />}
+
           {/* ── Segment scatter (the strategic quadrant view) ── */}
           {funnels && <SegmentFunnelsSection funnels={funnels} />}
 
@@ -601,6 +605,105 @@ function Stat({
       </span>
     </div>
   );
+}
+
+/* ─────────────────────── Rates by segment table ─────────────────────────
+ * Compact 3-column view of the dimensions users ask about most:
+ * lead tier (strong/normal), geo (CN/overseas), direction. Each row
+ * shows delivered / CTR / click→wechat / end-to-end with rates
+ * tone-colored vs the org-wide baseline. Buckets with <5 delivered
+ * are hidden as noise; (no lead data) is included because — at least
+ * for the lead_tier dimension today — it's the bulk of the volume.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+function RatesBySegment({ funnels }: { funnels: SegmentFunnels }) {
+  const dims: Array<{ key: string; label: string; sortBy: "endToEnd" | "delivered" }> = [
+    { key: "geo_binary", label: "Geo (CN vs overseas)", sortBy: "delivered" },
+    { key: "lead_tier", label: "Lead tier (strong / normal)", sortBy: "endToEnd" },
+    { key: "direction", label: "Top directions", sortBy: "delivered" },
+  ];
+  const baselineCtr = funnels.totals.overallCtr;
+  const baselineConv = funnels.totals.overallPostClick;
+
+  return (
+    <div className="section-card" style={{ padding: 16, marginBottom: 14 }}>
+      <h3 style={{ marginBottom: 4, fontSize: 14, fontWeight: 600 }}>Rates by segment</h3>
+      <p style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 14 }}>
+        Org baseline: {fmtPct(baselineCtr)} CTR · {fmtPct(baselineConv)} click→wechat. Cells colored vs baseline.
+      </p>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
+        {dims.map((d) => {
+          const dim = funnels.dimensions.find((x) => x.dimension === d.key);
+          if (!dim) return null;
+          // Drop sub-5 delivered noise. Then sort by chosen criterion
+          // descending so the most-volume / most-converting bucket
+          // appears first.
+          const rows = dim.segments
+            .filter((s) => s.delivered >= 5)
+            .slice()
+            .sort((a, b) => (b[d.sortBy] as number) - (a[d.sortBy] as number))
+            .slice(0, d.key === "direction" ? 6 : 8);
+          return (
+            <div key={d.key}>
+              <div style={{ fontSize: 11, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.04em", fontWeight: 600, marginBottom: 6 }}>
+                {d.label}
+              </div>
+              {rows.length === 0 ? (
+                <div style={{ fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic" }}>
+                  no segment has ≥5 delivered yet
+                </div>
+              ) : (
+                <table style={{ width: "100%", fontSize: 11, borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr style={{ color: "var(--text-tertiary)" }}>
+                      <th style={{ textAlign: "left", padding: "3px 4px", fontWeight: 500 }}>Segment</th>
+                      <th style={{ textAlign: "right", padding: "3px 4px", fontWeight: 500 }}>n</th>
+                      <th style={{ textAlign: "right", padding: "3px 4px", fontWeight: 500 }}>CTR</th>
+                      <th style={{ textAlign: "right", padding: "3px 4px", fontWeight: 500 }}>→wc</th>
+                      <th style={{ textAlign: "right", padding: "3px 4px", fontWeight: 500 }}>e2e</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((s) => (
+                      <tr key={s.segment} style={{ borderTop: "1px solid var(--border-light)", opacity: s.lowN ? 0.6 : 1 }}>
+                        <td style={{ padding: "5px 4px", color: "var(--text)", maxWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={s.segment}>
+                          {s.segment}
+                        </td>
+                        <td style={{ padding: "5px 4px", textAlign: "right", color: "var(--text-secondary)", fontFamily: "ui-monospace, monospace" }}>
+                          {s.delivered}
+                        </td>
+                        <td style={{ padding: "5px 4px", textAlign: "right", color: rateTone(s.ctr, baselineCtr), fontWeight: 500, fontFamily: "ui-monospace, monospace" }}>
+                          {fmtPct(s.ctr)}
+                        </td>
+                        <td style={{ padding: "5px 4px", textAlign: "right", color: rateTone(s.postClickConv, baselineConv), fontWeight: 500, fontFamily: "ui-monospace, monospace" }}>
+                          {fmtPct(s.postClickConv)}
+                        </td>
+                        <td style={{ padding: "5px 4px", textAlign: "right", color: "var(--text-secondary)", fontFamily: "ui-monospace, monospace" }}>
+                          {fmtPct(s.endToEnd)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function rateTone(rate: number, baseline: number): string {
+  // Symmetric ±20% threshold around baseline before coloring; under
+  // that, treat as "near baseline" and stay neutral. Matches the
+  // SegmentScatter quadrant logic so colors are consistent across
+  // the page.
+  if (baseline <= 0 || rate === 0) return "var(--text-secondary)";
+  const ratio = rate / baseline;
+  if (ratio >= 1.2) return "#16a34a";
+  if (ratio <= 0.8) return "#dc2626";
+  return "var(--text-secondary)";
 }
 
 /* ─────────────────── Segment funnels (two-stage) ─────────────────── */

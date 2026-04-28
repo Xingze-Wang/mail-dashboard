@@ -173,6 +173,10 @@ export default function ScorerPage() {
         </div>
       </div>
 
+      {/* Health hero — one tile per tab so admin sees system-wide
+          model health on landing without clicking through. */}
+      <ScorerHealthHero onClickTab={(t) => setTab(t)} />
+
       {/* Tab nav */}
       <div style={{ display: "flex", gap: 4, marginBottom: 24, borderBottom: "1px solid var(--border)" }}>
         <ScorerTabBtn active={tab === "lead"} onClick={() => setTab("lead")} icon={<Star style={{ width: 14, height: 14 }} />} label="Lead quality" />
@@ -191,6 +195,103 @@ export default function ScorerPage() {
         <LeadQualityView meta={meta} history={history} live={live} labelData={labelData} />
       )}
     </div>
+  );
+}
+
+/* ─────────────────────────── Health hero ────────────────────────────────
+ * One row of 4 tiles, one per tab. Each tile shows a status dot
+ * (green/yellow/red/missing), a one-line headline, and the most
+ * relevant numeric detail. Click → switch to that tab.
+ * Renders even on initial load (skeleton) so the layout doesn't jump.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+interface HealthTile {
+  status: "green" | "yellow" | "red" | "missing";
+  headline: string;
+  details: Record<string, unknown>;
+}
+interface HealthResp {
+  lead: HealthTile;
+  email: HealthTile;
+  conversion: HealthTile;
+  match: HealthTile;
+}
+
+function ScorerHealthHero({ onClickTab }: { onClickTab: (t: ScorerTab) => void }) {
+  const [data, setData] = useState<HealthResp | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch("/api/scorer/health", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => {
+        if (!d.error) setData(d);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 24 }}>
+      <HealthTileCard label="Lead quality" tile={data?.lead} loading={loading} onClick={() => onClickTab("lead")} />
+      <HealthTileCard label="Email quality" tile={data?.email} loading={loading} onClick={() => onClickTab("email")} />
+      <HealthTileCard label="Conversion model" tile={data?.conversion} loading={loading} onClick={() => onClickTab("conversion")} />
+      <HealthTileCard label="Sales match" tile={data?.match} loading={loading} onClick={() => onClickTab("match")} />
+    </div>
+  );
+}
+
+function HealthTileCard({
+  label,
+  tile,
+  loading,
+  onClick,
+}: {
+  label: string;
+  tile: HealthTile | undefined;
+  loading: boolean;
+  onClick: () => void;
+}) {
+  const status = tile?.status ?? "missing";
+  const accent =
+    status === "green" ? "#16a34a"
+    : status === "yellow" ? "#d97706"
+    : status === "red" ? "#dc2626"
+    : "var(--text-tertiary)";
+  const dotBg =
+    status === "green" ? "#16a34a"
+    : status === "yellow" ? "#d97706"
+    : status === "red" ? "#dc2626"
+    : "var(--border)";
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        textAlign: "left",
+        padding: "14px 16px",
+        border: "1px solid " + (status === "red" ? "#dc262644" : "var(--border-light)"),
+        borderRadius: 10,
+        background: "var(--card)",
+        cursor: "pointer",
+        transition: "border-color 120ms",
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+        minHeight: 92,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 600 }}>
+        <span style={{ width: 7, height: 7, borderRadius: "50%", background: dotBg, flexShrink: 0 }} />
+        {label}
+      </div>
+      {loading ? (
+        <div className="skeleton" style={{ height: 16, width: "70%", marginTop: 4 }} />
+      ) : (
+        <div style={{ fontSize: 13, color: accent, fontWeight: 500, lineHeight: 1.4 }}>
+          {tile?.headline ?? "—"}
+        </div>
+      )}
+    </button>
   );
 }
 
