@@ -33,6 +33,8 @@ export const ACTION_TOOL_NAMES = new Set([
   "open_split_view",
   "remember_about_rep",
   "track_prediction",
+  "reassign_lead",
+  "reassign_leads_bulk",
 ]);
 
 export const READ_TOOL_NAMES = new Set([
@@ -107,6 +109,8 @@ export const TOOLS_PROMPT = `## 工具系统
 - review_next — 打开 Review 模式下一条 ready lead (前端跳转, 不改数据). 参数: {}.
 - build_rep_template — 根据 rep 最近改过的草稿 (draft_original_html vs draft_html 的 diff), 用 LLM 生成一份属于这个 rep 的邮件模板 (inactive, 等 admin 审核). 参数: { rep_id?: number (admin 可指定, sales 省略=自己) }. **什么时候用**: 当 rep 说 "试试看 / 生成我的模板 / 建一个我的 template" 或类似意图, 特别是 chime-in 里 helper 主动问过 "要不要生成你自己的 intro 模板" 之后. 不需要参数, 因为这是根据 sent 历史自动分析的.
 - open_split_view — 打开一个全屏左右对比视图: 左边是 paper PDF, 右边是可编辑的 draft. 参数: { lead_id: string (UUID, 必填) }. **什么时候用**: 用户说 "同时看 paper 和邮件 / 对比一下 / split view / 开一个对照视图" 或类似意图. 可以直接改 subject/body 再 save, save 后回到原来的页面. 不发邮件, 只是编辑草稿.
+- reassign_lead — **admin only**. 把单个 lead 重新指派给另一个 rep. 参数: { lead_id: string (UUID), to_rep_id: number, reason?: string (一句话说为什么) }. **数据模型 (这个一定要搞清楚, 不要犯错)**: 我们有 *两层* rep 归属 — \`assigned_rep_id\` (lead 现在归谁所有 / inbox 路由) 和 \`actor_rep_id\` (邮件实际是谁发的). 这个工具**只改 owner**: 更新 \`pipeline_leads.assigned_rep_id\` 并把同 thread 的所有 \`emails.rep_id\` 也跟着改. **不会**碰 \`actor_rep_id\` — Leo 发出去的邮件就是 Leo 发的, 这是发送历史, 不能事后被改. 用户跟你说"把这个 lead 给 Chenyu"的时候**只是改 owner**, 不要解释成"把发件历史改成 Chenyu 发的". 如果用户问"那历史发件怎么算", 答: "actor 不变, 历史还是原来那个人; 只是 owner 变了, 以后回信进 Chenyu 的 inbox, dashboard 也按 Chenyu 算 owner".
+- reassign_leads_bulk — **admin only**. 用一组规则批量改 owner. 参数: { rules: [{ when: { geo?: "cn"|"edu"|"other", schoolTier?: 1|2|3, leadTier?: "strong"|"normal", currentRepId?: number|null }, to_rep_id: number }, ...], reason?: string }. 规则**有顺序**, 第一个匹配的赢; 一个 lead 只会被一条规则命中, 没命中的不动. AND 语义 — 同一条规则里的 when 字段全部都要满足. **重要**: 提交前 confirm 卡会自动跑一次 preview, 把"这次会移动 N 个 lead, 例: ..."显示给 admin 看, admin 点 Confirm 才真的写. 你不要假装自己能算出会移动多少 — 让卡片去算, 你只描述规则的意图. 限制: 最多 5 条规则一次 (chat 里别堆 megasystem). 每条规则的 when 至少要有一个字段 (空的 when 会拒绝). **same data-model 注意事项 as reassign_lead** — 改 owner, 不改 actor.
 - track_prediction — 把刚才你 (helper) 说过的一个 falsifiable 判断记下来跟踪. 参数: { claim: string (≤500 字, 引用刚说的话), targetEvent: "no_reply"|"no_wechat"|"reply"|"wechat", targetLeadId?: string (UUID), targetRecipient?: string (email), horizonDays?: number (默认 7, 最多 30) }. **什么时候用**: 当你做了一个**具体可证伪**的判断 ("这个 lead 应该不会 reply, 因为..." / "这个发出去 7 天内应该会加微信"), 而且 rep 在跟你讨论那个 lead — 主动提议 "我把这个判断记下来跟踪一下, 7 天后我们看准不准, 我错了我自己改". 不要每次说话都 propose, 只在你确实下了一个**具体的、能被现实打脸**的判断时. 不要追着 rep "track 一下吧" — 用 1 句自然语言提议就行.
 - remember_about_rep — 把一条关于这位 rep 的事实写进长期记忆 (跨 session 保留). 参数: { kind: "rep_pref"|"tactic"|"self_critique"|"other", body: string (一句话, 中英文都行), scope?: "rep"|"org" (默认 rep, admin 可指定 org) }. **什么时候用**: 当 rep 主动告诉你他的偏好 ("我喜欢简短" / "别再提算力具体额度了" / "Tsinghua 的 lead 我都用 citation hook"), 或者发现一个有效战术时. **写之前先 lookup get_my_memory** 看看是不是已经有了同义条目, 别重复写. 不要把吐槽 / 临时情绪当 memory 存.
 
@@ -122,7 +126,7 @@ export const TOOLS_PROMPT = `## 工具系统
 **格式提醒**:
 - lookup 块放在回答的**前面**或**中间**, tool 块放在**最后一行**.
 - lookup JSON 的 tool 字段必须是: list_leads / get_lead / get_my_stats / get_rep_info / get_my_growth / get_my_weekly_recap / get_my_memory / get_admin_alerts / get_wechat_followups / get_integrity_report / get_rep_helper_activity / diagnose_metric_drop / find_similar_leads.
-- tool JSON 的 action 字段必须是: batch_send / skip_lead / flag_lead / bulk_flag / redraft_lead / review_next / build_rep_template / open_split_view / remember_about_rep / track_prediction.
+- tool JSON 的 action 字段必须是: batch_send / skip_lead / flag_lead / bulk_flag / redraft_lead / review_next / build_rep_template / open_split_view / remember_about_rep / track_prediction / reassign_lead / reassign_leads_bulk.
 
 **反面例子 (不要这样做)**:
 用户: "skip 那个 Yanye 的 lead"

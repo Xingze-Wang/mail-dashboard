@@ -154,6 +154,46 @@ function extractToolProposal(text: string): { cleaned: string; proposal: ToolPro
           proposalError = `track_prediction: targetEvent must be one of ${allowed.join("|")}`;
         }
       }
+      if (parsed.action === "reassign_lead") {
+        if (typeof parsed.lead_id !== "string" || !UUID_RE.test(parsed.lead_id)) {
+          proposalError = `reassign_lead: invalid lead_id: ${parsed.lead_id ?? "null"}`;
+        } else if (!Number.isFinite(Number(parsed.to_rep_id))) {
+          proposalError = "reassign_lead: to_rep_id must be a number";
+        }
+      }
+      if (parsed.action === "reassign_leads_bulk") {
+        if (!Array.isArray(parsed.rules) || parsed.rules.length === 0) {
+          proposalError = "reassign_leads_bulk: rules[] required";
+        } else if (parsed.rules.length > 5) {
+          // Hard cap so the helper can't write a 20-rule megasystem in chat.
+          // Admin can use the /pipeline UI for that.
+          proposalError = "reassign_leads_bulk: max 5 rules per chat proposal — use /pipeline UI for larger sets";
+        } else {
+          const allowedGeo = ["cn", "edu", "other"];
+          for (let i = 0; i < parsed.rules.length; i++) {
+            const r = parsed.rules[i];
+            if (!r || typeof r !== "object") { proposalError = `rule ${i}: not an object`; break; }
+            if (!Number.isFinite(Number(r.to_rep_id))) { proposalError = `rule ${i}: to_rep_id required`; break; }
+            const when = r.when ?? {};
+            if (Object.keys(when).length === 0) {
+              proposalError = `rule ${i}: when must have at least one field`;
+              break;
+            }
+            if (when.geo !== undefined && !allowedGeo.includes(String(when.geo))) {
+              proposalError = `rule ${i}: when.geo must be cn|edu|other`;
+              break;
+            }
+            if (when.schoolTier !== undefined && ![1, 2, 3].includes(Number(when.schoolTier))) {
+              proposalError = `rule ${i}: when.schoolTier must be 1, 2, or 3`;
+              break;
+            }
+            if (when.leadTier !== undefined && !["strong", "normal"].includes(String(when.leadTier))) {
+              proposalError = `rule ${i}: when.leadTier must be strong|normal`;
+              break;
+            }
+          }
+        }
+      }
       if (!proposalError) proposal = parsed;
     }
   } catch {

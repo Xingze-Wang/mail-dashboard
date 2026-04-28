@@ -1580,6 +1580,14 @@ function ProposalCard({
   } else if (a === "review_next") {
     summary = "打开 Review 模式查看下一个 ready lead";
     confirmLabel = "Go";
+  } else if (a === "reassign_lead") {
+    const reason = proposal.reason ? ` — ${String(proposal.reason).slice(0, 80)}` : "";
+    summary = `把 lead ${String(proposal.lead_id ?? "?").slice(0, 8)} 重新指派给 rep ${proposal.to_rep_id}${reason}`;
+    confirmLabel = "Re-assign";
+    dangerous = true;
+  } else if (a === "reassign_leads_bulk") {
+    // Card handled by ReassignBulkCard below (preview + apply).
+    return <ReassignBulkCard proposal={proposal} onConfirm={onConfirm} onCancel={onCancel} busy={busy} />;
   } else {
     summary = `未知操作: ${a}`;
     confirmLabel = "Execute";
@@ -1627,6 +1635,158 @@ function ProposalCard({
         >
           {busy ? <Loader2 style={{ width: 12, height: 12 }} className="spin" /> : <Check style={{ width: 12, height: 12 }} />}
           {confirmLabel}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * ReassignBulkCard — special-cased ProposalCard for reassign_leads_bulk.
+ * The user wants to see "this would move N leads, here are 3 examples"
+ * BEFORE clicking Confirm. So the card auto-runs a preview on mount
+ * (server returns the count without writing) and only commits when
+ * admin clicks Apply. onConfirm is fired for the apply phase only.
+ *
+ * The proposal object is mutated in-place (confirm: true added) so
+ * the parent's executeProposal sees the right shape on click.
+ */
+function ReassignBulkCard({
+  proposal,
+  onConfirm,
+  onCancel,
+  busy,
+}: {
+  proposal: ToolProposal;
+  onConfirm: () => void;
+  onCancel: () => void;
+  busy: boolean;
+}) {
+  const [preview, setPreview] = useState<{
+    total_to_move: number;
+    unmatched: number;
+    per_rule: Array<{ rule_index: number; to_rep: { id: number; name: string }; match_count: number; sample: Array<{ id: string; author_name: string | null; title: string }> }>;
+  } | null>(null);
+  const [previewing, setPreviewing] = useState(true);
+  const [previewErr, setPreviewErr] = useState<string | null>(null);
+
+  // Fire preview on mount. Use a separate fetch (not the parent's
+  // executeProposal) so the proposal stays unconsumed in chat state
+  // — admin still gets to click Confirm or Cancel.
+  useEffect(() => {
+    let cancelled = false;
+    setPreviewing(true);
+    setPreviewErr(null);
+    fetch("/api/help/execute", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ proposal: { ...proposal, confirm: false } }),
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        if (cancelled) return;
+        if (!d.ok) {
+          setPreviewErr(d.detail?.error ?? d.error ?? "preview failed");
+        } else if (d.detail?.preview) {
+          setPreview({
+            total_to_move: d.detail.total_to_move,
+            unmatched: d.detail.unmatched,
+            per_rule: d.detail.per_rule,
+          });
+        } else {
+          setPreviewErr("unexpected response shape from server");
+        }
+      })
+      .catch((e) => {
+        if (!cancelled) setPreviewErr(e instanceof Error ? e.message : "preview network error");
+      })
+      .finally(() => {
+        if (!cancelled) setPreviewing(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [proposal]);
+
+  const onApply = () => {
+    // Mutate proposal in-place so executeProposal sees confirm: true.
+    // ToolProposal is { action: string; [key: string]: unknown } so
+    // this is type-safe.
+    (proposal as Record<string, unknown>).confirm = true;
+    onConfirm();
+  };
+
+  const ruleCount = Array.isArray(proposal.rules) ? proposal.rules.length : 0;
+
+  return (
+    <div
+      style={{
+        alignSelf: "flex-start",
+        maxWidth: "92%",
+        padding: 10,
+        borderRadius: 10,
+        border: "1px solid #FCA5A5",
+        background: "#FEF2F2",
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+      }}
+    >
+      <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-tertiary, #6b7280)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+        Bulk re-assign — {ruleCount} rule{ruleCount === 1 ? "" : "s"}
+      </div>
+
+      {previewing && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-secondary, #4b5563)" }}>
+          <Loader2 style={{ width: 12, height: 12 }} className="spin" />
+          Previewing rules…
+        </div>
+      )}
+
+      {previewErr && (
+        <div style={{ fontSize: 12, color: "#991b1b" }}>
+          Preview error: {previewErr}
+        </div>
+      )}
+
+      {preview && (
+        <>
+          <div style={{ fontSize: 13, color: "var(--text, #111827)", fontWeight: 600 }}>
+            Will move {preview.total_to_move} lead{preview.total_to_move === 1 ? "" : "s"}
+            <span style={{ fontWeight: 400, color: "var(--text-tertiary, #6b7280)", marginLeft: 6 }}>
+              ({preview.unmatched} unmatched stay put)
+            </span>
+          </div>
+          <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12, color: "var(--text-secondary, #4b5563)", display: "flex", flexDirection: "column", gap: 4 }}>
+            {preview.per_rule.map((r) => (
+              <li key={r.rule_index}>
+                <strong>Rule {r.rule_index + 1} → {r.to_rep.name}</strong>: {r.match_count} match{r.match_count === 1 ? "" : "es"}
+                {r.sample.length > 0 && (
+                  <span style={{ marginLeft: 6, color: "var(--text-tertiary, #6b7280)" }}>
+                    e.g. {r.sample.map((s) => s.author_name ?? s.id.slice(0, 6)).join(", ")}
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
+      <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+        <button
+          onClick={onCancel}
+          disabled={busy}
+          style={{ fontSize: 12, padding: "5px 10px", border: "1px solid var(--border, #e5e7eb)", borderRadius: 6, background: "transparent", cursor: busy ? "not-allowed" : "pointer" }}
+        >
+          Cancel
+        </button>
+        <button
+          onClick={onApply}
+          disabled={busy || previewing || !preview || preview.total_to_move === 0}
+          style={{ fontSize: 12, padding: "5px 12px", border: 0, borderRadius: 6, background: "#DC2626", color: "white", cursor: busy ? "not-allowed" : "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}
+        >
+          {busy ? <Loader2 style={{ width: 12, height: 12 }} className="spin" /> : <Check style={{ width: 12, height: 12 }} />}
+          Apply
         </button>
       </div>
     </div>
