@@ -52,6 +52,7 @@ import { Analytics, DiscoveryLead, Lead, Rep, canSend } from "./types";
 import { LeadRow } from "./LeadRow";
 import { DiscoveryCard } from "./DiscoveryCard";
 import { AddLeadModal } from "./AddLeadModal";
+import { ReassignModal } from "./ReassignModal";
 import { paletteFor, initialsFor } from "./repColors";
 import { isAgeGated } from "@/lib/policy";
 
@@ -305,6 +306,7 @@ export default function PipelinePage() {
   const router = useRouter();
 
   const [addLeadOpen, setAddLeadOpen] = useState(false);
+  const [reassignOpen, setReassignOpen] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [myRepId, setMyRepId] = useState<number | null>(null);
   const [meLoaded, setMeLoaded] = useState(false);
@@ -849,8 +851,8 @@ export default function PipelinePage() {
         </div>
         <div className="dx-topbar-actions">
           {isAdmin && (
-            <button onClick={handleReassignAll} className="dx-secondary">
-              Re-assign
+            <button onClick={() => setReassignOpen(true)} className="dx-secondary">
+              Re-assign…
             </button>
           )}
           <button onClick={handleScan} disabled={scanning} className="dx-secondary">
@@ -1173,6 +1175,16 @@ export default function PipelinePage() {
         onClose={() => setAddLeadOpen(false)}
         onCreated={handleLeadCreated}
       />
+
+      {reassignOpen && (
+        <ReassignModal
+          reps={reps}
+          onClose={() => setReassignOpen(false)}
+          onAutoRouteAll={handleReassignAll}
+          onSuccess={() => fetchLeads()}
+          toast={toast}
+        />
+      )}
     </div>
   );
 }
