@@ -3,6 +3,7 @@ import { supabase } from "@/lib/db";
 import { requireSession } from "@/lib/auth-helpers";
 import { getRep } from "@/lib/assignment";
 import { resolveInboundRepId } from "@/lib/inbound-attribution";
+import { listEnvelope } from "@/lib/list-envelope";
 
 /** Clean up `to` field — handles JSON array strings like '["a@b.com"]' */
 function cleanToField(to: string | null): string {
@@ -155,7 +156,13 @@ export async function GET(req: NextRequest) {
   if (!isPrivileged) {
     const rep = await getRep(session.repId);
     if (!rep?.sender_email) {
-      return NextResponse.json({ emails: [], total: 0, page, limit });
+      return NextResponse.json({
+        emails: [],
+        total: 0,
+        page,
+        limit,
+        ...listEnvelope({ scannedTotal: 0, requestedTotal: 0, source: "supabase:inbound_emails" }),
+      });
     }
     const { data: outbound } = await supabase
       .from("emails")
@@ -212,5 +219,16 @@ export async function GET(req: NextRequest) {
     threadId: e.thread_id,
   }));
 
-  return NextResponse.json({ emails: mapped, total: total ?? mapped.length, page, limit });
+  return NextResponse.json({
+    emails: mapped,
+    total: total ?? mapped.length,
+    page,
+    limit,
+    ...listEnvelope({
+      scannedTotal: mapped.length,
+      requestedTotal: total ?? undefined,
+      cap: offset + limit,
+      source: "supabase:inbound_emails",
+    }),
+  });
 }

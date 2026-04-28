@@ -11,6 +11,7 @@ import {
   resolveCategory,
 } from "@/lib/assignment";
 import { requireSession } from "@/lib/auth-helpers";
+import { listEnvelope } from "@/lib/list-envelope";
 
 // ─── Shared field mapper ────────────────────────────────────────────────────
 
@@ -161,6 +162,12 @@ export async function GET(req: NextRequest) {
     limit,
     // Canary for verifying deploy/version. If missing, this code isn't live.
     _scope: { role: session.role, isPrivileged, effectiveRepId, build: "scope-v3-2026-04-23" },
+    ...listEnvelope({
+      scannedTotal: (leads || []).length,
+      requestedTotal: total ?? undefined,
+      cap: offset + limit,
+      source: "supabase:pipeline_leads",
+    }),
   });
 }
 
@@ -178,6 +185,14 @@ async function insertLead(
     assignedRepId?: number;
   },
 ) {
+  // author_email is NOT NULL in the schema, but we also refuse to write
+  // "" — an empty string satisfies the constraint, pollutes indexes,
+  // and breaks dedup (two unrelated authors both at "" look identical
+  // to the contact-guard). If there's no email, there's no lead.
+  const email = (lead.authorEmail ?? "").trim();
+  if (!email.includes("@")) {
+    return { error: { message: "author_email missing or invalid" } } as const;
+  }
   return supabase.from("pipeline_leads").insert({
     arxiv_id: lead.arxivId,
     title: lead.title,
@@ -186,7 +201,7 @@ async function insertLead(
     pdf_url: lead.pdfUrl,
     published_at: lead.publishedAt,
     author_name: lead.authorName,
-    author_email: lead.authorEmail,
+    author_email: email,
     first_name: lead.firstName,
     school_name: lead.schoolName,
     school_tier: lead.schoolTier,

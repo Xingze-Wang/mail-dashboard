@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/db";
+import { CONTACTED_LEAD_STATUSES } from "@/lib/status";
 
 const SEND_MIN_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const CONTACT_DEDUP_MS = 365 * 24 * 60 * 60 * 1000;
@@ -170,7 +171,7 @@ export async function paperWasRecentlyContacted(
       .from("pipeline_leads")
       .select("sent_at")
       .eq("arxiv_id", id)
-      .in("status", ["sent", "replied", "wechat_added"])
+      .in("status", [...CONTACTED_LEAD_STATUSES])
       .gte("sent_at", cutoff)
       .order("sent_at", { ascending: false })
       .limit(1),

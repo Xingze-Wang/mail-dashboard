@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { resolveCategory } from "@/lib/assignment";
 import { requireAdmin } from "@/lib/auth-helpers";
+import { isContactedLeadStatus, REACHABLE_EMAIL_STATUSES } from "@/lib/status";
 
 /**
  * GET /api/scorer/live
@@ -57,7 +58,7 @@ export async function GET(req: NextRequest) {
       const { data: page } = await supabase
         .from("emails")
         .select("to")
-        .in("status", ["delivered", "clicked", "sent", "replied"])
+        .in("status", [...REACHABLE_EMAIL_STATUSES])
         .range(cursor, cursor + pageSize - 1);
       if (!page || page.length === 0) break;
       for (const e of page) {
@@ -92,7 +93,7 @@ export async function GET(req: NextRequest) {
     // email to this recipient (catches older sends that never transited
     // the pipeline status field).
     const wasSent =
-      lead.status === "sent" || lead.status === "replied" || lead.status === "wechat_added" ||
+      isContactedLeadStatus(lead.status as string) ||
       (em && sentRecipients.has(em));
     if (wasSent) bucket.sent++;
     if (em && wechatEmails.has(em)) bucket.converted++;
@@ -175,7 +176,7 @@ export async function GET(req: NextRequest) {
     const cat = resolveCategory(lead.matched_directions ?? null) ?? "(unmatched)";
     const entry = catMap.get(cat) ?? { scores: [], sent: 0, converted: 0 };
     entry.scores.push(lead.local_score as number);
-    if (lead.status === "sent" || lead.status === "replied" || lead.status === "wechat_added") entry.sent++;
+    if (isContactedLeadStatus(lead.status as string)) entry.sent++;
     if (wechatEmails.has((lead.author_email as string | null)?.toLowerCase() ?? "")) entry.converted++;
     catMap.set(cat, entry);
   }

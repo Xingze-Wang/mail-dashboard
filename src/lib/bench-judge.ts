@@ -72,6 +72,71 @@ export async function judgeAnalyze(
   );
 }
 
+/**
+ * judgePrediction — score the *reasoning quality* of a helper
+ * prediction after its outcome resolved. Distinct from outcome
+ * (already known: correct/wrong); this asks "was the reasoning
+ * sound, given what actually happened?"
+ *
+ * The 4 cases the helper learns from:
+ *   wrong outcome + low judge  → strong critique (lazy reasoning + missed)
+ *   wrong outcome + high judge → soft critique (world surprised us)
+ *   right outcome + low judge  → "right by accident, lower confidence"
+ *   right outcome + high judge → no critique, validated reasoning
+ */
+const PREDICTION_RUBRIC = `你在评价一个 sales helper 对 lead 的预测的**思考质量** (不是结果对错 — 结果你已经知道了, 给在 user message 里).
+关键: 判断 reasoning 本身是否合理, 而不是结果碰巧对不对.
+
+打分 0-10:
+- 10 = 推理紧扣 lead 的具体细节 (paper / school / direction / 历史互动), 因果链合理, 即使结果错了也能学到东西
+- 7  = 推理用到了一些 lead context, 但部分论据偏 generic
+- 4  = 推理是套话, 任何 lead 都能套, 没有具体证据支持
+- 0  = 没有推理 / 自相矛盾 / 跟 lead 无关 / 结果对纯属碰巧
+
+重点看:
+1. 是否引用了 lead 的具体特征 (paper 主题 / school tier / 是否 industry / 之前互动)
+2. 因果链是否合理 (X 因为 Y 所以 Z, 不是直接断言)
+3. 是否考虑了反例 / 边界情况
+4. 即使预测对了, 推理是不是恰好猜中而已`;
+
+export async function judgePrediction(input: {
+  claim: string;
+  targetEvent: string;
+  outcomeNote: string;
+  outcomeCorrect: boolean;
+  leadContext?: {
+    title: string | null;
+    abstract?: string | null;
+    schoolName?: string | null;
+    schoolTier?: number | null;
+    authorEmail?: string | null;
+  } | null;
+}): Promise<JudgeVerdict[]> {
+  const lead = input.leadContext;
+  const ctx = lead
+    ? `参考 lead 信息:
+title: ${lead.title ?? "?"}
+school: ${lead.schoolName ?? "?"} (tier ${lead.schoolTier ?? "?"})
+author email: ${lead.authorEmail ?? "?"}
+${lead.abstract ? `abstract 前 600 字: ${lead.abstract.slice(0, 600)}` : ""}
+`
+    : "(没有具体的 lead 上下文 — 只能就 claim 本身的 reasoning 质量打分)";
+
+  const user = `Helper 的预测 claim:
+"${input.claim}"
+
+预测的 target event: ${input.targetEvent}
+deadline 到了之后实际发生了什么: ${input.outcomeNote}
+所以预测的**结果**: ${input.outcomeCorrect ? "对" : "错"}
+
+${ctx}
+
+只返回 JSON: ${RESPONSE_SCHEMA}
+注意: 你不是在评价**结果**对错 (那已经知道了), 而是评价**推理质量** — 即使结果错了, 推理也可能是好的; 即使结果对了, 推理也可能很草率.`;
+
+  return judgeAll(PREDICTION_RUBRIC, user);
+}
+
 async function judgeAll(system: string, user: string): Promise<JudgeVerdict[]> {
   const results = await Promise.allSettled(
     JUDGE_MODELS.map(async (judge) => {

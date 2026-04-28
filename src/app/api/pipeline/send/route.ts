@@ -8,6 +8,7 @@ import { MIN_AGE_DAYS, leadAgeDays } from "@/lib/policy";
 import { canonicalizeEmail } from "@/lib/email-id";
 import { checkBlocked } from "@/lib/blocklist";
 import { requireSession } from "@/lib/auth-helpers";
+import { loadEffectiveTemplate } from "@/lib/template-assembler";
 import { buildQuotaCheck, countOverridesTodayByRep } from "@/lib/override-quota";
 
 export async function POST(req: NextRequest) {
@@ -298,6 +299,18 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Record which template was active when this draft was sent
+    // (migration 032). Cheap re-lookup at send time — within a few
+    // days of scan, the answer matches what was actually used. NULL
+    // is fine if loadEffectiveTemplate fails or no template exists.
+    let templateId: string | null = null;
+    try {
+      const tpl = await loadEffectiveTemplate(lead.assigned_rep_id ?? null);
+      templateId = tpl?.id ?? null;
+    } catch {
+      // best-effort — template_id is for analytics, not delivery
+    }
+
     const { data: email, error: emailError } = await supabase
       .from("emails")
       .insert({
@@ -310,10 +323,18 @@ export async function POST(req: NextRequest) {
         status: "sent",
         thread_id: threadId,
         paper_arxiv_id: lead.arxiv_id ?? null,
-        // Canonical rep attribution (migration 014). Carried on the
-        // emails row so future queries can scope by rep_id instead of
-        // the fragile `from ilike sender_email` proxy filter.
+        // rep_id = OWNER (canonical, migration 014). Used to route
+        // inbox views, scope dashboards, etc. Mirrors the lead's
+        // assigned_rep_id so ownership is always retrievable off the
+        // emails row even if the lead later gets reassigned.
         rep_id: lead.assigned_rep_id ?? actingRepId,
+        // actor_rep_id = WHO PERFORMED THE SEND (migration 019). Used
+        // for audit and for bounce/reply attribution math that should
+        // credit/debit the rep who actually did the work, not the
+        // rep who happens to own the lead. Diverges from rep_id when
+        // admin/senior sends on behalf of another rep.
+        actor_rep_id: actingRepId,
+        template_id: templateId,
       })
       .select()
       .single();

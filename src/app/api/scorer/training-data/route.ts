@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { requireAdmin } from "@/lib/auth-helpers";
+import { REACHABLE_EMAIL_STATUSES } from "@/lib/status";
 
 export const dynamic = "force-dynamic";
 
@@ -62,9 +63,13 @@ export async function GET(req: NextRequest) {
     { count: sentCount },
   ] = await Promise.all([
     supabase.from("brief_lookups").select("*", { count: "exact", head: true }).eq("added_wechat", true),
-    supabase.from("emails").select("*", { count: "exact", head: true }).eq("status", "clicked"),
-    supabase.from("emails").select("*", { count: "exact", head: true }).eq("status", "bounced"),
-    supabase.from("emails").select("*", { count: "exact", head: true }).in("status", ["delivered", "clicked", "sent", "replied"]),
+    // Read from email_history (Tier 2): emails.status is latest-event-
+    // wins, so any click that was later overwritten by a complaint or
+    // bounce silently dropped from the count. The view aggregates the
+    // canonical webhook_events log so was_clicked stays true forever.
+    supabase.from("email_history").select("*", { count: "exact", head: true }).eq("was_clicked", true),
+    supabase.from("email_history").select("*", { count: "exact", head: true }).eq("was_bounced", true),
+    supabase.from("emails").select("*", { count: "exact", head: true }).in("status", [...REACHABLE_EMAIL_STATUSES]),
   ]);
 
   // Last 8 runs

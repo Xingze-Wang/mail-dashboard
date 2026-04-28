@@ -309,6 +309,46 @@ async function doRememberAboutRep(
   };
 }
 
+async function doTrackPrediction(
+  session: { repId: number; role: string },
+  params: Record<string, unknown>,
+): Promise<{ ok: boolean; detail: Record<string, unknown> }> {
+  // Helper proposed it, rep confirmed → row in helper_predictions.
+  // Cron resolver fires past target_deadline and writes a self_critique
+  // to helper_learnings on misses. See src/lib/predictions.ts.
+  const claim = typeof params.claim === "string" ? params.claim.trim() : "";
+  const targetEvent = typeof params.targetEvent === "string" ? params.targetEvent : "";
+  const allowed = ["no_reply", "no_wechat", "reply", "wechat"];
+  if (claim.length < 5 || claim.length > 500) {
+    return { ok: false, detail: { error: "claim must be 5-500 chars" } };
+  }
+  if (!allowed.includes(targetEvent)) {
+    return { ok: false, detail: { error: `targetEvent must be one of ${allowed.join("|")}` } };
+  }
+  const horizonDays = Math.max(1, Math.min(30, Number(params.horizonDays) || 7));
+  const targetDeadline = new Date(Date.now() + horizonDays * 86_400_000);
+
+  const { recordPrediction } = await import("@/lib/predictions");
+  const row = await recordPrediction({
+    repId: session.repId,
+    claim,
+    targetEvent: targetEvent as "no_reply" | "no_wechat" | "reply" | "wechat",
+    targetLeadId: typeof params.targetLeadId === "string" ? params.targetLeadId : null,
+    targetRecipient: typeof params.targetRecipient === "string" ? params.targetRecipient : null,
+    targetDeadline,
+  });
+  if (!row) return { ok: false, detail: { error: "insert failed — check server logs" } };
+  return {
+    ok: true,
+    detail: {
+      prediction_id: row.id,
+      target_event: row.target_event,
+      target_deadline: row.target_deadline,
+      horizon_days: horizonDays,
+    },
+  };
+}
+
 /**
  * open_split_view — frontend-conjured overlay with the paper PDF on
  * the left and an editable draft on the right. Server-side we do two
@@ -620,6 +660,9 @@ export async function POST(req: NextRequest) {
         break;
       case "remember_about_rep":
         result = await doRememberAboutRep(session, proposal);
+        break;
+      case "track_prediction":
+        result = await doTrackPrediction(session, proposal);
         break;
       default:
         result = { ok: false, detail: { error: `Unknown action: ${proposal.action}` } };

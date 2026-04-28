@@ -9,7 +9,11 @@
     "lint": "eslint",
     "postinstall": "prisma generate",
     "db:migrate": "prisma migrate dev",
-    "db:push": "prisma db push"
+    "db:push": "prisma db push",
+    "build:migrations": "node scripts/build-migration-bundle.mjs",
+    "lint:integrity": "node scripts/lint-status-eq.mjs",
+    "lint:fetch": "node scripts/lint-fetch.mjs",
+    "integrity": "node scripts/integrity.mjs"
   },
   "dependencies": {
     "@libsql/client": "^0.17.2",
@@ -38,6 +42,7 @@
     "react-dom": "19.2.4",
     "recharts": "^3.8.1",
     "resend": "^6.10.0",
+    "svix": "^1.92.2",
     "tailwind-merge": "^3.5.0"
   },
   "devDependencies": {

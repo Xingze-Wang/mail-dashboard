@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Star, TrendingUp, BarChart3, GitCompare, AlertTriangle, Sparkles, Target, Users2, Loader2 } from "lucide-react";
+import { Star, TrendingUp, BarChart3, GitCompare, AlertTriangle, Sparkles, Target, Users2, Loader2, Play, Zap } from "lucide-react";
 import { EmailQualityTab, ConversionTab, MatchTab, TechMetric, LeadTrainWorkbench, CitationBackfillCard, IndustryBackfillCard } from "./_tabs";
 import {
   BarChart, Bar, LineChart, Line,
@@ -233,12 +233,71 @@ function LeadQualityError({ err }: { err: string }) {
 }
 
 function LeadQualityMissing() {
+  const [training, setTraining] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const [runUrl, setRunUrl] = useState<string | null>(null);
+
+  async function trainNow(autoPromote: boolean) {
+    if (training) return;
+    setTraining(true);
+    setNote(null);
+    setRunUrl(null);
+    try {
+      const r = await fetch("/api/scorer/train", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ autoPromote }),
+      });
+      const d = await r.json();
+      if (!r.ok) {
+        setNote(d.error ?? `Train trigger failed (${r.status})`);
+      } else {
+        setRunUrl(d.workflowUrl ?? null);
+        setNote(
+          autoPromote
+            ? "Training started — model will auto-promote when done (3-8 min)."
+            : "Training started — review and promote manually when done.",
+        );
+      }
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : "Network error");
+    } finally {
+      setTraining(false);
+    }
+  }
+
   return (
     <div className="empty-state">
       <div className="empty-icon"><Star style={{ width: 22, height: 22 }} /></div>
       <h3>No trained scorer found</h3>
-      <p>
-        Run <code style={{ background: "var(--bg)", padding: "2px 6px", borderRadius: 4, border: "1px solid var(--border-light)", fontFamily: "ui-monospace, monospace", fontSize: 11.5 }}>python train_scorer.py</code> to train the model.
+      <p style={{ marginBottom: 14 }}>
+        The lead-quality scorer hasn&rsquo;t been trained yet (or the latest run failed). Trigger a fresh training run on GitHub Actions — it takes 3-8 min and uses every sent + WeChat-converted lead in the DB.
+      </p>
+      <div style={{ display: "inline-flex", gap: 10 }}>
+        <button className="btn btn-primary" onClick={() => trainNow(false)} disabled={training} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          {training ? <Loader2 style={{ width: 14, height: 14 }} className="spin" /> : <Play style={{ width: 14, height: 14 }} />}
+          {training ? "Triggering…" : "Train now"}
+        </button>
+        <button className="btn" onClick={() => trainNow(true)} disabled={training} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <Zap style={{ width: 14, height: 14 }} />
+          Train + auto-promote
+        </button>
+      </div>
+      {note && (
+        <div style={{ marginTop: 14, fontSize: 12, color: "var(--text-secondary)" }}>
+          {note}
+          {runUrl && (
+            <>
+              {" "}
+              <a href={runUrl} target="_blank" rel="noreferrer" style={{ color: "#6366F1" }}>
+                Watch run →
+              </a>
+            </>
+          )}
+        </div>
+      )}
+      <p style={{ marginTop: 16, fontSize: 11, color: "var(--text-tertiary)" }}>
+        Or run <code style={{ background: "var(--bg)", padding: "2px 6px", borderRadius: 4, border: "1px solid var(--border-light)", fontFamily: "ui-monospace, monospace", fontSize: 11 }}>python train_scorer.py</code> locally.
       </p>
     </div>
   );

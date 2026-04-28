@@ -6,6 +6,7 @@ import {
   assignRep,
 } from "@/lib/assignment";
 import { requireAdmin } from "@/lib/auth-helpers";
+import { isContactedLeadStatus } from "@/lib/status";
 
 export async function GET(req: NextRequest) {
   // Admin-only — leaks which schools/emails route to which rep, i.e.
@@ -115,13 +116,19 @@ export async function POST(req: NextRequest) {
     // on tier), so regenerating would be pure cost. If we ever
     // introduce tier-specific templates (e.g. a terser pitch for
     // 'strong' leads), flip `regenerable` to include `tierChanged`.
-    const regenerable = repChanged && currentStatus !== "sent" && currentStatus !== "replied";
+    // Don't regen drafts for leads we've already contacted — resending
+    // under a new rep's voice would mis-attribute the conversation.
+    const regenerable = repChanged && !isContactedLeadStatus(currentStatus);
     if (regenerable) {
       updatePayload.status = "queued";
       updatePayload.draft_subject = null;
       updatePayload.draft_html = null;
-      updatePayload.draft_original_subject = null;
-      updatePayload.draft_original_html = null;
+      // Intentionally preserve draft_original_subject / draft_original_html.
+      // Those fields are the immutable AI-snapshot the drift miner diffs
+      // against the sales-edited final. Nulling them on rep-reassignment
+      // wipes the only baseline the miner has, so prompt_drift_patterns
+      // never gets populated for re-queued leads. The current-draft pair
+      // (subject + html + edit_distance) is what's truly stale here.
       updatePayload.draft_edit_distance = null;
     }
 

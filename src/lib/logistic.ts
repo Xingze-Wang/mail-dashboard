@@ -24,6 +24,10 @@ export interface FitOptions {
   maxIter?: number;
   tolerance?: number;
   trainFrac?: number;
+  /** Per-sample weights. If omitted, all samples weighted 1.0. Used by
+   *  the dual-target scorer to up-weight rare wechat positives relative
+   *  to common click positives. */
+  sampleWeights?: number[];
 }
 
 function sigmoid(z: number): number {
@@ -32,20 +36,23 @@ function sigmoid(z: number): number {
   return e / (1 + e);
 }
 
-function logLoss(X: number[][], y: number[], w: number[], b: number, l2: number): number {
+function logLoss(X: number[][], y: number[], w: number[], b: number, l2: number, sampleWeights?: number[]): number {
   let sum = 0;
+  let totalWeight = 0;
   for (let i = 0; i < X.length; i++) {
     let z = b;
     for (let j = 0; j < w.length; j++) z += w[j] * X[i][j];
     const p = sigmoid(z);
     // Clamp to avoid log(0)
     const pp = Math.max(1e-12, Math.min(1 - 1e-12, p));
-    sum += y[i] * Math.log(pp) + (1 - y[i]) * Math.log(1 - pp);
+    const wt = sampleWeights ? sampleWeights[i] : 1;
+    sum += wt * (y[i] * Math.log(pp) + (1 - y[i]) * Math.log(1 - pp));
+    totalWeight += wt;
   }
-  const n = X.length;
   let reg = 0;
   for (const wj of w) reg += wj * wj;
-  return -sum / n + (l2 / 2) * reg;
+  // Weighted mean for loss; regularization unchanged (it's per-weight not per-sample).
+  return -sum / Math.max(1, totalWeight) + (l2 / 2) * reg;
 }
 
 function rocAuc(predictions: number[], labels: number[]): number {
@@ -83,9 +90,11 @@ export function fitLR(
     maxIter = 500,
     tolerance = 1e-5,
     trainFrac = 0.8,
+    sampleWeights,
   } = opts;
   if (X.length === 0) throw new Error("No samples");
   if (X[0].length !== featureNames.length) throw new Error("featureNames length mismatch");
+  if (sampleWeights && sampleWeights.length !== X.length) throw new Error("sampleWeights length mismatch");
 
   // Train/test split (deterministic — stratify by label so held-out has both
   // classes when data is thin).
@@ -106,6 +115,7 @@ export function fitLR(
   const ytr = trainIdx.map((i) => y[i]);
   const Xte = testIdx.map((i) => X[i]);
   const yte = testIdx.map((i) => y[i]);
+  const wtTr = sampleWeights ? trainIdx.map((i) => sampleWeights[i]) : null;
 
   const w = new Array(featureNames.length).fill(0);
   let b = 0;
@@ -114,20 +124,23 @@ export function fitLR(
   for (iter = 0; iter < maxIter; iter++) {
     const gradW = new Array(w.length).fill(0);
     let gradB = 0;
+    let totalWeight = 0;
     for (let i = 0; i < Xtr.length; i++) {
       let z = b;
       for (let j = 0; j < w.length; j++) z += w[j] * Xtr[i][j];
       const p = sigmoid(z);
       const err = p - ytr[i];
-      gradB += err;
-      for (let j = 0; j < w.length; j++) gradW[j] += err * Xtr[i][j];
+      const sw = wtTr ? wtTr[i] : 1;
+      totalWeight += sw;
+      gradB += sw * err;
+      for (let j = 0; j < w.length; j++) gradW[j] += sw * err * Xtr[i][j];
     }
-    const n = Xtr.length;
-    for (let j = 0; j < w.length; j++) w[j] -= learningRate * (gradW[j] / n + l2 * w[j]);
-    b -= learningRate * (gradB / n);
+    const norm = Math.max(1, totalWeight);
+    for (let j = 0; j < w.length; j++) w[j] -= learningRate * (gradW[j] / norm + l2 * w[j]);
+    b -= learningRate * (gradB / norm);
 
     if (iter % 25 === 0) {
-      const ll = logLoss(Xtr, ytr, w, b, l2);
+      const ll = logLoss(Xtr, ytr, w, b, l2, wtTr ?? undefined);
       if (Math.abs(prevLoss - ll) < tolerance) break;
       prevLoss = ll;
     }

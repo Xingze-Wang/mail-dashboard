@@ -18,6 +18,7 @@ import {
 } from "./scanner-config";
 import { supabase } from "./db";
 import { assembleDraft, loadEffectiveTemplate } from "./template-assembler";
+import { applyAutoAb } from "./auto-ab";
 
 // ============ HTML escaping ============
 
@@ -250,7 +251,7 @@ export async function generateDraft(lead: {
   // don't have repId (legacy code paths) still work: they just skip
   // per-rep overrides.
   assignedRepId?: number | null;
-}): Promise<{ subject: string; html: string }> {
+}): Promise<{ subject: string; html: string; templateId: string | null }> {
   // Template-driven path — preferred. If either the migration hasn't
   // been applied or the table is empty, loadEffectiveTemplate returns
   // null and we fall through to the legacy hardcoded assembly below.
@@ -259,7 +260,7 @@ export async function generateDraft(lead: {
   try {
     const tpl = await loadEffectiveTemplate(lead.assignedRepId ?? null);
     if (tpl) {
-      return await assembleDraft(tpl, {
+      const draft = await assembleDraft(tpl, {
         title: lead.title,
         abstract: lead.abstract,
         authorEmail: lead.authorEmail,
@@ -270,6 +271,19 @@ export async function generateDraft(lead: {
         repName,
         repWechatId: repWechat,
       });
+      // Auto-A/B (Dream #4): apply data-driven subject mutations for
+      // reps who opted in. Returns the original subject if rep is
+      // opt-out OR no high-confidence pattern matches this lead.
+      if (lead.assignedRepId != null) {
+        const ab = await applyAutoAb(draft.subject, {
+          repId: lead.assignedRepId,
+          authorEmail: lead.authorEmail,
+          schoolTier: lead.schoolTier,
+          matchedDirections: lead.matchedDirections,
+        });
+        return { subject: ab.subject, html: draft.html, templateId: tpl.id };
+      }
+      return { ...draft, templateId: tpl.id };
     }
   } catch (err) {
     // Template path failed — fall through to legacy. Log so it's
@@ -313,9 +327,19 @@ export async function generateDraft(lead: {
     ? escapeHtml(lead.firstName)
     : "你";
 
-  const subject = truncateSubject(
+  let subject = truncateSubject(
     `Invitation to Apply - ${fullTitle}的潜在算力支持机会`,
   );
+  // Auto-A/B in legacy path too — same opt-in rules apply.
+  if (lead.assignedRepId != null) {
+    const ab = await applyAutoAb(subject, {
+      repId: lead.assignedRepId,
+      authorEmail: lead.authorEmail,
+      schoolTier: lead.schoolTier,
+      matchedDirections: lead.matchedDirections,
+    });
+    subject = ab.subject;
+  }
 
   const html = `<html>
 <head><meta charset="utf-8"></head>
@@ -328,5 +352,5 @@ ${thirdParagraph}<br><br>
 <span style="font-size: 14px; color: #333; line-height: 1.6;">${escapeHtml(repName)}<br>奇绩创坛</span>
 </body></html>`;
 
-  return { subject, html };
+  return { subject, html, templateId: null };
 }

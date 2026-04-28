@@ -21,9 +21,13 @@ import { computeGrowth } from "@/lib/rep-growth";
 import { loadActiveLearnings } from "@/lib/helper-learnings";
 import { getAdminAlerts } from "@/lib/admin-alerts";
 import { getStaleWechatFollowups } from "@/lib/wechat-followup";
+import { runIntegrity } from "@/lib/integrity";
+import { diagnoseMetricDrop, type DiagnoseMetric } from "@/lib/diagnose-metric";
 import type { ToolCall } from "@/lib/helper-tools";
 
 type Session = { repId: number; role: string; repName?: string; email?: string };
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function scopeRepId(session: Session, args: Record<string, unknown>): number | null {
   if (session.role === "admin") {
@@ -131,6 +135,106 @@ async function getMyStats(session: Session) {
   };
 }
 
+async function getMyWeeklyRecap(session: Session) {
+  // 7-day rep-scoped recap. Used by the helper opener on Monday to
+  // lead with "上周你 send 了 X 封, Y 个 click 了, Z 加了微信..."
+  // Source priority:
+  //   - sent count: emails table filtered to this rep's sender_email
+  //     (consistent with /api/emails per-rep scoping)
+  //   - clicks: email_history.was_clicked (Tier 2 view — counts
+  //     ever-clicked even if the row later moved to complained)
+  //   - wechat: brief_lookups.marked_by_rep_id (actor, not owner)
+  //   - top performer: lead_id with the most webhook click events
+  //     among this rep's last-7d sends; tie-break by recency.
+  const repId = session.repId;
+  const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
+
+  // Resolve this rep's sender_email — same scoping as /api/emails.
+  const { data: rep } = await supabase
+    .from("sales_reps")
+    .select("sender_email")
+    .eq("id", repId)
+    .maybeSingle();
+  const senderEmail = rep?.sender_email as string | null;
+  if (!senderEmail) {
+    return {
+      windowDays: 7,
+      sent: 0,
+      clicked: 0,
+      wechat: 0,
+      topPerformer: null,
+      note: "rep has no sender_email configured — recap unavailable",
+    };
+  }
+
+  const fromIlike = `%${senderEmail}%`;
+
+  const [{ count: sent }, { count: clicked }, { data: wechatRows }] = await Promise.all([
+    supabase
+      .from("emails")
+      .select("*", { count: "exact", head: true })
+      .ilike("from", fromIlike)
+      .gte("created_at", since),
+    // email_history is the Tier-2 ever-happened view; was_clicked stays
+    // true even if the email later complained.
+    supabase
+      .from("email_history")
+      .select("*", { count: "exact", head: true })
+      .ilike("from_address", fromIlike)
+      .gte("created_at", since)
+      .eq("was_clicked", true),
+    supabase
+      .from("brief_lookups")
+      .select("lead_id, query, wechat_at")
+      .eq("added_wechat", true)
+      .eq("marked_by_rep_id", repId)
+      .gte("wechat_at", since),
+  ]);
+
+  const wechatDistinct = new Set<string>();
+  for (const r of wechatRows ?? []) {
+    const id = (r as { lead_id: string | null }).lead_id;
+    if (id) wechatDistinct.add(id);
+  }
+  const wechat = wechatDistinct.size;
+
+  // Top performer: among rep's wechat conversions this week, the lead
+  // whose first wechat mark is most recent (i.e., the freshest win to
+  // talk about). Cheap proxy — we don't try to score "best" lead.
+  let topPerformer: { lead_id: string; title: string | null; recipient: string | null; wechat_at: string } | null = null;
+  if ((wechatRows ?? []).length > 0) {
+    const sorted = [...(wechatRows ?? [])].sort((a, b) => {
+      const at = (a.wechat_at as string) ?? "";
+      const bt = (b.wechat_at as string) ?? "";
+      return bt.localeCompare(at);
+    });
+    const top = sorted[0];
+    if (top?.lead_id) {
+      const { data: lead } = await supabase
+        .from("pipeline_leads")
+        .select("id, title")
+        .eq("id", top.lead_id)
+        .maybeSingle();
+      topPerformer = {
+        lead_id: top.lead_id as string,
+        title: lead?.title ?? null,
+        recipient: (top as { query?: string | null }).query ?? null,
+        wechat_at: top.wechat_at as string,
+      };
+    }
+  }
+
+  return {
+    windowDays: 7,
+    sent: sent ?? 0,
+    clicked: clicked ?? 0,
+    wechat,
+    clickRate: (sent ?? 0) > 0 ? Number(((clicked ?? 0) / (sent ?? 1)).toFixed(3)) : 0,
+    wechatRate: (clicked ?? 0) > 0 ? Number((wechat / (clicked ?? 1)).toFixed(3)) : 0,
+    topPerformer,
+  };
+}
+
 function getRepInfo(session: Session) {
   return {
     rep: {
@@ -188,6 +292,8 @@ export async function runReadTool(
         return { tool: call.tool, result: getRepInfo(session) };
       case "get_my_growth":
         return { tool: call.tool, result: await getMyGrowth(session, args) };
+      case "get_my_weekly_recap":
+        return { tool: call.tool, result: await getMyWeeklyRecap(session) };
       case "get_my_memory":
         return { tool: call.tool, result: await getMyMemory(session, args) };
       case "get_admin_alerts":
@@ -201,6 +307,107 @@ export async function runReadTool(
         const target = scopeRepId(session, args);
         const stale = await getStaleWechatFollowups(target);
         return { tool: call.tool, result: { stale } };
+      }
+      case "get_integrity_report": {
+        if (session.role !== "admin") {
+          return { tool: call.tool, result: { error: "admin only" } };
+        }
+        // Tier 6 of docs/DATA_INTEGRITY_PLAN.md. Same checks as
+        // /api/integrity. Helper opener uses this so admin sees red
+        // invariants without having to navigate anywhere.
+        const report = await runIntegrity();
+        return { tool: call.tool, result: { ...report } as unknown as Record<string, unknown> };
+      }
+      case "find_similar_leads": {
+        // Dream #9 — cosine NN search in the embedding column.
+        // Stays useful only after migration 030 lands AND
+        // backfill-embeddings has run. Until then returns a clean
+        // hint so the helper can degrade gracefully.
+        const refId = String(args.reference_lead_id ?? "");
+        if (!UUID_RE.test(refId) && !/^[\w-]+$/.test(refId)) {
+          return { tool: call.tool, result: { error: "reference_lead_id required" } };
+        }
+        const limit = Math.max(1, Math.min(20, Number(args.n) || 5));
+        const { data: ref, error: refErr } = await supabase
+          .from("pipeline_leads")
+          .select("id, embedding")
+          .eq("id", refId)
+          .maybeSingle();
+        if (refErr) return { tool: call.tool, result: { error: refErr.message } };
+        if (!ref) return { tool: call.tool, result: { error: "reference lead not found" } };
+        if (!(ref as { embedding?: unknown }).embedding) {
+          return {
+            tool: call.tool,
+            result: {
+              error: "reference lead has no embedding yet — run scripts/backfill-embeddings.mjs (or pgvector extension may not be enabled in Supabase dashboard)",
+            },
+          };
+        }
+        // pgvector cosine distance via SQL — postgrest can't express
+        // <-> operator natively, so use the rpc helper. Falls through
+        // gracefully if rpc missing.
+        const { data: similar, error: simErr } = await supabase.rpc("find_similar_leads_by_embedding", {
+          ref_id: refId,
+          k: limit,
+        });
+        if (simErr) {
+          return { tool: call.tool, result: { error: `rpc failed (helper RPC may need to be defined): ${simErr.message}` } };
+        }
+        return { tool: call.tool, result: { reference_lead_id: refId, similar: similar ?? [] } };
+      }
+      case "diagnose_metric_drop": {
+        const allowed: DiagnoseMetric[] = ["click_rate", "wechat_rate"];
+        const metric = String(args.metric ?? "");
+        if (!allowed.includes(metric as DiagnoseMetric)) {
+          return { tool: call.tool, result: { error: `metric must be one of ${allowed.join("|")}` } };
+        }
+        const days = Math.max(7, Math.min(60, Number(args.days) || 7));
+        const target = scopeRepId(session, args);
+        const result = await diagnoseMetricDrop({
+          metric: metric as DiagnoseMetric,
+          repId: target,
+          days,
+        });
+        return { tool: call.tool, result: { ...result } as unknown as Record<string, unknown> };
+      }
+      case "get_rep_helper_activity": {
+        if (session.role !== "admin") {
+          return { tool: call.tool, result: { error: "admin only" } };
+        }
+        // Admin spot-check: what is rep N actually asking the helper
+        // about lately? Returns up to N recent user messages from a
+        // single rep. Cluster detection (shared_helper_questions) is
+        // statistical; this is qualitative — useful when admin wants
+        // to know "what's Chenyu stuck on?" before the cluster floor
+        // (≥2 reps) is met.
+        const target = scopeRepId(session, args);
+        if (target == null) {
+          return { tool: call.tool, result: { error: "repId required" } };
+        }
+        const limit = Math.max(1, Math.min(20, Number(args.limit) || 10));
+        const days = Math.max(1, Math.min(60, Number(args.days) || 14));
+        const cutoff = new Date(Date.now() - days * 86_400_000).toISOString();
+        const { data, error } = await supabase
+          .from("helper_messages")
+          .select("text, created_at, conversation_id, helper_conversations!inner(rep_id)")
+          .eq("role", "user")
+          .eq("helper_conversations.rep_id", target)
+          .gte("created_at", cutoff)
+          .order("created_at", { ascending: false })
+          .limit(limit);
+        if (error) return { tool: call.tool, result: { error: error.message } };
+        return {
+          tool: call.tool,
+          result: {
+            repId: target,
+            windowDays: days,
+            messages: (data ?? []).map((m) => ({
+              text: String(m.text ?? "").slice(0, 400),
+              createdAt: m.created_at,
+              conversationId: m.conversation_id,
+            })),
+          },
+        };
       }
       default:
         return { tool: call.tool, result: { error: `unknown tool: ${call.tool}` } };

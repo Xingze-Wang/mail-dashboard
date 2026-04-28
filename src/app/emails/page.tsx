@@ -10,6 +10,7 @@ import {
   Cpu,
   ExternalLink,
   Inbox as InboxIcon,
+  MousePointerClick,
 } from "lucide-react";
 import { formatDate, getStatusColor, getStatusDot } from "@/lib/utils";
 import { ComposeModal } from "@/components/compose-modal";
@@ -62,6 +63,73 @@ function computeBadgeClass(level: string | null) {
   if (level === "moderate") return "badge-compute moderate";
   if (level === "light") return "badge-compute light";
   return "badge-compute";
+}
+
+interface ClickEvent {
+  type: string;
+  occurredAt: string;
+  link: string | null;
+  userAgent: string | null;
+  ipAddress: string | null;
+  timestamp: string | null;
+}
+
+function ClickHistory({ emailId }: { emailId: string }) {
+  const [data, setData] = useState<{ clickCount: number; distinctLinkCount: number; events: ClickEvent[] } | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    fetch(`/api/emails/${emailId}/clicks`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!cancelled) setData(d);
+      })
+      .catch(() => {
+        if (!cancelled) setData(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [emailId]);
+
+  if (loading || !data) return null;
+  if (data.clickCount === 0) return null;
+
+  const clicks = data.events.filter((e) => e.type === "email.clicked");
+
+  return (
+    <div className="section-card" style={{ marginTop: 16, padding: "14px 18px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+        <MousePointerClick className="h-4 w-4" style={{ color: "var(--text-secondary)" }} />
+        <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>
+          {data.clickCount} click{data.clickCount === 1 ? "" : "s"}
+          {data.distinctLinkCount > 1 && (
+            <span style={{ color: "var(--text-tertiary)", fontWeight: 400, marginLeft: 6 }}>
+              ({data.distinctLinkCount} distinct links)
+            </span>
+          )}
+        </span>
+      </div>
+      <ul style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12, color: "var(--text-secondary)" }}>
+        {clicks.map((c, i) => (
+          <li key={i} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <span style={{ color: "var(--text)", wordBreak: "break-all" }}>
+              {c.link ?? "(unknown link)"}
+            </span>
+            <span style={{ color: "var(--text-tertiary)" }}>
+              {new Date(c.timestamp ?? c.occurredAt).toLocaleString()}
+              {c.ipAddress ? ` · ${c.ipAddress}` : ""}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 }
 
 function BriefPanel({ email }: { email: Email }) {
@@ -350,6 +418,8 @@ function BriefPanel({ email }: { email: Email }) {
 export default function EmailsPage() {
   const [emails, setEmails] = useState<Email[]>([]);
   const [total, setTotal] = useState(0);
+  const [truncated, setTruncated] = useState(false);
+  const [scannedTotal, setScannedTotal] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
@@ -370,6 +440,8 @@ export default function EmailsPage() {
       .then((data) => {
         setEmails(data.emails);
         setTotal(data.total);
+        setTruncated(!!data.truncated);
+        setScannedTotal(typeof data.scannedTotal === "number" ? data.scannedTotal : null);
       })
       .catch(console.error)
       .finally(() => setLoading(false));
@@ -460,6 +532,7 @@ export default function EmailsPage() {
                 Content not available — this email may have expired from Resend&apos;s storage.
               </p>
             )}
+            <ClickHistory emailId={selected.id} />
           </div>
 
           {/* Right: Brief panel (sticky) */}
@@ -528,6 +601,11 @@ export default function EmailsPage() {
             Showing results for{" "}
             <span style={{ color: "var(--text)" }}>&ldquo;{searchQuery}&rdquo;</span>{" "}
             <span style={{ color: "var(--text-tertiary)" }}>({total} found)</span>
+          </p>
+        )}
+        {truncated && searchQuery && scannedTotal != null && (
+          <p style={{ marginTop: 6, fontSize: 12, color: "var(--text-warning, #b45309)" }}>
+            Search scanned the {scannedTotal} most recent emails. Older matches may exist — narrow the term to see further back.
           </p>
         )}
       </form>

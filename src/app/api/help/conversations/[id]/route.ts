@@ -34,11 +34,36 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const gate = await loadAndAuthorize(id, session);
   if (!gate.ok) return NextResponse.json({ error: gate.error }, { status: gate.status });
 
-  const { data: messages, error } = await supabase
+  // Try to select with evidence column (added migration 024). If that
+  // column doesn't exist yet, retry without it so the chat history page
+  // still loads pre-migration. Cast both branches to the same shape;
+  // the missing-column retry will surface evidence: undefined which the
+  // UI handles fine.
+  type MessageRow = {
+    id: string;
+    role: string;
+    text: string | null;
+    tool_proposal: unknown;
+    tool_result: unknown;
+    evidence?: unknown;
+    created_at: string;
+  };
+  const primary = await supabase
     .from("helper_messages")
-    .select("id, role, text, tool_proposal, tool_result, created_at")
+    .select("id, role, text, tool_proposal, tool_result, evidence, created_at")
     .eq("conversation_id", id)
     .order("created_at", { ascending: true });
+  let messages: MessageRow[] | null = primary.data as MessageRow[] | null;
+  let error = primary.error;
+  if (error && /evidence/i.test(error.message)) {
+    const retry = await supabase
+      .from("helper_messages")
+      .select("id, role, text, tool_proposal, tool_result, created_at")
+      .eq("conversation_id", id)
+      .order("created_at", { ascending: true });
+    messages = retry.data as MessageRow[] | null;
+    error = retry.error;
+  }
   if (error) {
     console.error("conversations GET messages error", { convId: id, err: error.message });
     return NextResponse.json({ error: "Failed to load messages" }, { status: 500 });

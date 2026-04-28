@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { verifySession, AUTH_COOKIE } from "@/lib/auth";
+import { CONTACTED_LEAD_STATUSES } from "@/lib/status";
+import { getResendFunnel } from "@/lib/resend-funnel";
+import { getRep } from "@/lib/assignment";
 
 /**
  * GET /api/metrics/me
@@ -20,30 +23,25 @@ export async function GET(req: NextRequest) {
 
   const repId = session.repId;
 
-  // Count each status directly. Two important derivations:
-  //
-  // - `sent` counts both status='sent' AND status='replied', because
-  //   "sent" to the rep means "an email went out" — reply is a later
-  //   phase of the same send, not a displacement. Previously reps saw
-  //   their sent count drop when replies came in, which read as a bug.
-  //
-  // - `wechat` counts DISTINCT pipeline_leads.id from brief_lookups
-  //   where added_wechat=true AND that lead is assigned to this rep.
-  //   Previously this checked pipeline_leads.status='wechat_added',
-  //   but nothing writes that status — it was always zero. WeChat
-  //   conversions live in brief_lookups (the conversion event log).
+  // `sent` = any CONTACTED_LEAD_STATUSES row assigned to this rep.
+  // Includes 'sent', 'replied', 'wechat_added' — a reply or wechat-add
+  // is a later phase of the same send, not a displacement. Previously
+  // reps saw their sent count drop when replies came in and wechat_added
+  // leads disappeared entirely from the "sent" tile. Now aligned with
+  // every other place in the app that answers "has this rep contacted
+  // this researcher?" via @/lib/status.ts.
   const [
     { count: assigned },
     { count: ready },
-    { count: sentOnly },
+    { count: sent },
     { count: replied },
   ] = await Promise.all([
     supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId),
     supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).eq("status", "ready"),
-    supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).eq("status", "sent"),
+    supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).in("status", [...CONTACTED_LEAD_STATUSES]),
     supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).eq("status", "replied"),
   ]);
-  const sent = (sentOnly ?? 0) + (replied ?? 0);
+  const sentCount = sent ?? 0;
 
   // WeChat conversions — attributed to WHOEVER MARKED the row (the
   // rep who clicked "Added on WeChat"), not to the lead's owner.
@@ -77,14 +75,37 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // Live funnel from Resend — gives us the ACTUAL email-level sent
+  // count for this rep. The pipeline-level `sentCount` above only
+  // reflects leads that went through /api/pipeline/send; historical
+  // and ad-hoc sends (via /api/send or before the pipeline existed)
+  // never landed in pipeline_leads. Using pipeline-sent as the lead-
+  // rate denominator inflates the rate by 30x.
+  let resendSent = 0;
+  try {
+    const rep = await getRep(repId);
+    if (rep?.sender_email) {
+      const funnel = await getResendFunnel({ fromContains: rep.sender_email, timeBudgetMs: 6000 });
+      resendSent = funnel.totalSent;
+    }
+  } catch {
+    // If Resend is down, fall back to pipeline-sent (wrong but non-zero).
+    resendSent = sentCount;
+  }
+
+  // Lead rate uses Resend-actual as denominator — if we've emailed 1000
+  // people and 30 added WeChat, that's 3%, not (wechat / pipeline_sent).
+  const rateDenominator = resendSent > 0 ? resendSent : sentCount;
+
   return NextResponse.json({
     repId,
     repName: session.repName,
     assigned: assigned ?? 0,
     ready: ready ?? 0,
-    sent,
+    sent: sentCount, // pipeline-level (unchanged — that's what the Sent card shows)
+    resendSent, // live email count from Resend (for downstream rate math)
     replied: replied ?? 0,
     wechat,
-    leadRate: sent > 0 ? ((wechat / sent) * 100).toFixed(1) : "0.0",
+    leadRate: rateDenominator > 0 ? ((wechat / rateDenominator) * 100).toFixed(1) : "0.0",
   });
 }

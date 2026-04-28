@@ -90,10 +90,13 @@ async function checkClickRateDrop(): Promise<Alert | null> {
   const wk = 7 * 86_400_000;
   const cur = new Date(now - wk).toISOString();
   const prev = new Date(now - 2 * wk).toISOString();
+  // Tier 2: read clicked counts from email_history (canonical event log
+  // join), not emails.status — the latter undercounts when a click is
+  // overwritten by a later complaint/bounce.
   const [curC, curT, prevC, prevT] = await Promise.all([
-    supabase.from("emails").select("*", { count: "exact", head: true }).eq("status", "clicked").gte("created_at", cur),
+    supabase.from("email_history").select("*", { count: "exact", head: true }).eq("was_clicked", true).gte("created_at", cur),
     supabase.from("emails").select("*", { count: "exact", head: true }).gte("created_at", cur),
-    supabase.from("emails").select("*", { count: "exact", head: true }).eq("status", "clicked").gte("created_at", prev).lt("created_at", cur),
+    supabase.from("email_history").select("*", { count: "exact", head: true }).eq("was_clicked", true).gte("created_at", prev).lt("created_at", cur),
     supabase.from("emails").select("*", { count: "exact", head: true }).gte("created_at", prev).lt("created_at", cur),
   ]);
   const curRate = (curT.count ?? 0) > 0 ? (curC.count ?? 0) / (curT.count ?? 1) : 0;
