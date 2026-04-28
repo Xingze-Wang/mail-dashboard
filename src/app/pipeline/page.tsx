@@ -898,10 +898,30 @@ export default function PipelinePage() {
       {/* ════ LEADS ════ */}
       {activeTab === "leads" && (
         <>
-          {/* Send-mode toggle (Browse / Review / Bulk) */}
-          <div className="dx-mode-row">
-            <span className="dx-mode-label">Mode</span>
-            <div className="dx-chip-group" role="tablist" aria-label="Send mode">
+          {/* Channel filter bar — only render when multiple channels
+              have leads. With one channel active it's just visual
+              noise. */}
+          {CHANNELS.filter((c) => c.key !== "all" && channelCounts[c.key] > 0).length > 1 && (
+            <div className="dx-channel-bar">
+              {CHANNELS.map((c) => (
+                <button
+                  key={c.key}
+                  type="button"
+                  onClick={() => setChannelFilter(c.key)}
+                  className={`dx-ch-tab ${channelFilter === c.key ? "active" : ""}`}
+                >
+                  <ChannelIcon ch={c.key} />
+                  {c.label}
+                  <span className="dx-ch-count">{channelCounts[c.key].toLocaleString()}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Stream toolbar — mode chips (Browse/Review/Bulk),
+              status chips, rep pills, sort. One row instead of three. */}
+          <div className="dx-stream-toolbar">
+            <div className="dx-chip-group" role="tablist" aria-label="Send mode" style={{ marginRight: 8 }}>
               {SEND_MODES.map((m) => (
                 <button
                   key={m.key}
@@ -916,32 +936,13 @@ export default function PipelinePage() {
               ))}
             </div>
             {sendMode !== "browse" && (
-              <span className="dx-mode-hint">
+              <span className="dx-mode-hint" style={{ marginLeft: 0, marginRight: 12 }}>
                 {sendMode === "review"
-                  ? "Focused review · J/K to navigate · Cmd+Enter to send"
-                  : "Bulk send · select rows then confirm"}
+                  ? "J/K · Cmd+Enter to send"
+                  : "Select rows then confirm"}
               </span>
             )}
-          </div>
 
-          {/* Channel filter bar */}
-          <div className="dx-channel-bar">
-            {CHANNELS.map((c) => (
-              <button
-                key={c.key}
-                type="button"
-                onClick={() => setChannelFilter(c.key)}
-                className={`dx-ch-tab ${channelFilter === c.key ? "active" : ""}`}
-              >
-                <ChannelIcon ch={c.key} />
-                {c.label}
-                <span className="dx-ch-count">{channelCounts[c.key].toLocaleString()}</span>
-              </button>
-            ))}
-          </div>
-
-          {/* Stream toolbar */}
-          <div className="dx-stream-toolbar">
             <div className="dx-chip-group">
               {STATUS_CHIPS.map((s) => {
                 // Apply the same repFilter as the rendered list so chip
