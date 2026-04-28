@@ -246,6 +246,28 @@ function getRepInfo(session: Session) {
   };
 }
 
+async function listReps() {
+  // List of all sales reps so the helper can translate a rep name
+  // ("Chenyu") to a rep_id (2). Used primarily when admin wants to
+  // re-assign a lead but speaks the rep's name. Doesn't expose
+  // anything sensitive — name + role are already in the sidebar UI
+  // for everyone in the org.
+  const { data, error } = await supabase
+    .from("sales_reps")
+    .select("id, name, sender_name, role, active")
+    .order("id", { ascending: true });
+  if (error) return { error: error.message };
+  return {
+    reps: (data ?? []).map((r) => ({
+      id: r.id,
+      name: r.name,
+      sender_name: r.sender_name ?? null,
+      role: r.role,
+      active: r.active !== false,
+    })),
+  };
+}
+
 async function getMyGrowth(session: Session, args: Record<string, unknown>) {
   // Admin can inspect a specific rep with repId arg.
   const target = scopeRepId(session, args) ?? session.repId;
@@ -290,6 +312,8 @@ export async function runReadTool(
         return { tool: call.tool, result: await getMyStats(session) };
       case "get_rep_info":
         return { tool: call.tool, result: getRepInfo(session) };
+      case "list_reps":
+        return { tool: call.tool, result: await listReps() };
       case "get_my_growth":
         return { tool: call.tool, result: await getMyGrowth(session, args) };
       case "get_my_weekly_recap":

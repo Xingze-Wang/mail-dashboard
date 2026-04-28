@@ -38,6 +38,7 @@ export const ACTION_TOOL_NAMES = new Set([
 ]);
 
 export const READ_TOOL_NAMES = new Set([
+  "list_reps",
   "list_leads",
   "get_lead",
   "get_my_stats",
@@ -82,6 +83,7 @@ export const TOOLS_PROMPT = `## 工具系统
 - get_lead — 单 lead 详情. args: { lead_id: string }. 返回: 完整 lead 行.
 - get_my_stats — 当前 rep 的统计. args: {}. 返回: { assigned, ready, sent, replied, wechat, override_used_today, override_cap }
 - get_rep_info — 当前 rep 自己的信息. args: {}. 返回: { id, name, email, role }
+- list_reps — 全部 sales reps 的列表 (用于 name → rep_id 翻译). args: {}. 返回: { reps: [{id, name, sender_name, role, active}, ...] }. **什么时候用**: 用户用名字提到任何**别的** rep 时 (不是自己) — 比如 "把这个 lead 给 Chenyu", "Mei 那边的 .cn lead 都给 Leo". 你不知道 Chenyu/Mei/Leo 的 rep_id, 必须先 lookup. **硬规则**: reassign_lead 和 reassign_leads_bulk 工具的 to_rep_id / currentRepId 字段必须是 list_reps 返回的真实 id, **绝对不要**自己编 (写 1 / 2 / 3 这种猜测式 id 是常见 bug). 用户说 "Chenyu" → lookup → 找到 id=2 → tool 里写 to_rep_id: 2.
 - get_my_growth — 当前 rep 的成长打分 (4 个维度: 选 lead 眼光 / AI 草稿契合度 / 跟进节奏 / 回信温度), 每维 1-5 rung + 证据 + 下一步解锁. args: {}. 返回: { dimensions[], overall_rung, top_strength, top_opportunity }. **什么时候用**: rep 问 "我做得怎么样 / 怎么提高 / 我的水平" 时, 或者你想用证据回答 "下一步该练什么"; 也可以在每天第一次开 panel 时主动调用作为 opener.
 - get_my_weekly_recap — 当前 rep 过去 7 天的活动总结. args: {}. 返回: { windowDays, sent, clicked, wechat, clickRate, wechatRate, topPerformer: {lead_id, title, recipient, wechat_at} | null }. **什么时候用**: 周一 (Beijing time) session 第一次开 panel 时主动 lookup 一次, 用 "上周你 send 了 X 封, Y 个 click, Z 加了微信. 转化最高的是 \\"<title>\\" — 那封跟之前的有什么不同?" 这种自然语言开场. 不要列表式罗列数字, 选 1-2 个有意思的点. 周二到周日不主动调用, 除非 rep 自己问 "这周怎么样".
 - get_my_memory — 当前 rep 跨 session 的长期记忆 (helper 记下来的偏好 / 战术 / 自我反思). args: { limit?: number }. 返回: [{kind, body, scope, confidence, created_at}, ...]. **什么时候用**: 任何 session 第一次回答前都应该 lookup 一次, 这样你的回答可以延续上次的话题, 不会忘记 rep 之前告诉你的偏好.
@@ -122,14 +124,54 @@ export const TOOLS_PROMPT = `## 工具系统
 3. 如果 list_leads 返回 0 条或多条歧义, 告诉用户并请他澄清, 不要猜.
 4. 普通知识类问题 ("怎么发邮件") 不需要 lookup, 直接用 Sales Guide 回答.
 5. 一次回答最多一个 tool proposal, 可以多个 lookup.
+6. **描述了操作就必须 propose tool 块**. 如果你在回答里写了 "我会指派 / 我已配置规则 / 我会发 X 封" 这种**做了**口吻, 但**没有**附 \`\`\`tool\`\`\` JSON 块, 用户**根本不会看到 confirm 卡片**, 也就什么都不会发生. 这是最常见的 bug — 别只用文字描述, 配套的 tool 块也得写出来. 反过来说: 如果你只是**讨论**操作 ("如果你想..." / "建议..."), 不要 propose tool, 那是诱导.
 
 **格式提醒**:
 - lookup 块放在回答的**前面**或**中间**, tool 块放在**最后一行**.
-- lookup JSON 的 tool 字段必须是: list_leads / get_lead / get_my_stats / get_rep_info / get_my_growth / get_my_weekly_recap / get_my_memory / get_admin_alerts / get_wechat_followups / get_integrity_report / get_rep_helper_activity / diagnose_metric_drop / find_similar_leads.
+- lookup JSON 的 tool 字段必须是: list_leads / get_lead / get_my_stats / get_rep_info / list_reps / get_my_growth / get_my_weekly_recap / get_my_memory / get_admin_alerts / get_wechat_followups / get_integrity_report / get_rep_helper_activity / diagnose_metric_drop / find_similar_leads.
 - tool JSON 的 action 字段必须是: batch_send / skip_lead / flag_lead / bulk_flag / redraft_lead / review_next / build_rep_template / open_split_view / remember_about_rep / track_prediction / reassign_lead / reassign_leads_bulk.
 
 **反面例子 (不要这样做)**:
 用户: "skip 那个 Yanye 的 lead"
 ❌ 错: 直接 \`\`\`tool {"action":"skip_lead","lead_id":"Yanye"}\`\`\`  (Yanye 是名字, 不是 id!)
 ✓ 对: 先 \`\`\`lookup {"tool":"list_leads","args":{"query":"Yanye"}}\`\`\`, 拿到 id 再 \`\`\`tool {"action":"skip_lead","lead_id":"<UUID>"}\`\`\`.
+
+---
+
+## 真实模板 — 完整 lookup→tool 链 (照着填)
+
+**场景 A: 单 lead 重新指派给某 rep**
+
+用户: "把 Huibing Wang 的 lead 重新指派给 Chenyu"
+
+第一步, 同时 lookup 拿 lead_id 和 rep_id:
+\`\`\`lookup
+{"tool": "list_leads", "args": {"query": "Huibing Wang", "limit": 5}}
+\`\`\`
+\`\`\`lookup
+{"tool": "list_reps", "args": {}}
+\`\`\`
+
+回答里**先**用一句中文确认你看到了 lead 和 rep 的真实 id (e.g. "找到 Huibing 的 lead, id 是 1fa8aa8b-...; Chenyu 的 rep_id 是 2"), 然后**最后一行写 tool 块, 把那两个真实 id 填进去**:
+
+\`\`\`tool
+{"action": "reassign_lead", "lead_id": "1fa8aa8b-afd7-48be-a3e8-1d444dfdcb98", "to_rep_id": 2, "reason": "Admin requested move to Chenyu"}
+\`\`\`
+
+⚠️ **绝对不能写**: \`"lead_id": null\`, \`"lead_id": "Huibing"\`, \`"to_rep_id": null\`, \`"to_rep_id": "Chenyu"\`. 这些都是 JSON 拼接错误 — 你**已经 lookup 到了 id**, 必须把它**抄进 tool 块**, 不能漏抄.
+
+**场景 B: rule-based 批量改**
+
+用户: "给我设两条规则: .cn 的 strong lead 全给 Leo, .edu 的全给 Chenyu"
+
+\`\`\`lookup
+{"tool": "list_reps", "args": {}}
+\`\`\`
+
+回答末尾必须有这一块 (用 list_reps 返回的真实 id 填 to_rep_id):
+\`\`\`tool
+{"action": "reassign_leads_bulk", "rules": [{"when": {"geo": "cn", "leadTier": "strong"}, "to_rep_id": 1}, {"when": {"geo": "edu"}, "to_rep_id": 2}], "reason": "Admin requested CN-strong→Leo, EDU→Chenyu split"}
+\`\`\`
+
+⚠️ **describe 不等于 propose**. 如果你只是写了"我已经配置了两条规则: ..." 但**没附 tool 块**, 用户**根本看不到 confirm 卡片** — 什么都不会发生. **一定要把 \`\`\`tool 块写出来**.
 `;
