@@ -76,8 +76,98 @@ export type SendBlock =
   | { ok: false; code: "too_new"; availableAt: string }
   | { ok: false; code: "already_contacted"; lastContactedAt: string }
   | { ok: false; code: "paper_already_contacted"; lastContactedAt: string }
+  | { ok: false; code: "repo_already_contacted"; lastContactedAt: string; repo: string }
+  | { ok: false; code: "do_not_contact"; reason: string }
   | { ok: false; code: "bad_status"; status: string }
   | { ok: false; code: "no_draft" };
+
+/**
+ * Repo-level firewall — has any paper sharing this HF or GitHub repo been
+ * contacted in the last 365 days? Catches the "lab posts v2 of the same
+ * project under a new arxiv id and a new lead surfaces" case.
+ *
+ * Looks up `papers.last_outreach_at` for any paper with the same hf_repo or
+ * github_repo. Returns the most recent contact across all such papers.
+ */
+export async function repoWasRecentlyContacted(
+  repo: { hf_repo?: string | null; github_repo?: string | null },
+): Promise<{ contacted: boolean; lastAt: string | null; matchedRepo: string | null }> {
+  const cutoff = new Date(Date.now() - CONTACT_DEDUP_MS).toISOString();
+  // Wrap the supabase builders in `Promise.resolve` so TS sees them as
+  // Promise<...>. The supabase-js builder is thenable but its TS type
+  // doesn't flatten to Promise without an explicit Promise wrapper in
+  // a typed array.
+  type RepoLookup = { data: { last_outreach_at: string | null }[] | null; error: unknown };
+  const queries: Promise<RepoLookup>[] = [];
+  if (repo.hf_repo) {
+    queries.push(
+      Promise.resolve(
+        supabase
+          .from("papers")
+          .select("last_outreach_at")
+          .eq("hf_repo", repo.hf_repo)
+          .gte("last_outreach_at", cutoff)
+          .order("last_outreach_at", { ascending: false })
+          .limit(1),
+      ) as unknown as Promise<RepoLookup>,
+    );
+  }
+  if (repo.github_repo) {
+    queries.push(
+      Promise.resolve(
+        supabase
+          .from("papers")
+          .select("last_outreach_at")
+          .eq("github_repo", repo.github_repo)
+          .gte("last_outreach_at", cutoff)
+          .order("last_outreach_at", { ascending: false })
+          .limit(1),
+      ) as unknown as Promise<RepoLookup>,
+    );
+  }
+  if (queries.length === 0) return { contacted: false, lastAt: null, matchedRepo: null };
+
+  const results = await Promise.all(queries);
+  const candidates: { at: string; repo: string }[] = [];
+  if (repo.hf_repo && results[0]?.data?.[0]?.last_outreach_at) {
+    candidates.push({ at: results[0].data[0].last_outreach_at as string, repo: `hf:${repo.hf_repo}` });
+  }
+  const ghIdx = repo.hf_repo ? 1 : 0;
+  if (repo.github_repo && results[ghIdx]?.data?.[0]?.last_outreach_at) {
+    candidates.push({ at: results[ghIdx].data[0].last_outreach_at as string, repo: `gh:${repo.github_repo}` });
+  }
+  if (candidates.length === 0) return { contacted: false, lastAt: null, matchedRepo: null };
+  candidates.sort((a, b) => b.at.localeCompare(a.at));
+  return { contacted: true, lastAt: candidates[0].at, matchedRepo: candidates[0].repo };
+}
+
+/**
+ * Hard block: any person whose `outreach_status='do_not_contact'` is owned by
+ * one of the recipient emails. Distinct from `already_contacted` (which only
+ * fires when there is a recent send) — DNC blocks even on first contact.
+ */
+export async function isDoNotContact(emailRaw: string): Promise<{ blocked: boolean; reason: string | null }> {
+  const email = emailRaw.trim().toLowerCase();
+  if (!email) return { blocked: false, reason: null };
+
+  const { data, error } = await supabase
+    .from("persons")
+    .select("id, real_name, outreach_status")
+    .contains("emails", [email])
+    .eq("outreach_status", "do_not_contact")
+    .limit(1);
+
+  if (error) {
+    // Fail CLOSED — same logic as lastContactedAt
+    console.error("isDoNotContact failed; failing CLOSED", error.message);
+    return { blocked: true, reason: "DNC check failed (db error)" };
+  }
+  if (data && data.length > 0) {
+    const p = data[0] as { id: string; real_name: string | null };
+    return { blocked: true, reason: `do_not_contact person ${p.real_name ?? p.id}` };
+  }
+  return { blocked: false, reason: null };
+}
 
 interface Lead {
   status: string;
@@ -86,6 +176,8 @@ interface Lead {
   draft_html: string | null;
   author_email: string;
   arxiv_id?: string | null;
+  hf_repo?: string | null;
+  github_repo?: string | null;
 }
 
 export async function checkSendAllowed(lead: Lead, opts: { override?: boolean } = {}): Promise<SendBlock> {
@@ -111,6 +203,14 @@ export async function checkSendAllowed(lead: Lead, opts: { override?: boolean } 
     }
   }
 
+  // DNC firewall — never contact persons flagged do_not_contact, even on
+  // first attempt. Runs before the recency check because DNC is a harder
+  // signal (manual flag, often a known-bad relationship).
+  const dnc = await isDoNotContact(lead.author_email);
+  if (dnc.blocked) {
+    return { ok: false, code: "do_not_contact", reason: dnc.reason ?? "do_not_contact" };
+  }
+
   // Person firewall — has this exact recipient been contacted in 365 days?
   const lastAt = await lastContactedAt(lead.author_email);
   if (lastAt) {
@@ -125,6 +225,20 @@ export async function checkSendAllowed(lead: Lead, opts: { override?: boolean } 
     const paperHit = await paperWasRecentlyContacted(lead.arxiv_id);
     if (paperHit.contacted) {
       return { ok: false, code: "paper_already_contacted", lastContactedAt: paperHit.lastAt! };
+    }
+  }
+
+  // Repo firewall — same HF or GitHub repo already contacted? Catches "lab
+  // re-posts under a new arxiv id" — they share the project repo.
+  if (lead.hf_repo || lead.github_repo) {
+    const repoHit = await repoWasRecentlyContacted({ hf_repo: lead.hf_repo, github_repo: lead.github_repo });
+    if (repoHit.contacted) {
+      return {
+        ok: false,
+        code: "repo_already_contacted",
+        lastContactedAt: repoHit.lastAt!,
+        repo: repoHit.matchedRepo!,
+      };
     }
   }
 

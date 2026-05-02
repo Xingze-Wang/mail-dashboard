@@ -652,6 +652,37 @@ export async function recordContact(
       source_events: [{ source: "pipeline", paper_title: paperTitle, found_at: now }],
     });
   }
+
+  // Bump papers.last_outreach_at so the repo-firewall (papers.hf_repo /
+  // github_repo) can use it to dedup "different paper, same lab" cases.
+  // We only update the rollup if we have a canonical arxiv id to anchor on.
+  if (paperArxivId && /^\d{4}\.\d{4,5}(v\d+)?$/.test(paperArxivId)) {
+    const baseId = paperArxivId.replace(/v\d+$/, "");
+    const { data: existingPaper } = await supabase
+      .from("papers")
+      .select("outreach_count")
+      .eq("arxiv_id", baseId)
+      .maybeSingle();
+    if (existingPaper) {
+      await supabase
+        .from("papers")
+        .update({
+          last_outreach_at: now,
+          outreach_count: (existingPaper.outreach_count ?? 0) + 1,
+        })
+        .eq("arxiv_id", baseId);
+    } else {
+      await supabase.from("papers").upsert(
+        {
+          arxiv_id: baseId,
+          title: paperTitle,
+          last_outreach_at: now,
+          outreach_count: 1,
+        },
+        { onConflict: "arxiv_id" },
+      );
+    }
+  }
 }
 
 // ─── Sleep helper ────────────────────────────────────────────────────────────
