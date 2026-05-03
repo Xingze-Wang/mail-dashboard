@@ -85,6 +85,28 @@ const DriftIcon = () => (
   </svg>
 );
 
+// BarChart3-style icon — 3 vertical bars rising left-to-right, with an
+// L-axis. Used for the Bench page to differentiate from Scorer (which
+// also uses bars). Matches user's reference screenshot 2026-05-03.
+const BenchIcon = () => (
+  <svg {...Common}>
+    <path d="M3 3v18h18" />
+    <path d="M8 17V13" />
+    <path d="M13 17V9" />
+    <path d="M18 17V5" />
+  </svg>
+);
+
+// Council/congress icon — speech-bubble cluster, signaling the
+// multi-persona debate happening inside.
+const CongressIcon = () => (
+  <svg {...Common}>
+    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    <path d="M9 9h6" />
+    <path d="M9 13h4" />
+  </svg>
+);
+
 const SettingsIcon = () => (
   <svg {...Common}>
     <circle cx="12" cy="12" r="3" />
@@ -118,11 +140,15 @@ const mainNav = [
 
 // /analysis merged into /templates Performance tab — sidebar entry hidden.
 // /logs hidden from sidebar (still reachable via direct URL for debugging).
+// /congress added — admin only, the council-deliberation surface.
+// Bench gets its own icon (BarChart3-style) so it doesn't visually
+// duplicate Scorer.
 const toolsNav = [
   { href: "/brief",     label: "Brief",     Icon: BriefIcon,     adminOnly: false },
   { href: "/templates", label: "Templates", Icon: TemplatesIcon, adminOnly: false },
+  { href: "/congress",  label: "Congress",  Icon: CongressIcon,  adminOnly: true  },
   { href: "/scorer",    label: "Scorer",    Icon: ScorerIcon,    adminOnly: true  },
-  { href: "/bench",     label: "Bench",     Icon: ScorerIcon,    adminOnly: true  },
+  { href: "/bench",     label: "Bench",     Icon: BenchIcon,     adminOnly: true  },
   { href: "/drift",     label: "Drift",     Icon: DriftIcon,     adminOnly: true  },
 ];
 
