@@ -1,0 +1,20 @@
+[
+  {
+    "real_name": "张子豪",
+    "person_id": "61f8a16d-0a76-4389-a830-dc368a85e006",
+    "couldnt_find": true,
+    "notes": "Skip-fast: extremely common Chinese name explicitly listed in protocol as un-disambiguable. No affiliation, field, or other disambiguator provided in input. Hundreds of plausible candidates (researchers, students, founders) on GitHub/Scholar/LinkedIn — cannot satisfy 2-signal + last-30-days rule without risking wrong-email attachment, which would break the DNC dedup gate."
+  },
+  {
+    "real_name": "张金阳",
+    "person_id": "78194af2-543c-4274-8ba1-00b30a394b2d",
+    "couldnt_find": true,
+    "notes": "Skip-fast: common Chinese name (Zhang Jinyang / Jinyang Zhang) with no disambiguator in input. Multiple plausible academic and industry profiles share this name; cannot verify identity to the 2-signal + last-30-days standard. Leaving email empty is safer than risking a wrong attach (per protocol: wrong email on DNC > no email)."
+  },
+  {
+    "real_name": "彭张扬",
+    "person_id": "965c8aa4-dcae-4dd7-b7ef-fed34df3eaf0",
+    "couldnt_find": true,
+    "notes": "Skip-fast: common Chinese name (Peng Zhangyang / Zhangyang Peng) with no disambiguator. While slightly less common than 张子豪, still multiple candidates with no affiliation/field hint to choose between them. Cannot meet 2-signal + last-30-days verification floor; defaulting to couldnt_find to preserve DNC dedup integrity."
+  }
+]

@@ -1,0 +1,128 @@
+[
+  {
+    "id": "07e85ee0-f9d2-4348-abdd-11f2d66a181f",
+    "emails": [
+      "t.yusheng@wustl.edu"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": {
+      "title": "Plug-and-Play Logit Fusion for Heterogeneous Pathology Foundation Models",
+      "author_name": "Yusheng Tan",
+      "arxiv_id": "2604.07779v1"
+    }
+  },
+  {
+    "id": "07e8ef28-02bb-45a4-b79c-8a9eb1635482",
+    "emails": [
+      "zgong6@ncsu.edu"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "07f645a4-3d80-4b0c-928e-9c2bd86cc92e",
+    "emails": [
+      "mingshuang.luo@vipl.ict.ac.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": {
+      "title": "EgoMotion: Hierarchical Reasoning and Diffusion for Egocentric Vision-Language Motion Generation",
+      "author_name": "Mingshuang Luo",
+      "arxiv_id": "2604.19105"
+    }
+  },
+  {
+    "id": "0836f84e-203b-40c3-8d30-640147996ee8",
+    "emails": [
+      "yuesh5@mail.sysu.edu.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "0846efaa-6e34-46d5-b73a-e93e3fa82266",
+    "emails": [
+      "hujh@a-star.edu.sg"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "08482e63-b89f-4c79-b5f9-11da5e9204fa",
+    "emails": [
+      "zenghaoxi@tongji.edu.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": {
+      "title": "OVS-DINO: Open-Vocabulary Segmentation via Structure-Aligned SAM-DINO with Language Guidance",
+      "author_name": "Haoxi Zeng",
+      "arxiv_id": "2604.08461"
+    }
+  },
+  {
+    "id": "0855ccba-64af-4a95-b968-2fcf6bdb3e07",
+    "emails": [
+      "zhitong.gao@epfl.ch"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": {
+      "title": "(1D) Ordered Tokens Enable Efficient Test-Time Search",
+      "author_name": "Zhitong Gao",
+      "arxiv_id": "2604.15453"
+    }
+  },
+  {
+    "id": "08604ee2-9f08-447f-9b28-35507bc36cbd",
+    "emails": [
+      "thinker@ubtrobot.com"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "087d0766-7f29-4eda-ad79-ab33e6211aac",
+    "emails": [
+      "yu-wang@tsinghua.edu.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "0890704b-4719-4dac-83d3-519d9374b74a",
+    "emails": [
+      "chongjun.xia@student.uts.edu.au"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  }
+]

@@ -1,0 +1,394 @@
+{
+  "agent": 12,
+  "strategy": "gh-repo",
+  "items": [
+    {
+      "arxiv_id": "2604.20244",
+      "github_repo": "zwhong714/Hybrid-Policy-Distillation"
+    },
+    {
+      "arxiv_id": "2604.07888v1",
+      "github_repo": "deepseek-ai/DeepGEMM"
+    },
+    {
+      "arxiv_id": "2604.11753",
+      "github_repo": "princeton-pli/AggAgent"
+    },
+    {
+      "arxiv_id": "2604.12247",
+      "github_repo": "ictnlp/SpecBound"
+    },
+    {
+      "arxiv_id": "2604.18179",
+      "github_repo": "jbloomAus/SAELens"
+    },
+    {
+      "arxiv_id": "2604.18463",
+      "github_repo": "taozhang1004/DESPITE"
+    },
+    {
+      "arxiv_id": "2604.15023",
+      "github_repo": "zyshan0929/DockAnywhere"
+    },
+    {
+      "arxiv_id": "2604.17658",
+      "github_repo": "openai/swarm"
+    },
+    {
+      "arxiv_id": "2604.17397",
+      "github_repo": "krea-ai/realtime-video"
+    },
+    {
+      "arxiv_id": "2604.18027",
+      "github_repo": "lishangyu-hkust/CodePivot"
+    },
+    {
+      "arxiv_id": "2604.13030",
+      "github_repo": "MGenAI/GRN"
+    },
+    {
+      "arxiv_id": "2604.16976",
+      "github_repo": "Takahashi314/UGD"
+    },
+    {
+      "arxiv_id": "2604.20719",
+      "github_repo": "T12knightally/ONOTE"
+    },
+    {
+      "arxiv_id": "2604.16682",
+      "github_repo": "harbor-framework/harbor"
+    },
+    {
+      "arxiv_id": "2604.19386",
+      "github_repo": "ZhihFu/Air-Know"
+    },
+    {
+      "arxiv_id": "2604.17385",
+      "github_repo": "QwenLM/Qwen3-VL"
+    },
+    {
+      "arxiv_id": "2604.18543",
+      "github_repo": "NVIDIA/NemoClaw"
+    },
+    {
+      "arxiv_id": "2604.12668",
+      "github_repo": "atrijhy/OFA-Diffusion_Compression"
+    },
+    {
+      "arxiv_id": "2604.17696",
+      "github_repo": "ydyyyy/Stratagem"
+    },
+    {
+      "arxiv_id": "2604.19532",
+      "github_repo": "Xmader/musescore-dataset"
+    },
+    {
+      "arxiv_id": "2604.16715",
+      "github_repo": "NVIDIA/nccl-tests"
+    },
+    {
+      "arxiv_id": "2604.18862",
+      "github_repo": "ideas-labo/MNAL"
+    },
+    {
+      "arxiv_id": "2604.02329",
+      "github_repo": "ShandaAI/AlayaRenderer"
+    },
+    {
+      "arxiv_id": "2604.18237",
+      "github_repo": "ZhuoJTian/Distributed-MCR2"
+    },
+    {
+      "arxiv_id": "2604.02097",
+      "github_repo": "SJTU-DENG-Lab/LatentUM"
+    },
+    {
+      "arxiv_id": "2604.17178",
+      "github_repo": "Chips98/CoPoLLM-for-ACL-2026"
+    },
+    {
+      "arxiv_id": "2604.16950",
+      "github_repo": "Product-Understanding-Lazada-Alibaba/AutoPKG.git"
+    },
+    {
+      "arxiv_id": "2604.17986",
+      "github_repo": "maswang32/latentfouriertransform"
+    },
+    {
+      "arxiv_id": "2604.17892",
+      "github_repo": "YuyanZhou/lepo"
+    },
+    {
+      "arxiv_id": "2604.18963",
+      "github_repo": "meta-llama/llama3"
+    },
+    {
+      "arxiv_id": "2604.18982",
+      "github_repo": "jyyyyy0/SAVOIR"
+    },
+    {
+      "arxiv_id": "2604.14709",
+      "github_repo": "pku-liang/hwe-bench"
+    },
+    {
+      "arxiv_id": "2604.18788",
+      "github_repo": "antmikinka/715499ae63630575065b22e5cb6ad8dd"
+    },
+    {
+      "arxiv_id": "2604.16923",
+      "github_repo": "creator-xi/LAPD"
+    },
+    {
+      "arxiv_id": "2604.20358",
+      "github_repo": "Lee-zixu/ConeSep"
+    },
+    {
+      "arxiv_id": "2604.14768",
+      "github_repo": "huggingface/open-r1"
+    },
+    {
+      "arxiv_id": "2604.14853",
+      "github_repo": "zhiyuanZhai20/AdaCompute-LLM"
+    },
+    {
+      "arxiv_id": "2604.16205",
+      "github_repo": "vitorgrizzi/ChemGraph_xanes"
+    },
+    {
+      "arxiv_id": "2604.16220",
+      "github_repo": "haoranzhang7/GeoSpOT"
+    },
+    {
+      "arxiv_id": "2604.16509",
+      "github_repo": "avs-origami/graphsparse"
+    },
+    {
+      "arxiv_id": "2604.16622",
+      "github_repo": "qianlivia/Aligning-Backchannel-and-Dialogue-Context-Representations"
+    },
+    {
+      "arxiv_id": "2604.12179",
+      "github_repo": "ConversatAI/AgenticAI-DialogGen.git"
+    },
+    {
+      "arxiv_id": "2604.20146",
+      "github_repo": "tangjielong928/SAKE"
+    },
+    {
+      "arxiv_id": "2604.20398",
+      "github_repo": "juyongjiang/WebGen-R1"
+    },
+    {
+      "arxiv_id": "2604.16576",
+      "github_repo": "liyongkang123/Robust_LLM_Retriever_Eval"
+    },
+    {
+      "arxiv_id": "2604.07892v1",
+      "github_repo": "WisdomShell/MDS"
+    },
+    {
+      "arxiv_id": "2604.15086",
+      "github_repo": "facebookresearch/MovieGenBench"
+    },
+    {
+      "arxiv_id": "2604.15841",
+      "github_repo": "csdq777/Mouse"
+    },
+    {
+      "arxiv_id": "2604.15706",
+      "github_repo": "asillycat/NAG"
+    },
+    {
+      "arxiv_id": "2604.16848",
+      "github_repo": "Pointcept/Pointcept"
+    },
+    {
+      "arxiv_id": "2604.18159",
+      "github_repo": "openai/whisper"
+    },
+    {
+      "arxiv_id": "2604.16574",
+      "github_repo": "uglyghost/FedOBP"
+    },
+    {
+      "arxiv_id": "2604.12766",
+      "github_repo": "ZzzDJH/NaviRAG"
+    },
+    {
+      "arxiv_id": "2604.20268",
+      "github_repo": "TadejPogacar105/Osteo_Screening"
+    },
+    {
+      "arxiv_id": "2604.20216",
+      "github_repo": "yilunzhu/text2distribution"
+    },
+    {
+      "arxiv_id": "2604.19398",
+      "github_repo": "ZiY-Wang/GRASPrune"
+    },
+    {
+      "arxiv_id": "2604.14920",
+      "github_repo": "MM-Speech/DualAxisRM"
+    },
+    {
+      "arxiv_id": "2604.15001",
+      "github_repo": "hping666/COEVO"
+    },
+    {
+      "arxiv_id": "2604.21905",
+      "github_repo": "adapter-hub/adapters"
+    },
+    {
+      "arxiv_id": "2604.14373",
+      "github_repo": "slundberg/shap"
+    },
+    {
+      "arxiv_id": "2604.14825",
+      "github_repo": "Dao-AILab/flash-attention"
+    },
+    {
+      "arxiv_id": "2604.02060",
+      "github_repo": "Lorenzo-0-0/CompassAD-Intent-Driven-3D-Affordance-Grounding-in-Functionally-Competing-Objects"
+    },
+    {
+      "arxiv_id": "2604.14149",
+      "github_repo": "ZheyuAqaZhang/XComp"
+    },
+    {
+      "arxiv_id": "2604.19528",
+      "github_repo": "VectorDB-NTU/RaBitQ-Library"
+    },
+    {
+      "arxiv_id": "2604.12221",
+      "github_repo": "BarbieGait/BarbieGait"
+    },
+    {
+      "arxiv_id": "2604.15670",
+      "github_repo": "XIEFOX/PixDLM"
+    },
+    {
+      "arxiv_id": "2604.14629",
+      "github_repo": "haoyi199815/Switch-KD"
+    },
+    {
+      "arxiv_id": "2604.12353",
+      "github_repo": "black-forest-labs/flux"
+    },
+    {
+      "arxiv_id": "2604.12508",
+      "github_repo": "ictnlp/VIF"
+    },
+    {
+      "arxiv_id": "2604.14125",
+      "github_repo": "starVLA/starVLA"
+    },
+    {
+      "arxiv_id": "2604.13660",
+      "github_repo": "deepfakes/faceswap"
+    },
+    {
+      "arxiv_id": "2604.13332",
+      "github_repo": "Clouddelta/tab-distill"
+    },
+    {
+      "arxiv_id": "2604.11957",
+      "github_repo": "CederGroupHub/alab_gpss_public"
+    },
+    {
+      "arxiv_id": "2604.14316",
+      "github_repo": "KennyLee123/GazeX.git"
+    },
+    {
+      "arxiv_id": "2604.17231",
+      "github_repo": "badri999/HDD-Segmentation-Synthetic-Data"
+    },
+    {
+      "arxiv_id": "2604.19186",
+      "github_repo": "Chrystalii/CD-GNN"
+    },
+    {
+      "arxiv_id": "2604.20393",
+      "github_repo": "XiandaGuo/OpenStereo"
+    },
+    {
+      "arxiv_id": "2604.12344",
+      "github_repo": "BinZhang109/FRTSearch"
+    },
+    {
+      "arxiv_id": "2604.17405",
+      "github_repo": "fanshu6hao/STRIDE"
+    },
+    {
+      "arxiv_id": "2604.18038",
+      "github_repo": "elehman16/gpt4_bias"
+    },
+    {
+      "arxiv_id": "2604.18801",
+      "github_repo": "MPEGGroup/mpeg-pcc-tmc13"
+    },
+    {
+      "arxiv_id": "2604.11786",
+      "github_repo": "jyrao/GenTac"
+    },
+    {
+      "arxiv_id": "2604.16890",
+      "github_repo": "hiyouga/EasyR1"
+    },
+    {
+      "arxiv_id": "2604.16929",
+      "github_repo": "CAS-SIAT-XinHai/MeasHalu"
+    },
+    {
+      "arxiv_id": "2604.18239",
+      "github_repo": "IceyWuu/DisentangledPreferenceOptimization"
+    },
+    {
+      "arxiv_id": "2604.11784",
+      "github_repo": "zju-real/ClawGUI"
+    },
+    {
+      "arxiv_id": "2604.17411",
+      "github_repo": "microsoft/GraphFormers"
+    },
+    {
+      "arxiv_id": "2604.16943",
+      "github_repo": "meta-llama/llama3"
+    },
+    {
+      "arxiv_id": "2604.16540",
+      "github_repo": "bmild/nerf"
+    },
+    {
+      "arxiv_id": "2604.15847",
+      "github_repo": "TerryLee77/CiPO"
+    },
+    {
+      "arxiv_id": "2604.17428",
+      "github_repo": "ZhijiangTang/Long-CODE"
+    },
+    {
+      "arxiv_id": "2604.17283",
+      "github_repo": "stellalisy/HorizonBench"
+    },
+    {
+      "arxiv_id": "2604.19342",
+      "github_repo": "Abdullah4152/EDGE-EVAL"
+    },
+    {
+      "arxiv_id": "2604.17944",
+      "github_repo": "Husky-989/ReCoQA"
+    },
+    {
+      "arxiv_id": "2604.18574",
+      "github_repo": "pavelslab-nyu/rlvr-weak-supervision"
+    },
+    {
+      "arxiv_id": "2604.15453",
+      "github_repo": "EPFL-VILAB/search-over-tokens"
+    },
+    {
+      "arxiv_id": "2604.14932",
+      "github_repo": "MM-Speech/WavAlign"
+    }
+  ]
+}

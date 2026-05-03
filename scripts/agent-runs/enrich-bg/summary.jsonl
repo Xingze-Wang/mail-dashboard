@@ -1,0 +1,6 @@
+{"agent":"15","strategy":"pdf-cover","scanned":200,"wins":34,"errors":0,"new_persons":5,"duration_ms":34113}
+{"agent":"14","strategy":"pdf-cover","scanned":200,"wins":48,"errors":0,"new_persons":4,"duration_ms":48512,"total_emails":54,"repo_updates":0,"with_emails":48}
+{"agent":"4","strategy":"resolve-titles","scanned":358,"wins":23,"errors":335,"new_persons":0,"duration_ms":116155}
+{"agent":"8","strategy":"resolve-titles","scanned":356,"wins":9,"errors":347,"new_persons":0,"duration_ms":108662}
+{"agent":"7","strategy":"resolve-titles","scanned":358,"wins":19,"errors":339,"new_persons":0,"duration_ms":113120}
+{"agent":"6","strategy":"resolve-titles","scanned":358,"wins":16,"errors":342,"new_persons":0,"duration_ms":112236}

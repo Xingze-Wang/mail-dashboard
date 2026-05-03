@@ -1,0 +1,17 @@
+{
+  "real_name": "张桂彬",
+  "person_id": "7b6b23a9-8491-47e4-a636-a7efea094238",
+  "email": {
+    "value": "guibinz@u.nus.edu",
+    "confidence": 0.95,
+    "evidence": [
+      "https://www.guibinz.top/ — personal site header lists contact 'guibinz (at) outlook.com · guibinz (at) u.nus.edu', identifies him as PhD at NUS School of Computing supervised by Shuicheng Yan, footer 'Last updated: 2026-01'",
+      "https://qingkeai.online/archives/WNgkCY75 — Chinese-language article explicitly uses characters '张桂彬', describes him as '新加坡国立大学计算学院博士研究生，导师为颜水成教授' (NUS PhD, supervisor Shuicheng Yan), and links back to https://www.guibinz.top/ — char-match anchor + identity cross-confirmation",
+      "https://arxiv.org/abs/2604.08000 — 'PASK: Toward Intent-Aware Proactive Agents with Long-Term Memory', published 2026-04-09 (within last-30-days from 2026-05-01), co-authors include Guibin Zhang and Shuicheng Yan — confirms active researcher identity matches the NUS group",
+      "https://arxiv.org/abs/2512.18746 — 'MemEvolve' 2025-12-21, submission contact 'From: Guibin Zhang' with co-author Shuicheng Yan; arxiv author search continues into 2026-04 (papers 2604.08000, 2604.02029) confirming continuous activity",
+      "Alternate (also valid per site): guibinz@outlook.com"
+    ]
+  },
+  "couldnt_find": false,
+  "notes": "Surname char 张 matches input exactly; full Chinese name '张桂彬' explicitly appears on qingkeai.online article that links to the same personal site (guibinz.top) carrying the email — anchors char-match to the identity. Two independent signals: (1) personal site guibinz.top with contact emails + supervisor Shuicheng Yan + NUS affiliation, (2) Chinese article naming '张桂彬' with same supervisor/affiliation and pointing to the same personal site. Disambiguation: this is the NUS / ex-Tongji '张桂彬' who works on multi-agent systems / agent memory under Shuicheng Yan — matches the user's hint about 'Tongji / Singapore graph-neural-net researcher' (his earlier work was on GNNs e.g. 'Graph Sparsification via Mixture of Graphs' ICLR 2025 Spotlight, 'G-Designer'). Last-30-days activity: arxiv 2604.08000 published 2026-04-09 (22 days before today 2026-05-01) lists him as co-author with Shuicheng Yan. Picked institutional u.nus.edu over outlook.com for higher reliability; both addresses are self-published on his personal site."
+}

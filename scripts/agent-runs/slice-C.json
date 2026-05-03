@@ -1,0 +1,116 @@
+[
+  {
+    "id": "01cd7d11-d47d-44d9-9498-8c75423d9384",
+    "emails": [
+      "rh2528@columbia.edu"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "0230e7f9-5889-43c1-b9ea-b5dca4027cce",
+    "emails": [
+      "duanxy23@mails.tsinghua.edu.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "02446663-a562-404d-8cf8-505e90595861",
+    "emails": [
+      "xiaoxin.mi@whut.edu.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "024fd2d4-02a8-4a4f-8d5b-4bdd7bdcd25d",
+    "emails": [
+      "55dupup@gmail.com"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "02848e54-7a1e-4c08-880a-f83899ca7f8e",
+    "emails": [
+      "122090863@link.cuhk.edu.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "02a0cac3-65e6-48d4-aa39-87ee15ac0917",
+    "emails": [
+      "18186829038@163.com"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "02ccc58c-0f29-4f82-bbf2-7b384245b91d",
+    "emails": [
+      "jingli@cwru.edu"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": {
+      "title": "Dataset-Level Metrics Attenuate Non-Determinism: A Fine-Grained Non-Determinism Evaluation in Diffusion Language Models",
+      "author_name": "Jing Li",
+      "arxiv_id": "2604.13413"
+    }
+  },
+  {
+    "id": "02f34760-4352-4002-94fd-6262ed718944",
+    "emails": [
+      "zhan@ms.k.u-tokyo.ac.jp"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "02f62fb2-6754-4763-b9e9-b3f24c59caed",
+    "emails": [
+      "zhanlun@360.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "036b8fb6-bc9f-4d15-864e-6705c08339a0",
+    "emails": [
+      "liangsun@sdust.edu.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  }
+]

@@ -1,0 +1,17 @@
+{
+  "real_name": "秦成伟",
+  "person_id": "6a7f28cc-66bd-4c09-8e8b-cf0bffed5485",
+  "email": {
+    "value": "chengweiqin@hkust-gz.edu.cn",
+    "confidence": 0.95,
+    "evidence": [
+      "https://qcwthu.github.io/ — Personal site of Chengwei Qin, Assistant Professor at AI Thrust HKUST(GZ), leading the LAnguage and Intelligence (LAI) Lab. Page text: 'Feel free to reach out to chengweiqin@hkust-gz.edu.cn or qcwthu@gmail.com'. News dated May 2026 (within last 30 days): 'Four papers are accepted by ACL 2026, and three papers are accepted by ICML 2026.'",
+      "https://scholar.google.com/citations?user=OwBrmXwAAAAJ&hl=en — Google Scholar profile for 'Chengwei Qin', verified email domain hkust-gz.edu.cn (matches the institutional email exactly). Affiliation listed as HKUST(GZ), NTU, THU. Most recent publication 2025; profile lists ~3450 citations, h-index 23.",
+      "https://facultyprofiles.hkust-gz.edu.cn/faculty-personal-page?id=543 — Official HKUST(GZ) faculty profile page. Indexed by Google with the exact Chinese-character title '秦成伟' (confirmed via 'site:facultyprofiles.hkust-gz.edu.cn 秦成伟' search returning this exact id=543 URL). This authoritatively char-matches the surname 秦 to the input 秦成伟.",
+      "https://api.github.com/users/qcwthu — GitHub user 'qcwthu' (initials qin-chengwei + thu = Tsinghua), name field: 'Chengwei Qin', bio: 'PhD Student at Nanyang Technological University, Singapore', updated_at 2026-04-18 (recent activity). Linked from personal site as his GitHub.",
+      "https://w5.hkust-gz.edu.cn/wcq/cgi-bin/2510/instructor/QIN,%20Chengwei — HKUST(GZ) class schedule listing 'QIN, Chengwei' as instructor for 2025-26 (term 2510), independently confirming his current faculty role at the institution issuing the email."
+    ]
+  },
+  "couldnt_find": false,
+  "notes": "Char-match: surname 秦 confirmed via Google site-restricted search returning the HKUST(GZ) faculty profile page (id=543) with title '秦成伟' — exact 3-character match to input. Disambiguation: there is a known LinkedIn 'Chengwei Qin' in Santa Clara CA (Quant/Trading on ResearchGate) who is a different person; the NLP/LLM researcher at HKUST(GZ) is unambiguously identified by the (Tsinghua undergrad → NTU PhD under Joty/Sun → HKUST(GZ) AP) trajectory and the qcwthu (qin chengwei thu) handle. 30-day activity: personal site has news dated May 2026 ('Four papers accepted by ACL 2026, three to ICML 2026'); GitHub last updated 2026-04-18; HKUST class schedule shows him teaching current term. Two+ independent signals after char-match: (1) personal site email + position, (2) Scholar verified-email domain hkust-gz.edu.cn matching, (3) institutional faculty profile page char-matched to 秦成伟, (4) class schedule confirms active teaching role. The hint matched: NTU Singapore connection is real (PhD), and the same person is now the AP at HKUST(GZ) using chengweiqin@hkust-gz.edu.cn. Email verified."
+}

@@ -1,0 +1,23 @@
+[
+  {
+    "real_name": "忻思阳",
+    "person_id": "6124aa49-999e-4148-b037-e4d32c373591",
+    "couldnt_find": true,
+    "notes": "One plausible candidate found: 'Siyang Xin' at UNC-Chapel Hill, co-author on EduVisBench/EduVisAgent (arxiv 2505.16832, May 2025) with Huaxiu Yao group. However, Pinyin 'Xin' is ambiguous across surnames 忻/辛/欣/新/信, and no source found that confirms the Chinese characters as 忻思阳 specifically. Last-30-days activity rule also not satisfied — paper is ~12 months old, no recent commits/posts/profile updates locating this exact person. Skipping per protocol."
+  },
+  {
+    "real_name": "修宇亮",
+    "person_id": "a9ece1eb-7d3c-4e99-8ac6-3409aa4dc55e",
+    "email": {
+      "value": "xiuyuliang@westlake.edu.cn",
+      "confidence": 0.92,
+      "evidence": [
+        "Westlake University official faculty page (en.westlake.edu.cn/faculty/yuliang-xiu.html) lists Yuliang Xiu (修宇亮) as Assistant Professor at the School of Engineering / Endless AI Lab; institutional email xiuyuliang@westlake.edu.cn matches the Westlake username convention and his personal site domain xiuyuliang.cn.",
+        "Personal site xiuyuliang.cn explicitly displays the name pairing 'Yuliang Xiu 修宇亮' confirming Pinyin/character match.",
+        "Recent activity within last 30 days: public social-media statement re: NeurIPS 2026 policy (declining AC invitation), ICLR 2026 / CVPR 2026 Area Chair roles, active Fall 2026 lab recruiting on xiuyuliang.cn — clearly currently active and the same person."
+      ]
+    },
+    "couldnt_find": false,
+    "notes": "Two strong signals: (1) institutional email matches Westlake faculty page + personal site convention; (2) recent 2026 public activity (NeurIPS post, AC roles, lab recruiting) confirms the account is current and tied to 修宇亮 / Yuliang Xiu. 3D Human Digitization researcher, ex-MPI-IS (Michael J. Black), now Assistant Prof at Westlake's Endless AI Lab."
+  }
+]

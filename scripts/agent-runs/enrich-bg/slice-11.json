@@ -1,0 +1,402 @@
+{
+  "agent": 11,
+  "strategy": "gh-repo",
+  "items": [
+    {
+      "arxiv_id": "2604.15923",
+      "github_repo": "Jiaxin-Ye/HiCoDiT"
+    },
+    {
+      "arxiv_id": "2604.15830",
+      "github_repo": "huggingface/Math-Verify"
+    },
+    {
+      "arxiv_id": "2604.15829",
+      "github_repo": "OpenAscent-L/TICoE.git"
+    },
+    {
+      "arxiv_id": "2604.15756",
+      "github_repo": "figec/TTL"
+    },
+    {
+      "arxiv_id": "2604.16839",
+      "github_repo": "ReinerBRO/HeLa-Mem"
+    },
+    {
+      "arxiv_id": "2604.16554",
+      "github_repo": "wxk1224/PA-TCNet"
+    },
+    {
+      "arxiv_id": "2604.16541",
+      "github_repo": "bogao-code/BookAgent"
+    },
+    {
+      "arxiv_id": "2604.15609",
+      "github_repo": "yunbeizhang/BETA"
+    },
+    {
+      "arxiv_id": "2604.21809",
+      "github_repo": "shenoynikhil/ETFlow"
+    },
+    {
+      "arxiv_id": "2604.20806",
+      "github_repo": "LightChen233/OMIBench"
+    },
+    {
+      "arxiv_id": "2604.18062",
+      "github_repo": "tum-pbs/AeroTransformer"
+    },
+    {
+      "arxiv_id": "2604.15488",
+      "github_repo": "YukinoAsuna/FineSteer"
+    },
+    {
+      "arxiv_id": "2604.15499",
+      "github_repo": "UCF-ML-Research/SecureRouter"
+    },
+    {
+      "arxiv_id": "2604.20473",
+      "github_repo": "qizhongtan/Video-ToC"
+    },
+    {
+      "arxiv_id": "2604.17897",
+      "github_repo": "Git-King-Zhan/LoReC"
+    },
+    {
+      "arxiv_id": "2604.20357",
+      "github_repo": "balaboom123/signdata-slt"
+    },
+    {
+      "arxiv_id": "2604.20336",
+      "github_repo": "boycehbz/StaCOM"
+    },
+    {
+      "arxiv_id": "2604.15602",
+      "github_repo": "huggingface/trl"
+    },
+    {
+      "arxiv_id": "2604.15109",
+      "github_repo": "louisfanhz/IUQ"
+    },
+    {
+      "arxiv_id": "2604.14455",
+      "github_repo": "openai/mle-bench"
+    },
+    {
+      "arxiv_id": "2604.14884",
+      "github_repo": "YT3DVision/FSDETR"
+    },
+    {
+      "arxiv_id": "2604.18005",
+      "github_repo": "Xtra-Computing/MAS_Diversity"
+    },
+    {
+      "arxiv_id": "2604.19234",
+      "github_repo": "black-forest-labs/flux"
+    },
+    {
+      "arxiv_id": "2604.18779",
+      "github_repo": "VichyTong/Mango"
+    },
+    {
+      "arxiv_id": "2604.18701",
+      "github_repo": "vinbhaskara/Curiosity-Critic"
+    },
+    {
+      "arxiv_id": "2604.17197",
+      "github_repo": "Hyfred/Control-Summaries-with-Ranking"
+    },
+    {
+      "arxiv_id": "2604.12286",
+      "github_repo": "OpenVeraTeam/LiveMoments"
+    },
+    {
+      "arxiv_id": "2604.13994",
+      "github_repo": "ZezFuture/TexAdiff"
+    },
+    {
+      "arxiv_id": "2604.18095",
+      "github_repo": "zy0929/DSAINet"
+    },
+    {
+      "arxiv_id": "2604.13571",
+      "github_repo": "bingxue-xu/radarmot"
+    },
+    {
+      "arxiv_id": "2604.19172",
+      "github_repo": "huggingface/trl"
+    },
+    {
+      "arxiv_id": "2604.15718",
+      "github_repo": "JiuZeongit/NeuroLip"
+    },
+    {
+      "arxiv_id": "2604.14582",
+      "github_repo": "rikirikirikiriki/MapSR"
+    },
+    {
+      "arxiv_id": "2604.12663",
+      "github_repo": "mimno/Mallet"
+    },
+    {
+      "arxiv_id": "2604.16570",
+      "github_repo": "ZhijiangTang/DNA-Tricks"
+    },
+    {
+      "arxiv_id": "2604.18348",
+      "github_repo": "USTC-MLSys-Team/Adacluster"
+    },
+    {
+      "arxiv_id": "2604.19697",
+      "github_repo": "lll-hhh/STEPSTEM"
+    },
+    {
+      "arxiv_id": "2604.14560",
+      "github_repo": "zhengchen1999/DVFace"
+    },
+    {
+      "arxiv_id": "2604.13786",
+      "github_repo": "zzzjunlin/QuantileMark"
+    },
+    {
+      "arxiv_id": "2604.20726",
+      "github_repo": "TUMLegalTech/icail2026-llm-judge-gaming"
+    },
+    {
+      "arxiv_id": "2604.14259",
+      "github_repo": "4me808/FORGE"
+    },
+    {
+      "arxiv_id": "2604.15301",
+      "github_repo": "fletcherjiang/SignThought"
+    },
+    {
+      "arxiv_id": "2604.14048",
+      "github_repo": "hiteacherIamhumble/Free-Geometry"
+    },
+    {
+      "arxiv_id": "2604.12341",
+      "github_repo": "black-forest-labs/flux"
+    },
+    {
+      "arxiv_id": "2604.14114",
+      "github_repo": "sword-Lz/MMCrec"
+    },
+    {
+      "arxiv_id": "2604.14334",
+      "github_repo": "pushpakumarbalan/feature-selection"
+    },
+    {
+      "arxiv_id": "2604.14084",
+      "github_repo": "HJSang/OPSD_OnPolicyDistillation"
+    },
+    {
+      "arxiv_id": "2604.14762",
+      "github_repo": "Jordan-HS/OmniGCD"
+    },
+    {
+      "arxiv_id": "2604.12798",
+      "github_repo": "Dao-AILab/flash-attention"
+    },
+    {
+      "arxiv_id": "2604.12573",
+      "github_repo": "leonbig/IDEA"
+    },
+    {
+      "arxiv_id": "2604.12456",
+      "github_repo": "Jerrister/X-VC"
+    },
+    {
+      "arxiv_id": "2604.13791",
+      "github_repo": "cruelMouth/PBE-UNet"
+    },
+    {
+      "arxiv_id": "2604.16922",
+      "github_repo": "usail-hkust/ClimAgent"
+    },
+    {
+      "arxiv_id": "2604.13756",
+      "github_repo": "F1mc/MedRCube"
+    },
+    {
+      "arxiv_id": "2604.19144",
+      "github_repo": "volcengine/verl"
+    },
+    {
+      "arxiv_id": "2604.15964",
+      "github_repo": "SPARK-Academy-2025/SPARK-2025"
+    },
+    {
+      "arxiv_id": "2604.15065",
+      "github_repo": "yidimopozhibai/Noise-Suppressed-Query-Retrieval"
+    },
+    {
+      "arxiv_id": "2604.13685",
+      "github_repo": "Open-EXG/EMGFlow"
+    },
+    {
+      "arxiv_id": "2604.16256",
+      "github_repo": "xuyige/CrossMath"
+    },
+    {
+      "arxiv_id": "2604.13226",
+      "github_repo": "ChuangtaoChen-TUM/KVPacket"
+    },
+    {
+      "arxiv_id": "2604.16499",
+      "github_repo": "HQA-VLAttack/HQA-VLAttack"
+    },
+    {
+      "arxiv_id": "2604.18362",
+      "github_repo": "1212Judy/ArbGraph"
+    },
+    {
+      "arxiv_id": "2604.20087",
+      "github_repo": "cxcscmu/SkillLearnBench"
+    },
+    {
+      "arxiv_id": "2604.20006",
+      "github_repo": "geniesinc/Memora"
+    },
+    {
+      "arxiv_id": "2604.12015",
+      "github_repo": "Raina-Xin/UCS"
+    },
+    {
+      "arxiv_id": "2604.11749",
+      "github_repo": "LeoJ-xy/HistLens"
+    },
+    {
+      "arxiv_id": "2604.14519",
+      "github_repo": "importAmir/CI-CBM"
+    },
+    {
+      "arxiv_id": "2604.11913",
+      "github_repo": "K624-YCK/V-Nutri"
+    },
+    {
+      "arxiv_id": "2604.15377",
+      "github_repo": "Sanjeev97/M3Rain"
+    },
+    {
+      "arxiv_id": "2604.13828",
+      "github_repo": "siat-nlp/HanFei"
+    },
+    {
+      "arxiv_id": "2604.15853",
+      "github_repo": "keepgallop/AestheticNet"
+    },
+    {
+      "arxiv_id": "2604.13981",
+      "github_repo": "xjlDestiny/HiProto.git"
+    },
+    {
+      "arxiv_id": "2604.12683",
+      "github_repo": "REDMAO4869/Brain-DiT"
+    },
+    {
+      "arxiv_id": "2604.16902",
+      "github_repo": "icip-cas/OmniPreference"
+    },
+    {
+      "arxiv_id": "2604.14399",
+      "github_repo": "wuaodi/SpaceMind"
+    },
+    {
+      "arxiv_id": "2604.14706",
+      "github_repo": "BJTU-KD3D/NG-GS"
+    },
+    {
+      "arxiv_id": "2604.14568",
+      "github_repo": "RunRiotComeOn/AVR"
+    },
+    {
+      "arxiv_id": "2604.19015",
+      "github_repo": "tatsu-lab/stanford_alpaca"
+    },
+    {
+      "arxiv_id": "2604.15654",
+      "github_repo": "NJU-PCALab/ERR"
+    },
+    {
+      "arxiv_id": "2604.17052",
+      "github_repo": "Solus-sano/OASIS"
+    },
+    {
+      "arxiv_id": "2604.14885",
+      "github_repo": "hkr04/RACER"
+    },
+    {
+      "arxiv_id": "2604.16238",
+      "github_repo": "mouatadid/pbc"
+    },
+    {
+      "arxiv_id": "2604.14113",
+      "github_repo": "ZJU-REAL/UI-Zoomer"
+    },
+    {
+      "arxiv_id": "2604.19211",
+      "github_repo": "hkgai-official/ClawNet"
+    },
+    {
+      "arxiv_id": "2604.19689",
+      "github_repo": "ShuaiWang97/A-MAR"
+    },
+    {
+      "arxiv_id": "2604.14604",
+      "github_repo": "zju-muslab/AudioHijack"
+    },
+    {
+      "arxiv_id": "2604.17188",
+      "github_repo": "Isaac-JL-Chen/rouge_chinese"
+    },
+    {
+      "arxiv_id": "2604.17488",
+      "github_repo": "rohnson1999/AutoVQA-G"
+    },
+    {
+      "arxiv_id": "2604.17504",
+      "github_repo": "geox-lab/RS-HyRe-R1"
+    },
+    {
+      "arxiv_id": "2604.18918",
+      "github_repo": "lfeng0722/PtoP"
+    },
+    {
+      "arxiv_id": "2604.17406",
+      "github_repo": "sjtu-sai-agents/EvoMaster"
+    },
+    {
+      "arxiv_id": "2604.15153",
+      "github_repo": "shsjxzh/K-Token-Merging"
+    },
+    {
+      "arxiv_id": "2604.14246",
+      "github_repo": "ZhaiYanbo/CoR"
+    },
+    {
+      "arxiv_id": "2604.18135",
+      "github_repo": "he-y/soft-label-pruning-quantization-for-dataset-distillation"
+    },
+    {
+      "arxiv_id": "2604.17736",
+      "github_repo": "Ant0ny44/IncreFA"
+    },
+    {
+      "arxiv_id": "2604.12582",
+      "github_repo": "ifwub234/DTR"
+    },
+    {
+      "arxiv_id": "2604.13328",
+      "github_repo": "JaidedAI/EasyOCR"
+    },
+    {
+      "arxiv_id": "2604.14683",
+      "github_repo": "bytedance/deer-flow"
+    },
+    {
+      "arxiv_id": "2604.18210",
+      "github_repo": "huffyhenry/sync.soccer"
+    }
+  ]
+}

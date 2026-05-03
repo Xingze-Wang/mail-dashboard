@@ -1,0 +1,1006 @@
+{
+  "agent": 15,
+  "strategy": "pdf-cover",
+  "items": [
+    {
+      "arxiv_id": "2604.20231",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.16972",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.17325",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.17709",
+      "hf_repo": null,
+      "github_repo": "youliangh/DeInfer"
+    },
+    {
+      "arxiv_id": "2604.20318",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.15762",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.16966",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.12413",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.20306",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.16958",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.20749",
+      "hf_repo": null,
+      "github_repo": "DongdingLin/SiPeR"
+    },
+    {
+      "arxiv_id": "2604.14025",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.16926",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.16862",
+      "hf_repo": null,
+      "github_repo": "meta-llama/llama-models"
+    },
+    {
+      "arxiv_id": "2604.19518",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.18831",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.12837",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.16841",
+      "hf_repo": null,
+      "github_repo": "Clay-foundation/model"
+    },
+    {
+      "arxiv_id": "2604.19060",
+      "hf_repo": null,
+      "github_repo": "bionlplab/radiology-disease-classification"
+    },
+    {
+      "arxiv_id": "2604.16824",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.17477",
+      "hf_repo": null,
+      "github_repo": "injooker/Unveiling"
+    },
+    {
+      "arxiv_id": "2604.16881",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.20026",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.13787",
+      "hf_repo": null,
+      "github_repo": "Huangsz2021/ToolOmni"
+    },
+    {
+      "arxiv_id": "2604.12933",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.18418",
+      "hf_repo": null,
+      "github_repo": "uni-medical/MedProbeBench"
+    },
+    {
+      "arxiv_id": "2604.19355",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.20117",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.19632",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.17037",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.19281",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.19318",
+      "hf_repo": null,
+      "github_repo": "zqyq/MVTrackTrans"
+    },
+    {
+      "arxiv_id": "2604.16217",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.18623",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.16748",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.16763",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.16774",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.16749",
+      "hf_repo": null,
+      "github_repo": "noamgat/lm-format-enforcer"
+    },
+    {
+      "arxiv_id": "2604.16826",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.16648",
+      "hf_repo": null,
+      "github_repo": "coleygroup/FRIGID"
+    },
+    {
+      "arxiv_id": "2604.19680",
+      "hf_repo": null,
+      "github_repo": "fanzh03/IR-Flow"
+    },
+    {
+      "arxiv_id": "2604.16685",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.16694",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.18112",
+      "hf_repo": null,
+      "github_repo": "li-yiheng/RAMM"
+    },
+    {
+      "arxiv_id": "2604.20136",
+      "hf_repo": null,
+      "github_repo": "MKong17/IMPACT_CYCLE"
+    },
+    {
+      "arxiv_id": "2604.18274",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.14773",
+      "hf_repo": null,
+      "github_repo": "bjzgcai/CoPA"
+    },
+    {
+      "arxiv_id": "2604.16282",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.19502",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.20123",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.16590",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.18518",
+      "hf_repo": null,
+      "github_repo": "Yovecent/UDM-GRPO"
+    },
+    {
+      "arxiv_id": "2604.18277",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.18292",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.14564",
+      "hf_repo": null,
+      "github_repo": "TsinghuaC3I/MARTI"
+    },
+    {
+      "arxiv_id": "2604.14726",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.12100",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.18047",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.19930",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.20374",
+      "hf_repo": null,
+      "github_repo": "yosen-king/Deep-AMM-Events"
+    },
+    {
+      "arxiv_id": "2604.12813",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.12806",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.19124",
+      "hf_repo": null,
+      "github_repo": "ntsw2001/data_detox_for_llm"
+    },
+    {
+      "arxiv_id": "2604.20370",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.16083",
+      "hf_repo": null,
+      "github_repo": "Irennnne/DINOv3-IML"
+    },
+    {
+      "arxiv_id": "2604.20305",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.16579",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.16084",
+      "hf_repo": null,
+      "github_repo": "Weijiang-Xiong/OpenSkyTraffic"
+    },
+    {
+      "arxiv_id": "2604.19432",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.07884v1",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.20368",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.20128",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.12736",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.12805",
+      "hf_repo": null,
+      "github_repo": "tanfy929/Equivariant-I2I"
+    },
+    {
+      "arxiv_id": "2604.15871",
+      "hf_repo": null,
+      "github_repo": "wesar1/UniEditBench"
+    },
+    {
+      "arxiv_id": "2604.20361",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.11796",
+      "hf_repo": null,
+      "github_repo": "HeraldofLight/C-ReD"
+    },
+    {
+      "arxiv_id": "2604.15948",
+      "hf_repo": null,
+      "github_repo": "JinhaoShen/CoEdit"
+    },
+    {
+      "arxiv_id": "2604.21843",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.15923",
+      "hf_repo": null,
+      "github_repo": "Jiaxin-Ye/HiCoDiT"
+    },
+    {
+      "arxiv_id": "2604.21840",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.17802",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.14865",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.16557",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.15877",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.15830",
+      "hf_repo": null,
+      "github_repo": "huggingface/Math-Verify"
+    },
+    {
+      "arxiv_id": "2604.15728",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.15190",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.21879",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.15663",
+      "hf_repo": "JiahuiGengNLP/MMCoIR-train",
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.17787",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.12610",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.15829",
+      "hf_repo": null,
+      "github_repo": "OpenAscent-L/TICoE.git"
+    },
+    {
+      "arxiv_id": "2604.15756",
+      "hf_repo": null,
+      "github_repo": "figec/TTL"
+    },
+    {
+      "arxiv_id": "2604.15823",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.15729",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.15774",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.15821",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.18549",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.16839",
+      "hf_repo": null,
+      "github_repo": "ReinerBRO/HeLa-Mem"
+    },
+    {
+      "arxiv_id": "2604.16554",
+      "hf_repo": null,
+      "github_repo": "wxk1224/PA-TCNet"
+    },
+    {
+      "arxiv_id": "2604.15814",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.16541",
+      "hf_repo": null,
+      "github_repo": "bogao-code/BookAgent"
+    },
+    {
+      "arxiv_id": "2604.16542",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.20775",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.12665",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.15609",
+      "hf_repo": null,
+      "github_repo": "yunbeizhang/BETA"
+    },
+    {
+      "arxiv_id": "2604.21809",
+      "hf_repo": null,
+      "github_repo": "shenoynikhil/ETFlow"
+    },
+    {
+      "arxiv_id": "2604.12777",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.18062",
+      "hf_repo": null,
+      "github_repo": "tum-pbs/AeroTransformer"
+    },
+    {
+      "arxiv_id": "2604.12307",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.15488",
+      "hf_repo": null,
+      "github_repo": "YukinoAsuna/FineSteer"
+    },
+    {
+      "arxiv_id": "2604.15499",
+      "hf_repo": null,
+      "github_repo": "UCF-ML-Research/SecureRouter"
+    },
+    {
+      "arxiv_id": "2604.15090",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.13426",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.19648",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.15549",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.15631",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.17051",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.15456",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.15529",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.20046",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.15482",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.15416",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.12776",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.20783",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.18438",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.20473",
+      "hf_repo": null,
+      "github_repo": "qizhongtan/Video-ToC"
+    },
+    {
+      "arxiv_id": "2604.17897",
+      "hf_repo": null,
+      "github_repo": "Git-King-Zhan/LoReC"
+    },
+    {
+      "arxiv_id": "2604.20357",
+      "hf_repo": null,
+      "github_repo": "balaboom123/signdata-slt"
+    },
+    {
+      "arxiv_id": "2604.20347",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.20763",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.20336",
+      "hf_repo": null,
+      "github_repo": "boycehbz/StaCOM"
+    },
+    {
+      "arxiv_id": "2604.17857",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.15109",
+      "hf_repo": null,
+      "github_repo": "louisfanhz/IUQ"
+    },
+    {
+      "arxiv_id": "2604.20093",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.15009",
+      "hf_repo": "HuggingFaceFW/finewiki",
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.14518",
+      "hf_repo": "librarian-bots/recommend_similar_papers",
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.14725",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.14986",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.15016",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.14556",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.14965",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.14895",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.14455",
+      "hf_repo": null,
+      "github_repo": "openai/mle-bench"
+    },
+    {
+      "arxiv_id": "2604.14884",
+      "hf_repo": null,
+      "github_repo": "YT3DVision/FSDETR"
+    },
+    {
+      "arxiv_id": "2604.14878",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.16583",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.14902",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.18005",
+      "hf_repo": null,
+      "github_repo": "Xtra-Computing/MAS_Diversity"
+    },
+    {
+      "arxiv_id": "2604.14805",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.19234",
+      "hf_repo": null,
+      "github_repo": "black-forest-labs/flux"
+    },
+    {
+      "arxiv_id": "2604.18701",
+      "hf_repo": null,
+      "github_repo": "vinbhaskara/Curiosity-Critic"
+    },
+    {
+      "arxiv_id": "2604.14862",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.15392",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.17879",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.12647",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.20316",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.17651",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.12286",
+      "hf_repo": null,
+      "github_repo": "OpenVeraTeam/LiveMoments"
+    },
+    {
+      "arxiv_id": "2604.12359",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.13994",
+      "hf_repo": null,
+      "github_repo": "ZezFuture/TexAdiff"
+    },
+    {
+      "arxiv_id": "2604.20745",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.15687",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.18095",
+      "hf_repo": null,
+      "github_repo": "zy0929/DSAINet"
+    },
+    {
+      "arxiv_id": "2604.13571",
+      "hf_repo": null,
+      "github_repo": "bingxue-xu/radarmot"
+    },
+    {
+      "arxiv_id": "2604.17695",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.15718",
+      "hf_repo": null,
+      "github_repo": "JiuZeongit/NeuroLip"
+    },
+    {
+      "arxiv_id": "2604.14582",
+      "hf_repo": null,
+      "github_repo": "rikirikirikiriki/MapSR"
+    },
+    {
+      "arxiv_id": "2604.18358",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.12663",
+      "hf_repo": null,
+      "github_repo": "mimno/Mallet"
+    },
+    {
+      "arxiv_id": "2604.21849",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.16570",
+      "hf_repo": null,
+      "github_repo": "ZhijiangTang/DNA-Tricks"
+    },
+    {
+      "arxiv_id": "2604.18348",
+      "hf_repo": null,
+      "github_repo": "USTC-MLSys-Team/Adacluster"
+    },
+    {
+      "arxiv_id": "2604.14570",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.19697",
+      "hf_repo": null,
+      "github_repo": "lll-hhh/STEPSTEM"
+    },
+    {
+      "arxiv_id": "2604.13383",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.16562",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.14560",
+      "hf_repo": null,
+      "github_repo": "zhengchen1999/DVFace"
+    },
+    {
+      "arxiv_id": "2604.13786",
+      "hf_repo": null,
+      "github_repo": "zzzjunlin/QuantileMark"
+    },
+    {
+      "arxiv_id": "2604.20726",
+      "hf_repo": null,
+      "github_repo": "TUMLegalTech/icail2026-llm-judge-gaming"
+    },
+    {
+      "arxiv_id": "2604.20730",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.14548",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.14259",
+      "hf_repo": null,
+      "github_repo": "4me808/FORGE"
+    },
+    {
+      "arxiv_id": "2604.15301",
+      "hf_repo": null,
+      "github_repo": "fletcherjiang/SignThought"
+    },
+    {
+      "arxiv_id": "2604.14048",
+      "hf_repo": null,
+      "github_repo": "hiteacherIamhumble/Free-Geometry"
+    },
+    {
+      "arxiv_id": "2604.12341",
+      "hf_repo": null,
+      "github_repo": "black-forest-labs/flux"
+    },
+    {
+      "arxiv_id": "2604.11793",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.14114",
+      "hf_repo": null,
+      "github_repo": "sword-Lz/MMCrec"
+    },
+    {
+      "arxiv_id": "2604.13940",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.14334",
+      "hf_repo": null,
+      "github_repo": "pushpakumarbalan/feature-selection"
+    },
+    {
+      "arxiv_id": "2604.14084",
+      "hf_repo": null,
+      "github_repo": "HJSang/OPSD_OnPolicyDistillation"
+    },
+    {
+      "arxiv_id": "2604.12350",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.13841",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.13830",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.14762",
+      "hf_repo": null,
+      "github_repo": "Jordan-HS/OmniGCD"
+    },
+    {
+      "arxiv_id": "2604.13833",
+      "hf_repo": "RLHFlow/pair_preference_model_dataset",
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.12579",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.17009",
+      "hf_repo": null,
+      "github_repo": null
+    },
+    {
+      "arxiv_id": "2604.12575",
+      "hf_repo": null,
+      "github_repo": null
+    }
+  ]
+}

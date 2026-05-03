@@ -1,0 +1,20 @@
+[
+  {
+    "real_name": "高俊",
+    "person_id": "b7d0be68-62f9-41a6-a105-efcabb822767",
+    "couldnt_find": true,
+    "notes": "Explicitly listed in protocol as common name to skip-fast. No disambiguator (affiliation, lab, project) provided in slice — too many plausible 高俊 candidates across academia/industry to verify any single email against the last-30-days activity rule. Skipped per protocol."
+  },
+  {
+    "real_name": "张桂彬",
+    "person_id": "7b6b23a9-8491-47e4-a636-a7efea094238",
+    "couldnt_find": true,
+    "notes": "Common Chinese name with no disambiguator (no affiliation, paper, repo, or social handle in slice). Cannot satisfy the 2-independent-signals + last-30-days activity requirement without a starting hook. Better to leave email empty and rely on name-match path than risk attaching the wrong account to a DNC record."
+  },
+  {
+    "real_name": "潘炜",
+    "person_id": "7837700a-9c03-4de6-ab85-578a4c83567d",
+    "couldnt_find": true,
+    "notes": "Common Chinese name with no disambiguator in slice. Multiple plausible 潘炜 / Pan Wei candidates exist across CS academia and industry; no way to choose between them without affiliation or topic signal. Skipped per protocol's 'multiple plausible candidates' guidance — wrong email on a DNC person is worse than no email."
+  }
+]

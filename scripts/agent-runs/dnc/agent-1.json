@@ -1,0 +1,30 @@
+[
+  {
+    "real_name": "杨林易",
+    "person_id": "8d7e3284-e2ee-4ad2-9706-39369f3c22a9",
+    "email": {
+      "value": "yanglinyiucd@gmail.com",
+      "confidence": 0.9,
+      "evidence": [
+        "Personal homepage https://yanglinyi.github.io/ explicitly displays Chinese name '杨林易' in title and lists this email as the contact",
+        "Search snippet from his homepage states he is 'actively recruiting 26 Fall PhD students and Postdoc/RA/Visiting Students' with this email as contact — recruitment is by definition current activity (well within 30 days)",
+        "Independent confirmation: Google Scholar profile + ResearchGate (Westlake University, Research Assistant Professor) + X account @linyi_yang all tied to same identity",
+        "Area Chair for ICLR 2025 and ACL 2025 — confirms 2025 active conference role"
+      ]
+    },
+    "couldnt_find": false,
+    "notes": "Strong 2-signal match: homepage explicitly carries the Chinese name 杨林易 + Scholar/ResearchGate/X cross-confirm. Currently recruiting Fall 2026 PhDs from this email = active. Built GenAI Lab at SUSTech (also affiliated Westlake). Previously supervised by Prof. Jun Wang at UCL."
+  },
+  {
+    "real_name": "阎栋",
+    "person_id": "edf48cfd-483f-4873-b3fc-b070e82d8e07",
+    "couldnt_find": true,
+    "notes": "Skip-fast: no disambiguating hit on the exact characters '阎栋'. Pinyin 'Dong Yan' is highly ambiguous — multiple plausible candidates (Dong Yan @ Bosch AI/RL, Dong Yan finance prof @ UIBE, Dongyan Lin @ Meta FAIR, Dong Yan @ GoerTek) with no way to tie any of them to the surname 阎 (uncommon) vs. 颜/严/燕/晏. No 2024-2025 publication or last-30-day activity found that confirms 阎 specifically. Per protocol: leave email empty, rely on name-match path."
+  },
+  {
+    "real_name": "汤嘉斌",
+    "person_id": "a8ed0b34-6e1a-457d-b118-04a2a2a955bb",
+    "couldnt_find": true,
+    "notes": "Identity is confidently identified as Jiabin Tang, PhD student at HKU (homepage https://tjb-tech.github.io/, GitHub tjb-tech). Highly active: AutoAgent (Feb 2025, 7.7k stars), AI-Researcher (NeurIPS 2025, 3.5k stars), Kimi-Researcher core contributor, DeepTutor (2026) — last-30-days bar easily cleared. HOWEVER no email value was surfaced in search snippets and homepage WebFetch was denied, so I cannot produce a verified email string. Per hard-rule #2 (2 independent signals to attach an email), I will NOT guess an email. Recommend a follow-up pass with WebFetch enabled, or check GitHub commit author email on tjb-tech repos."
+  }
+]

@@ -1,0 +1,29 @@
+[
+  {
+    "real_name": "许通达",
+    "person_id": "c7fff4c8-be8b-4152-a186-40720fe4b086",
+    "couldnt_find": true,
+    "notes": "No disambiguating signal found. Quoted-name searches with 2026/researcher/创业/教授/博士/github/scholar/linkedin all returned zero direct matches for 许通达. No GitHub, Scholar, LinkedIn, or personal site surfaced. Skipped per skip-fast rule."
+  },
+  {
+    "real_name": "刘偲",
+    "person_id": "9978bda3-41eb-4435-adb5-b02ebfacff44",
+    "email": {
+      "value": "liusi@buaa.edu.cn",
+      "confidence": 0.6,
+      "evidence": [
+        "BUAA faculty page (shi.buaa.edu.cn/liusi) lists liusi@buaa.edu.cn as official contact",
+        "Personal Google Sites homepage (sites.google.com/site/siliuhome) and CoLab lab site (colalab.org) corroborate Si Liu / 刘偲 as Professor at BUAA Institute of AI",
+        "Google Scholar profile (-QtVtNEAAAAJ) confirms identity with 20k+ citations in CV/multimedia"
+      ]
+    },
+    "couldnt_find": false,
+    "notes": "LOW-CONF candidate, do NOT auto-attach. Two strong identity signals (BUAA faculty page + Scholar/personal site) but the load-bearing 30-day recency rule is NOT satisfied — latest verifiable publications are CVPR/AAAI 2025; no commit/post/paper/profile-update confirmed within April 2026. Common BUAA professor identity, but per strict 30d rule this should be left as candidate only. If a verifier can confirm any April-2026 activity (talk, accepted CVPR2026 paper, lab news post), confidence rises to 0.9+."
+  },
+  {
+    "real_name": "尹绪旺",
+    "person_id": "7953affd-6ec7-4378-9635-e917795470a3",
+    "couldnt_find": true,
+    "notes": "Multiple plausible candidates with no way to disambiguate: (1) Xuwang Yin — aquatic ecology researcher at Dalian Ocean University (recent 2025-2026 fish/algae papers), (2) Xuwang Yin — UVA CS PhD 2022, ex-Center for AI Safety, ML/AI-safety co-author on HarmBench/Safetywashing, (3) Xuwang YIN — USTB CS researcher on ResearchGate. Without target field/affiliation we cannot pick. Flagged but not attached."
+  }
+]

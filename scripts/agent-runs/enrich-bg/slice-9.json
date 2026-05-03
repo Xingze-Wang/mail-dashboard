@@ -1,0 +1,402 @@
+{
+  "agent": 9,
+  "strategy": "gh-repo",
+  "items": [
+    {
+      "arxiv_id": "2604.08529",
+      "github_repo": "openclaw/openclaw"
+    },
+    {
+      "arxiv_id": "2604.07853v1",
+      "github_repo": "GAIR-NLP/AIME-Preview"
+    },
+    {
+      "arxiv_id": "2604.07877v1",
+      "github_repo": "MemTensor/MemOS"
+    },
+    {
+      "arxiv_id": "2604.09529",
+      "github_repo": "Mr-Loevan/VL-Calibration"
+    },
+    {
+      "arxiv_id": "2604.13959",
+      "github_repo": "sunake7/ATI.git"
+    },
+    {
+      "arxiv_id": "2604.15750",
+      "github_repo": "X-Xia0828/DepCap"
+    },
+    {
+      "arxiv_id": "2604.12656",
+      "github_repo": "OpenDriveLab/OpenScene"
+    },
+    {
+      "arxiv_id": "2604.16937",
+      "github_repo": "meta-llama/llama3"
+    },
+    {
+      "arxiv_id": "2604.12257",
+      "github_repo": "WHU-USI3DV/SDAR-Net"
+    },
+    {
+      "arxiv_id": "2604.07765v1",
+      "github_repo": "1e12Leon/RemoteAgent"
+    },
+    {
+      "arxiv_id": "2604.02010",
+      "github_repo": "facebookresearch/detectron2"
+    },
+    {
+      "arxiv_id": "2604.17195",
+      "github_repo": "discus0434/aesthetic-predictor-v2-5"
+    },
+    {
+      "arxiv_id": "2604.16004",
+      "github_repo": "JiazhengZhang/AgentV-RL"
+    },
+    {
+      "arxiv_id": "2604.17814",
+      "github_repo": "anthropics/claude-code"
+    },
+    {
+      "arxiv_id": "2604.07779v1",
+      "github_repo": "gexinh/LogitProd.git"
+    },
+    {
+      "arxiv_id": "2604.17931",
+      "github_repo": "simplex-ai-inc/LiteResearcher"
+    },
+    {
+      "arxiv_id": "2604.17353",
+      "github_repo": "openclaw/openclaw"
+    },
+    {
+      "arxiv_id": "2604.07716v1",
+      "github_repo": "YasongFan/FDM"
+    },
+    {
+      "arxiv_id": "2604.13398",
+      "github_repo": "volcengine/verl"
+    },
+    {
+      "arxiv_id": "2604.20650",
+      "github_repo": "hikvision-research/GCPose"
+    },
+    {
+      "arxiv_id": "2604.18131",
+      "github_repo": "Bklight999/world-knowledge"
+    },
+    {
+      "arxiv_id": "2604.19485",
+      "github_repo": "naempr/PPO-with-adaptive-GAE"
+    },
+    {
+      "arxiv_id": "2604.19147",
+      "github_repo": "fla-org/flame"
+    },
+    {
+      "arxiv_id": "2604.11773",
+      "github_repo": "google-deepmind/dm_env"
+    },
+    {
+      "arxiv_id": "2604.15652",
+      "github_repo": "LiBingyu01/RSKT-Seg"
+    },
+    {
+      "arxiv_id": "2604.09532",
+      "github_repo": "gezbww/Vis_Prompt"
+    },
+    {
+      "arxiv_id": "2604.14646",
+      "github_repo": "597358816/UEC-RL"
+    },
+    {
+      "arxiv_id": "2604.18235",
+      "github_repo": "wujwyi/CalibAdv"
+    },
+    {
+      "arxiv_id": "2604.12891",
+      "github_repo": "booker0415/Large-Scale-Tensor-Program-Dataset-on-RTX-3080-Ti-and-Intel-i7-12"
+    },
+    {
+      "arxiv_id": "2604.12967",
+      "github_repo": "axolotl-ai-cloud/axolotl"
+    },
+    {
+      "arxiv_id": "2604.18351",
+      "github_repo": "HKBU-LAGAS/BACO"
+    },
+    {
+      "arxiv_id": "2604.12944",
+      "github_repo": "hukcc/Awesome-Video-Hallucination"
+    },
+    {
+      "arxiv_id": "2604.14705",
+      "github_repo": "Rongchao98/SynHAT"
+    },
+    {
+      "arxiv_id": "2604.13413",
+      "github_repo": "fangzy96/FVA"
+    },
+    {
+      "arxiv_id": "2604.19675",
+      "github_repo": "yyxl123/MedFlowSeg"
+    },
+    {
+      "arxiv_id": "2604.20003",
+      "github_repo": "lmweber/benchmark-data-Levine-32-dim"
+    },
+    {
+      "arxiv_id": "2604.15272",
+      "github_repo": "NVIDIA/FasterTransformer"
+    },
+    {
+      "arxiv_id": "2604.13919",
+      "github_repo": "lu-group/fourier-mionet-rte"
+    },
+    {
+      "arxiv_id": "2604.07277",
+      "github_repo": "SweetGUOguo/Android_Coach"
+    },
+    {
+      "arxiv_id": "2604.13010",
+      "github_repo": "open-compass/opencompass"
+    },
+    {
+      "arxiv_id": "2604.12282",
+      "github_repo": "renhouxing/SpreadsheetAgent.git"
+    },
+    {
+      "arxiv_id": "2604.20090",
+      "github_repo": "chenyuanTKCY/UL-XCoT"
+    },
+    {
+      "arxiv_id": "2604.24376",
+      "github_repo": "IRLab-UDC/depression-prompt-induction"
+    },
+    {
+      "arxiv_id": "2604.18578",
+      "github_repo": "DLR-RM/rl-baselines3-zoo"
+    },
+    {
+      "arxiv_id": "2604.16930",
+      "github_repo": "xshjs/CoGR-MoE"
+    },
+    {
+      "arxiv_id": "2604.17614",
+      "github_repo": "huggingface/math-verify"
+    },
+    {
+      "arxiv_id": "2604.18260",
+      "github_repo": "homothetic/Geo3DPruner"
+    },
+    {
+      "arxiv_id": "2604.13589",
+      "github_repo": "chen-yu-chao/3DRR_codebase"
+    },
+    {
+      "arxiv_id": "2604.11950",
+      "github_repo": "google/oss-fuzz"
+    },
+    {
+      "arxiv_id": "2604.07928v1",
+      "github_repo": "binbin2xs/weather-GS"
+    },
+    {
+      "arxiv_id": "2604.15736",
+      "github_repo": "run-llama/llama_index"
+    },
+    {
+      "arxiv_id": "2604.17821",
+      "github_repo": "windbd/WebUncertainty"
+    },
+    {
+      "arxiv_id": "2604.19591",
+      "github_repo": "jaco1b/SSDM-RS-SEG"
+    },
+    {
+      "arxiv_id": "2604.17307",
+      "github_repo": "OUC-YER/SePL-DeepfakeDetection"
+    },
+    {
+      "arxiv_id": "2604.15383",
+      "github_repo": "XiaomiMiMo/MiMo-Audio"
+    },
+    {
+      "arxiv_id": "2604.18464",
+      "github_repo": "YYDreamzure/SSP"
+    },
+    {
+      "arxiv_id": "2604.13579",
+      "github_repo": "NoEdgeAI/pdfdeal"
+    },
+    {
+      "arxiv_id": "2604.18296",
+      "github_repo": "cincynlp/concreteness-interpretability"
+    },
+    {
+      "arxiv_id": "2604.07752v1",
+      "github_repo": "Mimic-Persona/MIMIC-Py"
+    },
+    {
+      "arxiv_id": "2604.14324",
+      "github_repo": "Notbesidemoon/GeoDe"
+    },
+    {
+      "arxiv_id": "2604.07720v1",
+      "github_repo": "langchain-ai/open_deep_research"
+    },
+    {
+      "arxiv_id": "2604.07329",
+      "github_repo": "MrGiovanni/SMILE"
+    },
+    {
+      "arxiv_id": "2604.15998",
+      "github_repo": "happywinder/SCHK-HTC"
+    },
+    {
+      "arxiv_id": "2604.07101",
+      "github_repo": "mike-qz-wang/SurFITR"
+    },
+    {
+      "arxiv_id": "2604.13024",
+      "github_repo": "benzhaotang/XXXXX"
+    },
+    {
+      "arxiv_id": "2604.14267",
+      "github_repo": "zsxmwjz/CW-GRPO"
+    },
+    {
+      "arxiv_id": "2604.14922",
+      "github_repo": "hiyouga/LLaMA-Factory"
+    },
+    {
+      "arxiv_id": "2604.19048",
+      "github_repo": "boyan-code/SAMoRA"
+    },
+    {
+      "arxiv_id": "2604.14795",
+      "github_repo": "IRMVLab/CALM"
+    },
+    {
+      "arxiv_id": "2604.19516",
+      "github_repo": "Wu-beining/MAGEO"
+    },
+    {
+      "arxiv_id": "2604.19039",
+      "github_repo": "OnlyZZZZ/Generative_Texture_Filtering"
+    },
+    {
+      "arxiv_id": "2604.18398",
+      "github_repo": "yxwang19/AlphaContext"
+    },
+    {
+      "arxiv_id": "2604.11699",
+      "github_repo": "yingjie7/Legal2LogicICL"
+    },
+    {
+      "arxiv_id": "2604.17941",
+      "github_repo": "petergit1/HONES"
+    },
+    {
+      "arxiv_id": "2604.14698",
+      "github_repo": "MFPolicy/MFPO"
+    },
+    {
+      "arxiv_id": "2604.22436",
+      "github_repo": "Bingo-W/AgentSearchBench"
+    },
+    {
+      "arxiv_id": "2604.13602",
+      "github_repo": "xhwang22/Awesome-Reward-Hacking"
+    },
+    {
+      "arxiv_id": "2604.17295",
+      "github_repo": "RainingNovember/LLaTiSA"
+    },
+    {
+      "arxiv_id": "2604.16776",
+      "github_repo": "fdu-wangfeilab/sc-save"
+    },
+    {
+      "arxiv_id": "2604.15741",
+      "github_repo": "ponhvoan/internal-variance"
+    },
+    {
+      "arxiv_id": "2604.19728",
+      "github_repo": "TRI-ML/vla_foundry"
+    },
+    {
+      "arxiv_id": "2604.20261",
+      "github_repo": "fxdong24/MALMAS"
+    },
+    {
+      "arxiv_id": "2604.15715",
+      "github_repo": "open-compass/GTA"
+    },
+    {
+      "arxiv_id": "2604.07774v1",
+      "github_repo": "woyut/RoboAgent_CVPR26"
+    },
+    {
+      "arxiv_id": "2604.15464",
+      "github_repo": "vllm-project/tpu-inference"
+    },
+    {
+      "arxiv_id": "2604.17451",
+      "github_repo": "AIGeeksGroup/SegTTA"
+    },
+    {
+      "arxiv_id": "2604.20487",
+      "github_repo": "jubin75/KVI"
+    },
+    {
+      "arxiv_id": "2604.15088",
+      "github_repo": "AeroVILab-AHU/HaLoBuilding"
+    },
+    {
+      "arxiv_id": "2604.17527",
+      "github_repo": "RoboticsPolyu/CBF-DMP"
+    },
+    {
+      "arxiv_id": "2604.13748",
+      "github_repo": "arbitraryma/Val_driven_forecasting"
+    },
+    {
+      "arxiv_id": "2604.20470",
+      "github_repo": "Adamlong3/DynamicRad"
+    },
+    {
+      "arxiv_id": "2604.17919",
+      "github_repo": "ARC0127/Fisher-Decorator"
+    },
+    {
+      "arxiv_id": "2604.07230",
+      "github_repo": "ultralytics/ultralytics"
+    },
+    {
+      "arxiv_id": "2604.18320",
+      "github_repo": "0001Henry/EVE"
+    },
+    {
+      "arxiv_id": "2604.20263",
+      "github_repo": "blazerye/AROMA"
+    },
+    {
+      "arxiv_id": "2604.07791v1",
+      "github_repo": "circles-post/SEARL"
+    },
+    {
+      "arxiv_id": "2604.17745",
+      "github_repo": "KOU-199024/HiRAS"
+    },
+    {
+      "arxiv_id": "2604.13425",
+      "github_repo": "aigc-apps/VideoX-Fun"
+    },
+    {
+      "arxiv_id": "2604.20254",
+      "github_repo": "wyuzh/Mol-Debate"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+[
+  {
+    "real_name": "樊志文",
+    "person_id": "ddb063c0-feff-4bfe-bea0-aeddd7949475",
+    "couldnt_find": true,
+    "notes": "Common Chinese name with no disambiguator (no affiliation, school, or topic in input). Quoted-name search '樊志文' 2026 returned no person-specific hits — only generic AI/创业 trend articles. Multiple plausible candidates across academia/industry; no way to verify last-30-day activity matches our DNC person. Skipping per skip-fast rule."
+  },
+  {
+    "real_name": "邹常青",
+    "person_id": "f2bdc9db-9b5d-41bc-aa79-3a20d89d4f05",
+    "couldnt_find": true,
+    "notes": "Common Chinese name with no disambiguator. Quoted-name search '邹常青' 2026 returned no person-specific hits — only generic 2026 AI/创业 trend articles. Cannot verify identity or last-30-day activity. Skipping per skip-fast rule; rely on name-match dedup path."
+  },
+  {
+    "real_name": "夏俊",
+    "person_id": "588fdfa0-c989-4e94-ad7e-3da0eac6d420",
+    "couldnt_find": true,
+    "notes": "Very common Chinese name (two characters) — flagged as skip-fast example class in protocol. Quoted-name search '夏俊' 2026 returned no person-specific hits, only generic AI trend pieces. Too many plausible candidates with no disambiguator; cannot verify. Skipping; rely on name-match dedup path."
+  }
+]

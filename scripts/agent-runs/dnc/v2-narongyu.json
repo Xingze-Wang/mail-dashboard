@@ -1,0 +1,21 @@
+{
+  "real_name": "那荣钰",
+  "person_id": "823e5840-b841-4cba-8221-3547d7c82af0",
+  "couldnt_find": true,
+  "candidate_email_unverified": "rongyu_na@brown.edu",
+  "candidate_confidence_if_relaxed_rules": 0.55,
+  "evidence_collected": [
+    "https://www.idsa.org/profile/rongyu-na/ : confirms 'Rongyu Na', Co-Founder/Designer Upsided, dual MADE Brown+RISD, ex-Amazon Lab126 industrial designer, IDEA Juror 2024+2025. No Chinese chars on page. No email on page.",
+    "https://entrepreneurship.brown.edu/brown-ventures-action/ecoforge : 'Rongyu (Sodium) Na \\u201924' co-founded EcoForge with Myung Bender '24 — confirms identity at Brown MADE program, graduated 2024.",
+    "https://api.github.com/users/narongyu : exists, name='Sodium', company='EcoForge', 0 repos, 0 events. created 2024-12-20, updated 2025-08-05. Stale — no last-30-days activity.",
+    "https://www.instagram.com/sodium_narongyu/ : og:description = 'Sodium (Rongyu ) Na (@sodium_narongyu), 468 Followers, 115 Posts'. Username pattern 'na+rongyu' = surname-first. Bio not accessible without login.",
+    "https://www.linkedin.com/in/sodium-na/ : 'Rongyu Na - @EcoForge'. Visible posts dated 2024 (e.g. activity 7169504702362017792 / Greentown Labs). Cannot login to confirm last-30-days.",
+    "Wayback CDX https://web.archive.org/web/20241009080011/https://sodiumna.com/ : portfolio site title 'Rongyu Na' — but no email and no Chinese characters. Domain expired ~2024-12-22 (later snapshots redirect to /lander; current DNS NXDOMAIN).",
+    "Google snippet on https://design.engineering.brown.edu/people/rongyu-na surfaced 'rongyu_na@brown.edu' as the contact email but the live page returns 'Access denied' to non-Brown IPs so I cannot directly verify the email landing on a primary source.",
+    "WebSearch '那荣钰' (exact-quoted, no other terms) returned ZERO primary sources containing the chars — only unrelated 荣钰 novels, 那荣 (Thai school principal), and one news mention parroting the search query. The chars 那荣钰 do not appear on sodiumna.com, IDSA, Brown faculty page, LinkedIn, IG, GitHub, or any verified page I could fetch."
+  ],
+  "char_match_status": "UNVERIFIED — no primary source displays '那荣钰' characters. Multiple sources note 'Chinese Manchu industrial designer' which is consistent with the rare Manchu surname 那 (Nà), but consistency is not direct char-match per Rule 0.",
+  "thirty_day_activity_status": "FAILED — most recent surfaced public activity is GitHub user update 2025-08-05 (>8 months stale as of 2026-05-01); LinkedIn visible posts are 2024; sodiumna.com expired Dec 2024; IDSA juror role last cited 2025. No April-2026 public activity found.",
+  "disambiguation_note": "Surname 那 is genuinely rare so pinyin 'Rongyu Na' uniquely anchors to the Brown/RISD/EcoForge designer in all surfaced search results. There are no competing 'Rongyu Na' candidates. However, per Rule 0 the candidate page must show the exact input characters, and per Rule 3 the identity must have last-30-days public activity. Both conditions fail here.",
+  "notes": "Skipping per Rules 0/3/4. The pinyin identity (Rongyu (Sodium) Na, ex-Brown MADE '24, EcoForge co-founder, ex-Amazon Lab126, IG @sodium_narongyu, GH narongyu, LI sodium-na) is robustly confirmed by 6+ independent sources — but (a) none of those primary sources display the chars 那荣钰, (b) no public activity in the last 30 days surfaced, and (c) the strongest email lead (rongyu_na@brown.edu) comes only from a Google snippet of a Brown faculty page that returns 'Access denied' to me, so I cannot verify the email is currently published. If rules were relaxed to accept the user's asserted char-match + a stale Brown alumni mailbox, rongyu_na@brown.edu would be the best guess (~0.55 confidence) — but per Rule 4 'better empty than wrong', skip-fast."
+}

@@ -1,0 +1,124 @@
+[
+  {
+    "id": "06044417-17c3-422e-bad1-341326cb6ce8",
+    "emails": [
+      "lgao5@central.uh.edu"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "062462a3-9e4d-4f34-961b-5590d9597007",
+    "emails": [
+      "jinxiaolong@ict.ac.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": {
+      "title": "Towards Knowledgeable Deep Research: Framework and Benchmark",
+      "author_name": "Xiaolong Jin",
+      "arxiv_id": "2604.07720v1"
+    }
+  },
+  {
+    "id": "06352f40-292f-4197-987f-b3ecf83ea41e",
+    "emails": [
+      "gdu@amazon.com"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "0653b409-40f5-4ab4-b6ec-d00858637ffc",
+    "emails": [
+      "justincui@ucla.edu"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "06694a8a-cbd6-40ba-91fb-11abd4c5224e",
+    "emails": [
+      "xiusu1994@csu.edu.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "0681a866-4573-4dbc-812b-da2ce2b493d0",
+    "emails": [
+      "xin.li@ustc.edu.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": {
+      "title": "LoViF 2026 Challenge on Real-World All-in-One Image Restoration: Methods and Results",
+      "author_name": "Xin Li",
+      "arxiv_id": "2604.19445"
+    }
+  },
+  {
+    "id": "069652ad-d950-484d-866e-fe06af77eb0f",
+    "emails": [
+      "liyanwhu@whu.edu.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "069db807-dce5-4342-b305-7d148c43a218",
+    "emails": [
+      "jingqiu.ding@inf.ethz.ch"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "06ad8764-7bda-4430-b86f-7b233cfd91c0",
+    "emails": [
+      "rongping.zeng@fda.hhs.gov"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "06b4eb0b-f460-4787-87a0-3407a517d589",
+    "emails": [
+      "wang.15543@buckeyemail.osu.edu"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": {
+      "title": "A Study of Failure Modes in Two-Stage Human-Object Interaction Detection",
+      "author_name": "Lemeng Wang",
+      "arxiv_id": "2604.13448"
+    }
+  }
+]

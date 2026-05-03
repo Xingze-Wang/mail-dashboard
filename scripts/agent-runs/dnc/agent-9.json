@@ -1,0 +1,20 @@
+[
+  {
+    "real_name": "张嘉琪",
+    "person_id": "c09defe1-09cf-4664-a65d-c411b1e92c0d",
+    "couldnt_find": true,
+    "notes": "Skip-fast: extremely common Chinese name with no disambiguator (no affiliation, no field, no handle). Cannot satisfy 2-signal + last-30-days rule without risking wrong attachment to a DNC person."
+  },
+  {
+    "real_name": "邱生峰",
+    "person_id": "417ddfda-d614-4f88-a74b-883cee4d2683",
+    "couldnt_find": true,
+    "notes": "Quoted-name search '邱生峰' 2026 returned no researcher/founder hits — only unrelated HK financial filings and feng-shui articles (matched on 民峰). No GitHub/Scholar/personal-site profile surfaced. No last-30-day activity found; cannot verify."
+  },
+  {
+    "real_name": "李升桂",
+    "person_id": "40e5d10c-7a96-4e0f-b85e-be05b5e9d488",
+    "couldnt_find": true,
+    "notes": "Quoted-name search '李升桂' 2026 returned zero direct matches — search engine fell back to similar-name results (李贞秀). No researcher profile, no recent activity, no email signal. Cannot satisfy 2-signal + 30-day rule."
+  }
+]

@@ -1,0 +1,6 @@
+{
+  "real_name": "潘峰",
+  "person_id": "9f292c89-3b5c-426d-bab5-e64d97a013c1",
+  "couldnt_find": true,
+  "notes": "Skip-fast on common-name disambiguation (Rule 2 + Rule 4). Slice provides no affiliation/topic hint. At least four equally-plausible 潘峰 candidates with exact char match: (1) 清华大学材料学院教授潘峰 — 薄膜/声表面波/自旋电子学方向 (https://www.mse.tsinghua.edu.cn/info/1024/1617.htm), (2) 厦门大学环境与生态学院潘峰, (3) 中国信通院无线方向潘峰, (4) Kstar(科士达)某事业部总监潘峰. Targeted searches for AI/LLM/CS-research signal under 潘峰 returned nothing — none of the four dominant candidates is an AI/CS-research figure, and no Chinese-character-anchored AI homepage / Scholar profile / arxiv author surfaced. Per task brief: 'likely skip-fast unless you find a single dominant AI/CS-research signal' — no such signal exists. Two-signal disambiguation (Rule 1) is impossible without a tiebreaker. Wrong email on a DNC record leaks the real person past dedup (Rule 4: better empty than wrong). Searches run: '潘峰 AI machine learning researcher 2026', '潘峰 论文 arxiv 2026 计算机', '潘峰 github AI 大模型', '潘峰 LLM 创业 startup 2026'. ~4 web fetches, stopped early per skip-fast guidance."
+}

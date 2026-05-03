@@ -41,11 +41,12 @@ The discipline: each loop answers a question the others **can't**. Multiple loop
 - Each proposed change must carry `expected_lift` and `weeks_to_evaluate` so Loop 3's Historian can grade it
 - Need a `tactical_proposals` table (status, proposer-personas, evidence-bundle JSON, expected_lift, weeks_to_evaluate, ship_decision, shipped_at, evaluation_due_at, actual_lift)
 
-**Personas** (per advisor):
+**Personas** (per advisor + user 2026-05-03 addition of Psychologist):
 - **Data Analyst** — surfaces the metric movement that motivates the proposal
 - **Copywriter** — owns the prose changes (templates, subject lines)
-- **Academic Proxy** — speaks for the recipient researcher's perspective; reads sampled actual replies
+- **Academic Proxy** — speaks for the recipient as *reader*: technical fit, comprehensibility
 - **Sales Director** — speaks for the rep's experience; reads helper bot conversations
+- **Psychologist** — speaks for the recipient as *human under social/professional pressure*: status anxiety, imposter feelings, cold-outreach fatigue. Also watches reps for burnout signals. Distinct from Academic Proxy: Proxy is "what does it say"; Psychologist is "how does it feel."
 - **Adversary** — attacks the proposal's premise. "What's the strongest reason this won't lift?"
 - **Synthesizer** — produces the final written proposal: change spec + expected lift + evaluation criteria
 
@@ -66,6 +67,7 @@ The discipline: each loop answers a question the others **can't**. Multiple loop
 - **Historian** — reads last 90 days of approved tactical decisions and their actual lift. Grades Loop 2's homework. Did we ship 12 changes that net-zeroed?
 - **Funnel Economist** — looks at the entire funnel as a unit. Identifies which stage is actually the bottleneck. "We're optimizing email click-rate but the bottleneck is WeChat-add."
 - **Constituent Advocate** — broader than Academic Proxy: speaks for both researcher AND rep as humans, not as conversion targets
+- **Psychologist** — long-horizon emotional capital. Are we building or eroding our reputation in the Chinese AI research community? Are reps showing sustainable engagement or mechanical script-running? More important at strategic horizon than tactical because tactical can't see drift in trust slowly.
 - **Adversary** — attacks proposed STRATEGIC changes. "You want cs.NE — do you have evidence neuroevolution Chinese researchers exist in volume?"
 - **Synthesizer** — same role
 

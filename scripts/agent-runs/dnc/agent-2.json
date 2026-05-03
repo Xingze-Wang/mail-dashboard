@@ -1,0 +1,20 @@
+[
+  {
+    "real_name": "陈凯申",
+    "person_id": "4691709c-826a-4676-8939-28bf7f85b78e",
+    "couldnt_find": true,
+    "notes": "No disambiguating signal. Note: '陈凯申' is a well-known Chinese internet meme — a mock back-translation of Chiang Kai-shek (蒋介石) from 'Chiang Kai-shek' rendered as if pinyin. High likelihood this is a placeholder/joke entry rather than a real researcher. Quoted-name search '陈凯申 2026 researcher OR founder OR github' surfaced zero matching profiles; only unrelated researchers with similar surnames (Tianxing Chen, Kaipeng Zhang, etc.). Skip per protocol — better empty than wrong."
+  },
+  {
+    "real_name": "张子尧",
+    "person_id": "b4185937-2dad-4c8e-94cf-8340285f8e9e",
+    "couldnt_find": true,
+    "notes": "Common 3-character Chinese name with no disambiguator (no affiliation, no field, no English variant given). Quoted-name searches '张子尧 2026 AI researcher founder' and '张子尧 github 2025 OR 2026' returned no matching profiles — only unrelated Tsinghua / Zhipu AI references. Pinyin variants (Zhang Ziyao / Ziyao Zhang) would yield many candidates with no way to choose. Skip per protocol's 'common name + no disambiguating signal' rule."
+  },
+  {
+    "real_name": "年兴",
+    "person_id": "24c36b16-882c-429d-886c-5d2d9c427c79",
+    "couldnt_find": true,
+    "notes": "年 is a relatively rare surname (which helps), but the 2-character name '年兴' alone is highly ambiguous and could also parse as a given name fragment. Searches '年兴 2026 researcher OR founder OR AI' and '年兴 github OR linkedin 创业 OR startup' returned zero matching profiles — only generic startup-resource pages. No recent (last-30d) commit, paper, or post tied to this exact name. Without an affiliation, field, or pinyin variant to anchor on, can't satisfy the 2-signal + last-30-days verification rule. Skip."
+  }
+]

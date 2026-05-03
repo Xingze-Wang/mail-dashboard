@@ -1,0 +1,20 @@
+[
+  {
+    "real_name": "易和阳",
+    "person_id": "76b206e8-37f0-42e3-a3ed-9a21820ca4f6",
+    "couldnt_find": true,
+    "notes": "易 is a moderately uncommon surname (helps), but quoted-name searches '\"易和阳\" 2026 github OR researcher OR founder', '\"易和阳\" 知乎 OR 微博 OR linkedin', and '\"易和阳\" 北大 OR 清华 OR PhD' returned zero matching profiles — only unrelated researchers and generic platform pages. Pinyin variants (Heyang Yi / Yi Heyang) surfaced no matching person; closest hit was a 'Heyang Wang' (different surname) on a 2026 trajectory-planning paper. No last-30-days signal anywhere. Skip per protocol — can't satisfy 2-signal + recency rule."
+  },
+  {
+    "real_name": "罗璇",
+    "person_id": "486a3d3a-fe60-4a9b-9c17-9c19c01f7660",
+    "couldnt_find": true,
+    "notes": "Too many plausible candidates with no disambiguator. Quoted-name search '\"罗璇\" 2026 AI researcher OR 创业 OR github' returned ambiguous results across at least 5+ distinct people: a Google Research scientist working on Project Starline (Xuan Luo), a data/Shapley-values researcher (ICDE 2025/SIGMOD 2024), a Tsinghua ZhangLab PhD (Dr. Xuan Luo), a CityU HK academic, a Penn State postdoc, plus a Chinese actress (mydramalist.com/people/118859). Without an affiliation, field, or pinyin spelling to anchor on, can't choose between them — protocol says flag don't auto-attach. Skip."
+  },
+  {
+    "real_name": "崔致豪",
+    "person_id": "3b929070-eddf-4058-a6db-b4df7a004571",
+    "couldnt_find": true,
+    "notes": "Single strong English-name candidate surfaced: Zhi-Hao Cui (Caltech PhD 2023 with Garnet Chan, currently Columbia postdoc with David Reichman, launching Cui Group at UC Irvine Summer 2026, github.com/zhcui, zhcui.com, columbia.edu email). HOWEVER — the pinyin 'Zhihao' is shared by 致豪 / 智豪 / 智浩 / 致浩 / 智昊 etc., and quoted-character search '\"崔致豪\" Caltech OR Columbia OR Irvine' returned zero hits confirming this Cui's Chinese name is specifically 致豪. Without character-level confirmation, attaching his email risks the dedup-gate failure mode the protocol warns against (wrong email on DNC person → real person gets skipped). Single signal at best, character match unverified — confidence < 0.5. Skip per protocol; rely on name-match path."
+  }
+]

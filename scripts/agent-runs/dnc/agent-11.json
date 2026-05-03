@@ -1,0 +1,20 @@
+[
+  {
+    "real_name": "宋鸿涌",
+    "person_id": "40bd3d3d-9202-4200-9499-108615fdc95c",
+    "couldnt_find": true,
+    "notes": "No disambiguator (affiliation/lab/field) provided in slice. Skip-fast: cannot verify identity against any candidate without context, and the 'last 30 days activity' rule requires linking a specific account to this exact person."
+  },
+  {
+    "real_name": "王洋",
+    "person_id": "d1691b7e-8a02-4895-97e5-e593f370b7bb",
+    "couldnt_find": true,
+    "notes": "Common name explicitly called out in protocol as un-disambiguable. Skip-fast: too many plausible candidates (researchers, founders, GitHub users); attaching a wrong email to a DNC person would silently break the dedup gate."
+  },
+  {
+    "real_name": "那荣钰",
+    "person_id": "823e5840-b841-4cba-8221-3547d7c82af0",
+    "couldnt_find": true,
+    "notes": "Uncommon surname (那) but no disambiguator provided. Without affiliation/field/handle context, cannot satisfy the 2-independent-signals + last-30-days activity rule. Skip-fast per protocol."
+  }
+]

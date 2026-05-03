@@ -55,6 +55,12 @@ const ROSTER: Persona[] = [
     question: "Beyond metrics, what's degrading or improving in the human experience — for the recipient researchers AND for our reps? Cite specific evidence (helper bot conversations, inbound replies, rep tone).",
   },
   {
+    key: "psychologist",
+    display: "Psychologist",
+    system: "你是 psychologist — 在 strategic horizon 上, 你关心 long-term trust + 集体 emotional posture. Recipients: 我们正在 build 还是 erode 我们在 community 的 reputation? Reps: 系统正在 produce sustainable engagement 还是 burnout? 不要 vague — 引用 specific 例子.",
+    question: "Looking at 90 days: is the program building or eroding emotional capital with the Chinese AI research community? Are reps showing sustainable engagement or signs of mechanical script-running? What structural change would address the deepest psychological friction (recipient OR rep)?",
+  },
+  {
     key: "adversary",
     display: "Adversary",
     system: "你 attack proposed STRATEGIC changes — not tactical ones. Bigger swings, more skepticism.",

@@ -1,0 +1,65 @@
+{
+  "writes": [],
+  "candidates": [
+    {
+      "pid": "003b8663-883a-4e11-90e0-0e3d27580e62",
+      "field": "real_name",
+      "value": "Jue Jiang",
+      "agents": [
+        "A1"
+      ],
+      "confidence": 0.97,
+      "reason": "single-agent"
+    },
+    {
+      "pid": "003b8663-883a-4e11-90e0-0e3d27580e62",
+      "field": "affiliation",
+      "value": "Memorial Sloan Kettering Cancer Center (Department of Medical Physics, Harini Veeraraghavan Lab)",
+      "agents": [
+        "A1"
+      ],
+      "confidence": 0.97,
+      "reason": "single-agent"
+    },
+    {
+      "pid": "003b8663-883a-4e11-90e0-0e3d27580e62",
+      "field": "github_users",
+      "value": "LTumorSegmentationTest",
+      "agents": [
+        "A1"
+      ],
+      "confidence": 0.55,
+      "reason": "single-agent"
+    },
+    {
+      "pid": "00687abf-e965-4874-87cc-e1e31a8fb70d",
+      "field": "real_name",
+      "value": "Zilu Meng",
+      "agents": [
+        "A1"
+      ],
+      "confidence": 0.99,
+      "reason": "single-agent"
+    },
+    {
+      "pid": "00687abf-e965-4874-87cc-e1e31a8fb70d",
+      "field": "affiliation",
+      "value": "University of Washington (Department of Atmospheric Sciences; advisors Gregory J. Hakim & Eric J. Steig)",
+      "agents": [
+        "A1"
+      ],
+      "confidence": 0.99,
+      "reason": "single-agent"
+    },
+    {
+      "pid": "00687abf-e965-4874-87cc-e1e31a8fb70d",
+      "field": "github_users",
+      "value": "ZiluM",
+      "agents": [
+        "A1"
+      ],
+      "confidence": 0.99,
+      "reason": "single-agent"
+    }
+  ]
+}

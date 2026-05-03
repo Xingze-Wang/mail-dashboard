@@ -1,0 +1,116 @@
+[
+  {
+    "id": "018489df-2857-4402-b81d-ad84c4a708b5",
+    "emails": [
+      "ruanjingqing2019@ia.ac.cn"
+    ],
+    "real_name": "Jingqing Ruan",
+    "affiliation": "Institute of Automation, Chinese Academy of Sciences",
+    "hf_users": [],
+    "github_users": []
+  },
+  {
+    "id": "002fa991-fe8f-4480-996a-2c63b2a07980",
+    "emails": [
+      "yali.du@kcl.ac.uk"
+    ],
+    "real_name": "Yali Du",
+    "affiliation": "King's College London",
+    "hf_users": [
+      "YaliDU"
+    ],
+    "github_users": [
+      "yalidu"
+    ]
+  },
+  {
+    "id": "03b0a5ca-a3e1-4fa3-b95e-4dfbb61a2afa",
+    "emails": [
+      "cx@cs.cmu.edu"
+    ],
+    "real_name": "Chenyan Xiong",
+    "affiliation": "Carnegie Mellon University",
+    "hf_users": [
+      "xiongchenyan"
+    ],
+    "github_users": [
+      "xiongchenyan"
+    ]
+  },
+  {
+    "id": "0135f1f6-043c-4930-b689-90f098559d7a",
+    "emails": [
+      "tianshuichen@gmail.com"
+    ],
+    "real_name": "Tianshui Chen",
+    "affiliation": "Guangdong University of Technology",
+    "hf_users": [
+      "TianshuiChen"
+    ],
+    "github_users": [
+      "tianshuichen"
+    ]
+  },
+  {
+    "id": "02bc0979-d17c-49f9-88b7-fa0ab7361bf3",
+    "emails": [
+      "bingtsongli@gmail.com"
+    ],
+    "real_name": "Bingcong Li",
+    "affiliation": "ETH Zurich",
+    "hf_users": [],
+    "github_users": [
+      "BingcongLi"
+    ]
+  },
+  {
+    "id": "0333c2b9-9688-430e-b9fa-a57d33fa63f4",
+    "emails": [
+      "suntao.saltfish@outlook.com"
+    ],
+    "real_name": "Tao Sun",
+    "affiliation": "National University of Defense Technology",
+    "hf_users": [],
+    "github_users": [
+      "nudtsuntao1991"
+    ]
+  },
+  {
+    "id": "026a265e-2b85-4764-9411-bccc04e50911",
+    "emails": [
+      "ziyu.wang@nyu.edu"
+    ],
+    "real_name": "Ziyu Wang",
+    "affiliation": "New York University",
+    "hf_users": [
+      "ZzWaang"
+    ],
+    "github_users": [
+      "ZZWaang"
+    ]
+  },
+  {
+    "id": "01532cf3-fa77-478f-8ce9-6a9f44983aa4",
+    "emails": [
+      "yuxuanlin24@m.fudan.edu.cn"
+    ],
+    "real_name": "Yuxuan Lin",
+    "affiliation": "Fudan University",
+    "hf_users": [],
+    "github_users": []
+  },
+  {
+    "id": "01cdb90a-fdc7-4849-9783-a44ab95be8fd",
+    "emails": [
+      "andy@osmosis.ai"
+    ],
+    "real_name": "Baiqing Lyu",
+    "affiliation": "Osmosis AI",
+    "hf_users": [
+      "BaiqingL"
+    ],
+    "github_users": [
+      "BaiqingL"
+    ]
+  }
+]

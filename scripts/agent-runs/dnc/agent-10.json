@@ -1,0 +1,20 @@
+[
+  {
+    "real_name": "潘峰",
+    "person_id": "9f292c89-3b5c-426d-bab5-e64d97a013c1",
+    "couldnt_find": true,
+    "notes": "Common name, no disambiguator in input. Multiple plausible candidates: Tsinghua MSE Prof Pan Feng (spintronics, Nature paper Mar 2026), Xiamen U environmental/ecology Pan Feng, CAICT wireless researcher, Kstar director, plus several LinkedIn profiles. Cannot pick correct person without affiliation/field hint — skip-fast per protocol."
+  },
+  {
+    "real_name": "陈星宇",
+    "person_id": "6de15299-9f70-4345-a622-0d6d5c3e4779",
+    "couldnt_find": true,
+    "notes": "Common name, no disambiguator. Many plausible candidates: Xingyu Chen at Kuaishou (CV researcher), Vismeta Co-Founder/CEO in Beijing, academic on China maritime power, multiple LinkedIn profiles across Shanghai/Shenzhen/Qingdao/UK, and a World Cube Association entry. Cannot disambiguate — skip-fast per protocol."
+  },
+  {
+    "real_name": "胡晓彬",
+    "person_id": "1afd7a47-e6c3-4e4b-b842-d476ec62e1ea",
+    "couldnt_find": true,
+    "notes": "No clear high-signal hits for this exact name (top results were unrelated noise or different name 胡晓军). No disambiguator in input to guide deeper search — skip-fast per protocol."
+  }
+]

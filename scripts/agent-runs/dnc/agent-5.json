@@ -1,0 +1,20 @@
+[
+  {
+    "real_name": "胡景皓",
+    "person_id": "d582e9e7-9d03-4310-ac6e-f13abdbdff07",
+    "couldnt_find": true,
+    "notes": "Common name, no disambiguator. Quoted-name search '胡景皓' 2025 returned only generic CVPR/ICCV 2025 paper-list pages, no profile/commit/publication tied to this exact person. No way to verify a 30-day activity signal. Skip-fast."
+  },
+  {
+    "real_name": "秦成伟",
+    "person_id": "6a7f28cc-66bd-4c09-8e8b-cf0bffed5485",
+    "couldnt_find": true,
+    "notes": "Common name, no disambiguator. Quoted-name search '秦成伟' 2025 returned zero results. No GitHub / Scholar / personal-site hit, no way to satisfy the last-30-days verification rule. Skip-fast."
+  },
+  {
+    "real_name": "于佳辰",
+    "person_id": "34c290cf-0157-4214-b0d8-cbea3d141852",
+    "couldnt_find": true,
+    "notes": "Common name, no disambiguator. Quoted-name search '于佳辰' 2025 returned only generic 2025 conference paper-list pages, no specific profile/commit/publication tied to this person. Cannot verify recent activity. Skip-fast."
+  }
+]

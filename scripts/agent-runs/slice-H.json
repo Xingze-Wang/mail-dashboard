@@ -1,0 +1,124 @@
+[
+  {
+    "id": "06b88a3e-16d8-4d7c-9155-4039b8dfbeb7",
+    "emails": [
+      "gaoyingjie@buaa.edu.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "06c2c3ae-8dc6-4eb0-ba10-28adc27d2e3e",
+    "emails": [
+      "tianshuo.zhang@nlpr.ia.ac.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "06c375c5-a356-4e24-bb9a-61afc7212779",
+    "emails": [
+      "ming.jin@griffith.edu.au"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "06cf6f97-eea9-4f74-a91f-e598a8ac3806",
+    "emails": [
+      "xinmei@ustc.edu.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": {
+      "title": "Weight Patching: Toward Source-Level Mechanistic Localization in LLMs",
+      "author_name": "Xinmei Tian",
+      "arxiv_id": "2604.13694"
+    }
+  },
+  {
+    "id": "06e1b91c-adad-4a65-9411-6232e16ce0b8",
+    "emails": [
+      "haozhen001@e.ntu.edu.sg"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "06ebe92d-b5ea-47b3-8e27-06dfcbd4e6d5",
+    "emails": [
+      "zhitao@nus.edu.sg"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "06f78841-06c5-4b22-b0c6-91f9aadb3a09",
+    "emails": [
+      "chenfulin@sues.edu.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "070c1aa4-04b3-4de1-be12-4bae66cd9a36",
+    "emails": [
+      "zyw@pku.edu.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": {
+      "title": "DOSE: Data Selection for Multi-Modal LLMs via Off-the-Shelf Models",
+      "author_name": "Yiwu Zhong",
+      "arxiv_id": "2604.16979"
+    }
+  },
+  {
+    "id": "0718d273-9479-44c6-bbb3-78f4a658a373",
+    "emails": [
+      "jwen341@connect.hkust-gz.edu.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": {
+      "title": "Rule-VLN: Bridging Perception and Compliance via Semantic Reasoning and Geometric Rectification",
+      "author_name": "Jiawen Wen",
+      "arxiv_id": "2604.16993"
+    }
+  },
+  {
+    "id": "071a46fb-2001-44e9-bfcc-eb82316cf9e9",
+    "emails": [
+      "beier.zhu@ntu.edu.sg"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  }
+]

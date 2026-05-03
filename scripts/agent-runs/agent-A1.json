@@ -1,0 +1,86 @@
+[
+  {
+    "person_id": "0024806c-7d66-41fc-81b2-f87f4ab724fe",
+    "email": "lzcthu12@gmail.com",
+    "proposals": {},
+    "couldnt_find": ["hf_users", "github_users", "real_name", "affiliation"],
+    "notes": "Personal Gmail with opaque prefix (likely initials 'lzc' + 'thu' hint). No public footprint indexed. Skipped fast per protocol."
+  },
+  {
+    "person_id": "003b8663-883a-4e11-90e0-0e3d27580e62",
+    "email": "jiangj1@mskcc.org",
+    "proposals": {
+      "real_name": {
+        "value": "Jue Jiang",
+        "confidence": 0.97,
+        "evidence": [
+          "MSKCC faculty page https://www.mskcc.org/profile/jue-jiang (Department of Medical Physics, Predictive Informatics)",
+          "MSKCC Synapse profile https://synapse.mskcc.org/synapse/people/19037-Jue_Jiang",
+          "Google Scholar https://scholar.google.com/citations?user=gJhLEPsAAAAJ matches paper_hint title 'Co-distilled attention guided masked image modeling...'",
+          "Email prefix 'jiangj1' matches 'Jiang, Jue' on MSKCC convention"
+        ]
+      },
+      "affiliation": {
+        "value": "Memorial Sloan Kettering Cancer Center (Department of Medical Physics, Harini Veeraraghavan Lab)",
+        "confidence": 0.97,
+        "evidence": [
+          "MSKCC faculty page https://www.mskcc.org/profile/jue-jiang",
+          "Lab member page https://www.mskcc.org/research-areas/labs/members/jue-jiang-01",
+          "Email domain @mskcc.org confirms institution"
+        ]
+      },
+      "github_users": [
+        {
+          "value": "LTumorSegmentationTest",
+          "confidence": 0.55,
+          "evidence": [
+            "Dominant contributor (26 commits) to The-Veeraraghavan-Lab/SMIT, Jue Jiang's MICCAI 2022 first-author paper (https://github.com/The-Veeraraghavan-Lab/SMIT)",
+            "Owns 43 personal repos heavily focused on medical image segmentation, transformers, MAE — matches Jue Jiang's research profile",
+            "Account name 'WoW' / no email / no bio — circumstantial only, not directly verified by name or email"
+          ]
+        }
+      ]
+    },
+    "couldnt_find": ["hf_users"],
+    "notes": "Real name + affiliation high-confidence via official MSK pages and matching arxiv title. GitHub candidate is plausible but single-signal (repo authorship only); no email/name on the profile so confidence kept below 0.7. No HuggingFace account found."
+  },
+  {
+    "person_id": "00687abf-e965-4874-87cc-e1e31a8fb70d",
+    "email": "zilumeng@uw.edu",
+    "proposals": {
+      "real_name": {
+        "value": "Zilu Meng",
+        "confidence": 0.99,
+        "evidence": [
+          "Personal site https://zilum.github.io/ (GitHub Pages — ownership-proven) lists mailto:zilumeng@uw.edu and identifies as 'Zilu Meng, Ph.D. Candidate at University of Washington'",
+          "GitHub profile https://github.com/ZiluM has name 'Zilu Meng', company 'University of Washington', blog 'zilum.github.io'",
+          "UW PCC profile https://pcc.uw.edu/profiles/zilu-meng/",
+          "Google Scholar https://scholar.google.com/citations?user=s9Qn0d0AAAAJ"
+        ]
+      },
+      "affiliation": {
+        "value": "University of Washington (Department of Atmospheric Sciences; advisors Gregory J. Hakim & Eric J. Steig)",
+        "confidence": 0.99,
+        "evidence": [
+          "https://zilum.github.io/ states 'Ph.D. Candidate at the University of Washington'",
+          "GitHub profile company field 'University of Washington', location 'Seattle, WA'",
+          "UW Program on Climate Change profile https://pcc.uw.edu/profiles/zilu-meng/",
+          "Email domain @uw.edu confirms institution"
+        ]
+      },
+      "github_users": [
+        {
+          "value": "ZiluM",
+          "confidence": 0.99,
+          "evidence": [
+            "zilum.github.io is a GitHub Pages site for user ZiluM (ownership proof) and lists mailto:zilumeng@uw.edu",
+            "GitHub profile https://api.github.com/users/ZiluM: name 'Zilu Meng', company 'University of Washington', blog 'zilum.github.io'",
+            "Sacpy package https://github.com/ZiluM/sacpy authored under this account, cited from his personal site"
+          ]
+        }
+      ]
+    },
+    "couldnt_find": ["hf_users"],
+    "notes": "No HuggingFace account found at huggingface.co/ZiluM or huggingface.co/zilumeng (404). Research domain is climate/data-assimilation, not LLMs, so absence is expected."
+  }
+]

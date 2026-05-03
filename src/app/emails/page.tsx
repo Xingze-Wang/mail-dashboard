@@ -74,8 +74,18 @@ interface ClickEvent {
   timestamp: string | null;
 }
 
+// Mirror Resend's per-email "EMAIL EVENTS" panel: horizontal chip
+// timeline (Sent → Delivered → Opened → Clicked × N) + counts, with
+// the per-click link list below. Source: webhook_events via
+// /api/emails/[id]/clicks (which returns ALL event types, not just
+// clicks — older code filtered them out, hiding opened/delivered).
 function ClickHistory({ emailId }: { emailId: string }) {
-  const [data, setData] = useState<{ clickCount: number; distinctLinkCount: number; events: ClickEvent[] } | null>(null);
+  const [data, setData] = useState<{
+    eventCount: number;
+    clickCount: number;
+    distinctLinkCount: number;
+    events: ClickEvent[];
+  } | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -83,51 +93,118 @@ function ClickHistory({ emailId }: { emailId: string }) {
     setLoading(true);
     fetch(`/api/emails/${emailId}/clicks`)
       .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (!cancelled) setData(d);
-      })
-      .catch(() => {
-        if (!cancelled) setData(null);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
+      .then((d) => { if (!cancelled) setData(d); })
+      .catch(() => { if (!cancelled) setData(null); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, [emailId]);
 
   if (loading || !data) return null;
-  if (data.clickCount === 0) return null;
+  if (data.eventCount === 0) return null;
 
   const clicks = data.events.filter((e) => e.type === "email.clicked");
+  const opens = data.events.filter((e) => e.type === "email.opened").length;
+  const delivered = data.events.some((e) => e.type === "email.delivered");
+  const sent = data.events.some((e) => e.type === "email.sent");
+  const bounced = data.events.some((e) => e.type === "email.bounced");
+  const complained = data.events.some((e) => e.type === "email.complained");
+
+  // Strip the "email." prefix and pretty-up the chip labels.
+  const chipLabel = (t: string) => t.replace(/^email\./, "");
+  // Resend-style colors: sent/delivered = blue/green, opened/clicked =
+  // accent, bounced/complained = red.
+  const chipBg = (t: string) => {
+    if (t === "email.bounced" || t === "email.complained") return "rgba(239, 68, 68, 0.12)";
+    if (t === "email.clicked" || t === "email.opened") return "rgba(99, 102, 241, 0.12)";
+    if (t === "email.delivered") return "rgba(34, 197, 94, 0.12)";
+    return "rgba(148, 163, 184, 0.15)";
+  };
+  const chipFg = (t: string) => {
+    if (t === "email.bounced" || t === "email.complained") return "#ef4444";
+    if (t === "email.clicked" || t === "email.opened") return "#6366f1";
+    if (t === "email.delivered") return "#22c55e";
+    return "var(--text-secondary)";
+  };
 
   return (
     <div className="section-card" style={{ marginTop: 16, padding: "14px 18px" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-        <MousePointerClick className="h-4 w-4" style={{ color: "var(--text-secondary)" }} />
-        <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>
-          {data.clickCount} click{data.clickCount === 1 ? "" : "s"}
-          {data.distinctLinkCount > 1 && (
-            <span style={{ color: "var(--text-tertiary)", fontWeight: 400, marginLeft: 6 }}>
-              ({data.distinctLinkCount} distinct links)
-            </span>
-          )}
-        </span>
+      {/* Aggregate header — counts at a glance */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <MousePointerClick className="h-4 w-4" style={{ color: "var(--text-secondary)" }} />
+          <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>Email events</span>
+        </div>
+        {sent && <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>· sent</span>}
+        {delivered && <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>· delivered</span>}
+        {opens > 0 && (
+          <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>· {opens} open{opens === 1 ? "" : "s"}</span>
+        )}
+        {data.clickCount > 0 && (
+          <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+            · {data.clickCount} click{data.clickCount === 1 ? "" : "s"}
+            {data.distinctLinkCount > 1 ? ` (${data.distinctLinkCount} distinct)` : ""}
+          </span>
+        )}
+        {bounced && <span style={{ fontSize: 11, color: "#ef4444" }}>· bounced</span>}
+        {complained && <span style={{ fontSize: 11, color: "#ef4444" }}>· complained</span>}
       </div>
-      <ul style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12, color: "var(--text-secondary)" }}>
-        {clicks.map((c, i) => (
-          <li key={i} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            <span style={{ color: "var(--text)", wordBreak: "break-all" }}>
-              {c.link ?? "(unknown link)"}
+
+      {/* Horizontal chip timeline — every event in chronological order */}
+      <div style={{
+        display: "flex",
+        gap: 6,
+        overflowX: "auto",
+        paddingBottom: 6,
+        marginBottom: clicks.length > 0 ? 12 : 0,
+      }}>
+        {data.events.map((e, i) => (
+          <div
+            key={i}
+            title={`${e.type} — ${new Date(e.timestamp ?? e.occurredAt).toLocaleString()}${e.link ? "\n" + e.link : ""}`}
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: 3,
+              padding: "6px 10px",
+              borderRadius: 6,
+              background: chipBg(e.type),
+              fontSize: 11,
+              fontWeight: 500,
+              color: chipFg(e.type),
+              whiteSpace: "nowrap",
+              minWidth: "fit-content",
+            }}
+          >
+            <span style={{ textTransform: "capitalize" }}>{chipLabel(e.type)}</span>
+            <span style={{ fontSize: 10, color: "var(--text-tertiary)", fontWeight: 400 }}>
+              {new Date(e.timestamp ?? e.occurredAt).toLocaleString(undefined, {
+                month: "short",
+                day: "numeric",
+                hour: "numeric",
+                minute: "2-digit",
+              })}
             </span>
-            <span style={{ color: "var(--text-tertiary)" }}>
-              {new Date(c.timestamp ?? c.occurredAt).toLocaleString()}
-              {c.ipAddress ? ` · ${c.ipAddress}` : ""}
-            </span>
-          </li>
+          </div>
         ))}
-      </ul>
+      </div>
+
+      {/* Per-click link list — only show if there were clicks */}
+      {clicks.length > 0 && (
+        <ul style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12, color: "var(--text-secondary)" }}>
+          {clicks.map((c, i) => (
+            <li key={i} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              <span style={{ color: "var(--text)", wordBreak: "break-all" }}>
+                {c.link ?? "(unknown link)"}
+              </span>
+              <span style={{ color: "var(--text-tertiary)" }}>
+                {new Date(c.timestamp ?? c.occurredAt).toLocaleString()}
+                {c.ipAddress ? ` · ${c.ipAddress}` : ""}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

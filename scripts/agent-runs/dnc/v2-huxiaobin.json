@@ -1,0 +1,16 @@
+{
+  "real_name": "胡晓彬",
+  "person_id": "1afd7a47-e6c3-4e4b-b842-d476ec62e1ea",
+  "email": {
+    "value": "xbhunanu@126.com",
+    "confidence": 0.92,
+    "evidence": [
+      "https://web.archive.org/web/20260213233012/https://huuxiaobin.github.io/ — personal site explicitly says 'Xiaobin Hu (胡晓彬)' (exact char match, 彬 not 斌); active mailto link is xbhunanu@126.com (the gmail variant xbhunanu@gmail.com is commented out in HTML); page also lists GitHub HUuxiaobin and Google Scholar 3lMuodUAAAAJ as the same identity",
+      "https://api.github.com/users/HUuxiaobin — GitHub profile name 'Xiaobin HU(kevin)', company 'Technische Universität München (TUM)', location 'Germany'; repos cover the same research areas the personal site claims (DiffuMatting, VTBench, BraTS medical-imaging, face-super-resolution); last public WatchEvent 2026-04-28, last repo push 2026-04-22, profile updated 2026-04-23 — well within last 30 days",
+      "https://scholar.google.de/citations?user=3lMuodUAAAAJ&hl=en — Scholar profile lists affiliation 'NUS@LV-Lab;Tencent;TUM' with 'Verified email at tum.de', matching the personal-site bio (Senior Research Fellow at NUS LV-Lab under Prof. Shuicheng Yan, ex-Tencent, TUM PhD)",
+      "https://arxiv.org/abs/2403.06168 — DiffuMatting (ECCV 2024) authored by Xiaobin Hu; same paper appears as a featured project on huuxiaobin.github.io and as repo HUuxiaobin/DiffuMatting (last pushed 2025-10-30)"
+    ]
+  },
+  "couldnt_find": false,
+  "notes": "Char-match: 胡晓彬 confirmed verbatim on personal site (NOT 胡晓斌, NOT 吴晓彬). Disambiguation: there are other 'Xiaobin Hu' people (SJTU materials science Prof, Northwestern materials science Xiaobing Hu) — ruled out by research-area mismatch and different Scholar IDs. The DNC target is the CV/medical-imaging Xiaobin Hu (TUM PhD → Tencent Youtu → currently NUS LV-Lab Senior Research Fellow under Shuicheng Yan), which exactly matches the user's hint that 'Xiaobin Hu at Tsinghua is a known CV/medical-imaging researcher' (he isn't at Tsinghua but the field matches; collaborates with Tsinghua/THU folks via Tencent). 30d activity: GitHub events on 2026-04-28, repo push 2026-04-22, recent paper 'Landscape of Medical Agents Survey' announced 11/2025. Email choice: personal site has both xbhunanu@126.com (active mailto, primary) and xbhunanu@gmail.com (commented-out HTML, secondary); both belong to the same person but the 126.com is the canonical one he advertises via the envelope icon."
+}

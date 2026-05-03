@@ -1,0 +1,13 @@
+agent 15 (pdf-cover): 200 papers
+  25/200 (emails=5, repos+=0, new_persons=0)  50/200 (emails=8, repos+=0, new_persons=1)  75/200 (emails=14, repos+=0, new_persons=1)  100/200 (emails=20, repos+=0, new_persons=1)  125/200 (emails=22, repos+=0, new_persons=1)  150/200 (emails=24, repos+=0, new_persons=1)  175/200 (emails=29, repos+=0, new_persons=3)  200/200 (emails=34, repos+=0, new_persons=4)  200/200 (emails=34, repos+=0, new_persons=4)  200/200 (emails=34, repos+=0, new_persons=4)  200/200 (emails=34, repos+=0, new_persons=4)  200/200 (emails=34, repos+=0, new_persons=4)  200/200 (emails=34, repos+=0, new_persons=4)  200/200 (emails=34, repos+=0, new_persons=4)  200/200 (emails=34, repos+=0, new_persons=5)
+done: scanned=200 withEmails=34 totalEmails=42 repoUpdates=0 newPersons=5 errors=0 duration_ms=34113
+{"agent":"15","strategy":"pdf-cover","scanned":200,"wins":34,"errors":0,"new_persons":5,"duration_ms":34113}
+summary appended: {
+  agent: '15',
+  strategy: 'pdf-cover',
+  scanned: 200,
+  wins: 34,
+  errors: 0,
+  new_persons: 5,
+  duration_ms: 34113
+}

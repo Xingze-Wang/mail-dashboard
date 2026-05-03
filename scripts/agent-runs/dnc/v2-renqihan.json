@@ -1,0 +1,17 @@
+{
+  "real_name": "任启涵",
+  "person_id": "3184534a-f289-43ec-8cfe-ccadfb176c5c",
+  "email": {
+    "value": "renqihan@sjtu.edu.cn",
+    "confidence": 0.97,
+    "evidence": [
+      "https://nebularaid2000.github.io/ : personal site lists mailto:renqihan@sjtu.edu.cn for Qihan Ren, Ph.D. at SJTU, advised by Quanshi Zhang, member of Lab for Interpretable Machine Learning",
+      "https://scholar.google.com/citations?user=ybTy_DwAAAAJ : Google Scholar profile 'Qihan Ren', verified email domain sjtu.edu.cn, affiliation SJTU, publications match personal site (Bottleneck of DNNs ICLR 2022 oral, Bayesian NN ICML 2023, Interaction Sparsity ICLR 2024, Interaction Dynamics NeurIPS 2024)",
+      "https://api.github.com/users/Nebularaid2000 : GitHub user Nebularaid2000 name='Qihan Ren', company='Shanghai Jiao Tong University', blog=nebularaid2000.github.io — cross-confirms personal site identity",
+      "https://contribute.sjtu.edu.cn/storage/post/2024/11/cc16a6fb086a34b4023af9ecc2cfc913.pdf : SJTU 2024 doctoral scholarship list shows 任启涵 (exact chars) in 电子信息与电气工程学院 — same SEIEE school where Quanshi Zhang advises PhDs",
+      "https://api.github.com/users/Nebularaid2000/events/public : GitHub activity 2026-04-26, 2026-04-21, 2026-04-19, 2026-04-16, 2026-04-11 — pushes/issues on rethink_sft_generalization repo (his 2026 first-author preprint listed on personal site). Active within last 30 days."
+    ]
+  },
+  "couldnt_find": false,
+  "notes": "Char-match: 任启涵 (surname 任 'Ren') confirmed via SJTU official PDF listing 任启涵 in 电子信息与电气工程学院 (the exact school where advisor Quanshi Zhang holds his appointment). No surname-collision risk: 任 has no common pinyin homophones in academic CS at SJTU. Disambiguation: only one Qihan Ren in Quanshi Zhang's XAI group; personal site, Scholar profile, GitHub, and SJTU SEIEE doctoral list all triangulate to the same person. Email renqihan@sjtu.edu.cn is published directly on the personal site mailto link (not constructed). Last-30d activity confirmed via GitHub PushEvents/IssueCommentEvents on his own first-author preprint repo through 2026-04-26 (today is 2026-05-01, so within 5 days). Currently interning at Minimax (2026.01-present per personal site)."
+}

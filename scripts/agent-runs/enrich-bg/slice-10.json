@@ -1,0 +1,402 @@
+{
+  "agent": 10,
+  "strategy": "gh-repo",
+  "items": [
+    {
+      "arxiv_id": "2604.18356",
+      "github_repo": "hzp3517/ComPASS"
+    },
+    {
+      "arxiv_id": "2604.18639",
+      "github_repo": "YuZhiyin/EasyRL"
+    },
+    {
+      "arxiv_id": "2604.18107",
+      "github_repo": "zhoujiahuan1991/CVPR2026-PDF"
+    },
+    {
+      "arxiv_id": "2604.07851v1",
+      "github_repo": "jiani-huang/ReRec"
+    },
+    {
+      "arxiv_id": "2604.15271",
+      "github_repo": "ProjectNeura/SegWithU"
+    },
+    {
+      "arxiv_id": "2604.18069",
+      "github_repo": "Leixin-Zhang/Socio_Contrastive_Learning"
+    },
+    {
+      "arxiv_id": "2604.17476",
+      "github_repo": "georgia-tech-synergy-lab/Privatar"
+    },
+    {
+      "arxiv_id": "2604.07759v1",
+      "github_repo": "MAPGroup/WUTDet"
+    },
+    {
+      "arxiv_id": "2604.12890",
+      "github_repo": "RUCAIBox/LMM-Searcher"
+    },
+    {
+      "arxiv_id": "2604.20048",
+      "github_repo": "jameslemon2002/aibias"
+    },
+    {
+      "arxiv_id": "2604.13692",
+      "github_repo": "PuXiao06/DRGD"
+    },
+    {
+      "arxiv_id": "2604.12254",
+      "github_repo": "mindmemory-ai/dksc"
+    },
+    {
+      "arxiv_id": "2604.13565",
+      "github_repo": "Yunkaidang/UHR"
+    },
+    {
+      "arxiv_id": "2604.14934",
+      "github_repo": "zhiqu22/XQ-MEval"
+    },
+    {
+      "arxiv_id": "2604.17274",
+      "github_repo": "Yunkaidang/Instinct-vs.-Reflection"
+    },
+    {
+      "arxiv_id": "2604.16593",
+      "github_repo": "jacklanda/SemanticQA"
+    },
+    {
+      "arxiv_id": "2604.17927",
+      "github_repo": "flysnow1024/BI-Cap"
+    },
+    {
+      "arxiv_id": "2604.12500",
+      "github_repo": "watermeleon/conditional_spec_gaming"
+    },
+    {
+      "arxiv_id": "2604.20041",
+      "github_repo": "apple/ml-itarflow"
+    },
+    {
+      "arxiv_id": "2604.18740",
+      "github_repo": "marszzibros/C-arm-localization-LLMs.git"
+    },
+    {
+      "arxiv_id": "2604.18471",
+      "github_repo": "imagination-research/NI-Sampling"
+    },
+    {
+      "arxiv_id": "2604.19414",
+      "github_repo": "RUCAIBox/RecBole"
+    },
+    {
+      "arxiv_id": "2604.19351",
+      "github_repo": "Zhihan-Zh/DASH-KV"
+    },
+    {
+      "arxiv_id": "2604.12243",
+      "github_repo": "tsingyuai/scientify"
+    },
+    {
+      "arxiv_id": "2604.15967",
+      "github_repo": "wooyeolbaek/attention-map-diffusers"
+    },
+    {
+      "arxiv_id": "2604.19254",
+      "github_repo": "ShadowLLM/shadow-peft"
+    },
+    {
+      "arxiv_id": "2604.18124",
+      "github_repo": "Rambo-Yi/TLora"
+    },
+    {
+      "arxiv_id": "2604.16502",
+      "github_repo": "zpc456/TopoVLM"
+    },
+    {
+      "arxiv_id": "2604.16952",
+      "github_repo": "scenarri/CoDeMAE"
+    },
+    {
+      "arxiv_id": "2604.19034",
+      "github_repo": "amap-cvlab/ABot-Explorer"
+    },
+    {
+      "arxiv_id": "2604.18993",
+      "github_repo": "higherhu/AutoAWG"
+    },
+    {
+      "arxiv_id": "2604.19093",
+      "github_repo": "XuJinglinn/AdaPGC"
+    },
+    {
+      "arxiv_id": "2604.18939",
+      "github_repo": "hoseinzadeehsan/TabEmb"
+    },
+    {
+      "arxiv_id": "2604.16243",
+      "github_repo": "JethroJames/FFR.git"
+    },
+    {
+      "arxiv_id": "2604.13333",
+      "github_repo": "irisfreesiri/SSD-GS"
+    },
+    {
+      "arxiv_id": "2604.19185",
+      "github_repo": "IKMLab/SCURank"
+    },
+    {
+      "arxiv_id": "2604.18759",
+      "github_repo": "trust-nlp/ImbalanceLearning"
+    },
+    {
+      "arxiv_id": "2604.17808",
+      "github_repo": "EfficientPPML/MORPH"
+    },
+    {
+      "arxiv_id": "2604.18713",
+      "github_repo": "NUBagciLab/Prostate-Lesion-Segmentation"
+    },
+    {
+      "arxiv_id": "2604.18739",
+      "github_repo": "Jiayi-Pan/TinyZero"
+    },
+    {
+      "arxiv_id": "2604.18264",
+      "github_repo": "WangFei-2019/UnifiedZO"
+    },
+    {
+      "arxiv_id": "2604.15903",
+      "github_repo": "AeroVILab-AHU/AeroDeshadow"
+    },
+    {
+      "arxiv_id": "2604.18168",
+      "github_repo": "AMAP-ML/EMF"
+    },
+    {
+      "arxiv_id": "2604.17972",
+      "github_repo": "aliyun/qwen-dianjin"
+    },
+    {
+      "arxiv_id": "2604.20811",
+      "github_repo": "XiaomiMiMo/MiMo-V2-Flash"
+    },
+    {
+      "arxiv_id": "2604.17915",
+      "github_repo": "Z1zyw/OneDrive"
+    },
+    {
+      "arxiv_id": "2604.20452",
+      "github_repo": "ErrEqualsNil/HaS"
+    },
+    {
+      "arxiv_id": "2604.17880",
+      "github_repo": "chuanhaoma/ST-pi"
+    },
+    {
+      "arxiv_id": "2604.17748",
+      "github_repo": "tntek/DIFO-Plus"
+    },
+    {
+      "arxiv_id": "2604.20594",
+      "github_repo": "QianChen113/RetinaDiff"
+    },
+    {
+      "arxiv_id": "2604.20156",
+      "github_repo": "zeyushen-yo/rl_moe"
+    },
+    {
+      "arxiv_id": "2604.17773",
+      "github_repo": "mirthAI/sparse-3d-diffusion"
+    },
+    {
+      "arxiv_id": "2604.14500",
+      "github_repo": "airesearchrepo2025/fisher-moe"
+    },
+    {
+      "arxiv_id": "2604.17053",
+      "github_repo": "MMLC-lab/Jailbreaking-LLM-Morality"
+    },
+    {
+      "arxiv_id": "2604.20443",
+      "github_repo": "Stealth-py/DialToM"
+    },
+    {
+      "arxiv_id": "2604.20706",
+      "github_repo": "MinqiShao/QuanForge"
+    },
+    {
+      "arxiv_id": "2604.14755",
+      "github_repo": "CSYSI/ASGNet"
+    },
+    {
+      "arxiv_id": "2604.17513",
+      "github_repo": "ultralytics/ultralytics"
+    },
+    {
+      "arxiv_id": "2604.17456",
+      "github_repo": "usail-hkust/TrafficClaw"
+    },
+    {
+      "arxiv_id": "2604.17298",
+      "github_repo": "lcx529955/FReMuRe"
+    },
+    {
+      "arxiv_id": "2604.17377",
+      "github_repo": "RayNeo-AI-2025/AnchorMem"
+    },
+    {
+      "arxiv_id": "2604.14510",
+      "github_repo": "whonor/NewsTorch"
+    },
+    {
+      "arxiv_id": "2604.14128",
+      "github_repo": "ruyi101/rq-representation-probing"
+    },
+    {
+      "arxiv_id": "2604.19547",
+      "github_repo": "CoCoSphere/SCALE"
+    },
+    {
+      "arxiv_id": "2604.17184",
+      "github_repo": "CoderDoge1108/SynthFix"
+    },
+    {
+      "arxiv_id": "2604.19005",
+      "github_repo": "tangyixuan/RADAR"
+    },
+    {
+      "arxiv_id": "2604.18697",
+      "github_repo": "Emory-AIMS/Inextractability"
+    },
+    {
+      "arxiv_id": "2604.18712",
+      "github_repo": "rycolab/llm-representations-rt"
+    },
+    {
+      "arxiv_id": "2604.13941",
+      "github_repo": "songlin-du/SceneGlue"
+    },
+    {
+      "arxiv_id": "2604.15022",
+      "github_repo": "thcxiker/R2A-Attack"
+    },
+    {
+      "arxiv_id": "2604.17709",
+      "github_repo": "youliangh/DeInfer"
+    },
+    {
+      "arxiv_id": "2604.20749",
+      "github_repo": "DongdingLin/SiPeR"
+    },
+    {
+      "arxiv_id": "2604.16862",
+      "github_repo": "meta-llama/llama-models"
+    },
+    {
+      "arxiv_id": "2604.16841",
+      "github_repo": "Clay-foundation/model"
+    },
+    {
+      "arxiv_id": "2604.19060",
+      "github_repo": "bionlplab/radiology-disease-classification"
+    },
+    {
+      "arxiv_id": "2604.17477",
+      "github_repo": "injooker/Unveiling"
+    },
+    {
+      "arxiv_id": "2604.13787",
+      "github_repo": "Huangsz2021/ToolOmni"
+    },
+    {
+      "arxiv_id": "2604.18418",
+      "github_repo": "uni-medical/MedProbeBench"
+    },
+    {
+      "arxiv_id": "2604.19318",
+      "github_repo": "zqyq/MVTrackTrans"
+    },
+    {
+      "arxiv_id": "2604.16749",
+      "github_repo": "noamgat/lm-format-enforcer"
+    },
+    {
+      "arxiv_id": "2604.16648",
+      "github_repo": "coleygroup/FRIGID"
+    },
+    {
+      "arxiv_id": "2604.19680",
+      "github_repo": "fanzh03/IR-Flow"
+    },
+    {
+      "arxiv_id": "2604.18530",
+      "github_repo": "ecoli-hit/OGER.git"
+    },
+    {
+      "arxiv_id": "2604.20225",
+      "github_repo": "lunyiliu/GaoYao"
+    },
+    {
+      "arxiv_id": "2604.18112",
+      "github_repo": "li-yiheng/RAMM"
+    },
+    {
+      "arxiv_id": "2604.20136",
+      "github_repo": "MKong17/IMPACT_CYCLE"
+    },
+    {
+      "arxiv_id": "2604.14773",
+      "github_repo": "bjzgcai/CoPA"
+    },
+    {
+      "arxiv_id": "2604.18518",
+      "github_repo": "Yovecent/UDM-GRPO"
+    },
+    {
+      "arxiv_id": "2604.14564",
+      "github_repo": "TsinghuaC3I/MARTI"
+    },
+    {
+      "arxiv_id": "2604.20374",
+      "github_repo": "yosen-king/Deep-AMM-Events"
+    },
+    {
+      "arxiv_id": "2604.19124",
+      "github_repo": "ntsw2001/data_detox_for_llm"
+    },
+    {
+      "arxiv_id": "2604.16083",
+      "github_repo": "Irennnne/DINOv3-IML"
+    },
+    {
+      "arxiv_id": "2604.16084",
+      "github_repo": "Weijiang-Xiong/OpenSkyTraffic"
+    },
+    {
+      "arxiv_id": "2604.12002",
+      "github_repo": "huggingface/open-r1"
+    },
+    {
+      "arxiv_id": "2604.12805",
+      "github_repo": "tanfy929/Equivariant-I2I"
+    },
+    {
+      "arxiv_id": "2604.15871",
+      "github_repo": "wesar1/UniEditBench"
+    },
+    {
+      "arxiv_id": "2604.16889",
+      "github_repo": "Qinhao-Chen/PIE-Pipeline"
+    },
+    {
+      "arxiv_id": "2604.11796",
+      "github_repo": "HeraldofLight/C-ReD"
+    },
+    {
+      "arxiv_id": "2604.15948",
+      "github_repo": "JinhaoShen/CoEdit"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+[
+  {
+    "real_name": "郭欣瑶",
+    "person_id": "d26054c1-14db-4074-b57d-cb1c59c0046d",
+    "couldnt_find": true,
+    "notes": "Common name, no disambiguator (no affiliation/project/publication). Quoted-name search with 2026 returned no candidate matching this person; skip-fast per protocol."
+  },
+  {
+    "real_name": "任启涵",
+    "person_id": "3184534a-f289-43ec-8cfe-ccadfb176c5c",
+    "couldnt_find": true,
+    "notes": "No disambiguating signal in input (no affiliation/project). Quoted-name search returned only generic 2026 researcher/job articles, no match. Cannot satisfy 30-day activity rule; skip."
+  },
+  {
+    "real_name": "李晓彤",
+    "person_id": "2b7804a2-e830-495e-a958-56f0e7615a2b",
+    "couldnt_find": true,
+    "notes": "Very common name. LinkedIn surfaced multiple 李晓彤 profiles (Nanjing student, Fosun Chuangfu, etc.) with no way to choose. No 30-day activity tied to a specific candidate. Skip per protocol."
+  }
+]

@@ -1,0 +1,120 @@
+[
+  {
+    "id": "038d3f69-e5aa-4e7b-9685-6fa5706ece67",
+    "emails": [
+      "zhangwenjun@sjtu.edu.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "03a1699b-bdee-4c62-955e-3aacd303c154",
+    "emails": [
+      "liuliubh@buaa.edu.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "03c5ead1-aef2-4ff1-886a-9892007349dc",
+    "emails": [
+      "songy@ustc.edu.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": {
+      "title": "Towards Fine-grained Temporal Perception: Post-Training Large Audio-Language Models with Audio-Side Time Prompt",
+      "author_name": "Yan Song",
+      "arxiv_id": "2604.13715"
+    }
+  },
+  {
+    "id": "03ddb207-c302-4c41-9fa9-1845edea348e",
+    "emails": [
+      "wangyining@unisound.com"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "04075502-61a3-4d93-877c-3c7b211edb28",
+    "emails": [
+      "ytang352@gatech.edu"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "0413bb90-71b5-4706-9b1b-662b54e3ed8e",
+    "emails": [
+      "jlxing@tsinghua.edu.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "0424d789-64e1-4c05-99d7-ac68dab043fd",
+    "emails": [
+      "yanggaobo@hnu.edu.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": {
+      "title": "The Courtroom Trial of Pixels: Robust Image Manipulation Localization via Adversarial Evidence and Reinforcement Learning Judgment",
+      "author_name": "Gaobo Yang",
+      "arxiv_id": "2604.14703"
+    }
+  },
+  {
+    "id": "04334648-9d72-40e7-a444-ade406e151b2",
+    "emails": [
+      "guijie@seu.edu.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "045c38f1-01c2-442b-bcf0-65dbab027535",
+    "emails": [
+      "wangzixian@sd.chinamobile.com"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "046e8776-9618-44e6-8fea-d9d3083b51ca",
+    "emails": [
+      "zhangj6@astar.edu.sg"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  }
+]

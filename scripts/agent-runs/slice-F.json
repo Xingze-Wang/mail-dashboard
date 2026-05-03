@@ -1,0 +1,120 @@
+[
+  {
+    "id": "053030b8-324a-48cd-88d0-db9cf9a41c3f",
+    "emails": [
+      "feibai@ruc.edu.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "0578fc64-a7c3-48dd-9898-3ee6f7398297",
+    "emails": [
+      "machenhao@cuhk.edu.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "05850dad-67a1-4f47-9cb2-9bc7a2907d53",
+    "emails": [
+      "jinqingking@gmail.com"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "059e9685-a29f-4f26-aeeb-029162be2486",
+    "emails": [
+      "weiyinwei@hotmail.com"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": {
+      "title": "INTENT: Invariance and Discrimination-aware Noise Mitigation for Robust Composed Image Retrieval",
+      "author_name": "Yinwei Wei",
+      "arxiv_id": "2604.18051"
+    }
+  },
+  {
+    "id": "059ed0ba-95a0-4717-9d53-52b0b2ca5783",
+    "emails": [
+      "zhang_longyin@a-star.edu.sg"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "05d22082-eeb3-4790-89d3-0056dfef365c",
+    "emails": [
+      "lis221@lehigh.edu"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "05df61b4-42b4-4c66-9f4f-cabd0edb7636",
+    "emails": [
+      "yuanjuan0704@ruc.edu.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "05e615f1-868b-43f8-9ea1-09cf569b5ed1",
+    "emails": [
+      "2410044045@mails.szu.edu.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "05f38bb3-0bcd-49aa-ba74-554bd5782e89",
+    "emails": [
+      "zhenglei2@unionpay.com"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": {
+      "title": "To Know is to Construct: Schema-Constrained Generation for Agent Memory",
+      "author_name": "Lei Zheng",
+      "arxiv_id": "2604.20117"
+    }
+  },
+  {
+    "id": "05ff80fc-14d6-4fe7-84b8-7787ad323506",
+    "emails": [
+      "yachaozhang@xmu.edu.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  }
+]

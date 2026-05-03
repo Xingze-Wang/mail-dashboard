@@ -1,0 +1,20 @@
+[
+  {
+    "real_name": "杨吉凯",
+    "person_id": "b4faec45-963c-4e6b-8cb4-8d8c3285adde",
+    "couldnt_find": true,
+    "notes": "Skip-fast. No disambiguator in input (no affiliation/topic/company). Quoted-name '杨吉凯' 2026 search returned zero hits; pinyin variant 'Jikai Yang' returns 60+ LinkedIn profiles plus several unrelated researchers (Jikai Jin/Stanford, Jikai Zhao, Jikai Wen, Jikai Z. @ Microsoft) — no recent (last-30d) activity tied to a specific 杨吉凯. Cannot satisfy 2-signal rule; leaving empty so name-match path can do its job."
+  },
+  {
+    "real_name": "胡叶凡",
+    "person_id": "c2883d70-e929-4f40-b9d2-2e6b39b8c396",
+    "couldnt_find": true,
+    "notes": "Skip-fast. Quoted-name '胡叶凡' 2026 search returned zero relevant hits (only generic GitHub CVE noise). Pinyin variant 'Hu Yefan' / 'Yefan Hu' surfaced only similar-but-different names — Yefan Zhi (UPenn architecture), Yefan Zhou (Dartmouth CS), Yefan Nian (Clemson ag-econ), Yifeng Hu (ORNL) — none is 胡叶凡. No 2024-2025 paper with corresponding-author email matches. Better to leave empty than risk attaching a stranger's email and breaking the dedup gate."
+  },
+  {
+    "real_name": "赵梓合",
+    "person_id": "47ca12a6-7dc5-4a9a-a01d-68d1502af4d4",
+    "couldnt_find": true,
+    "notes": "Skip-fast. Quoted-name '赵梓合' search returned no hits. Pinyin 'Zihe Zhao' is moderately common — surfaced 5+ distinct people (Hytech quant researcher in Singapore, Rice U SE researcher, Dalian Ocean U marine bio with Mar-2025 paper, Beihang biomedical with May/Jul-2025 papers, U Bridgeport CS lab assistant) plus a github.com/zihe-zhao account. With no disambiguator in input, can't pick one — multiple plausible candidates per protocol's 'when to skip' rule. Last-30d activity rule moot without a chosen candidate."
+  }
+]

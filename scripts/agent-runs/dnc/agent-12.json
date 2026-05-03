@@ -1,0 +1,20 @@
+[
+  {
+    "real_name": "黄闻嵩",
+    "person_id": "6c391637-099d-45ed-8939-3d4b6bacd775",
+    "couldnt_find": true,
+    "notes": "No disambiguating signals found. Searches for the exact Chinese name (with year filters, +github, +公司/AI, +论文) returned no matching researcher/founder profile. The pinyin variants (Huang Wensong / Wensong Huang) surface only a 2013 petroleum-engineering coauthor and a Squab Gaming LinkedIn (no recent academic activity), neither of which can be tied to this person without an affiliation hint. Skipping per the 'multiple plausible / stale only' rule."
+  },
+  {
+    "real_name": "杨硕",
+    "person_id": "19031aa3-607d-4f49-94aa-df74a08a878d",
+    "couldnt_find": true,
+    "notes": "Common name with multiple plausible candidates and no disambiguator in the input. Top hits include Shuo Yang at Shenzhen MSU-BIT (yangshuo@smbu.edu.cn / yangshuo129@gmail.com, vision-language) and Shuo Yang at Mondo Robotics, plus several non-research 杨硕 (procurement, education, manufacturing) on RocketReach. No way to choose without an affiliation/topic anchor; per protocol, do not auto-attach when multiple plausible candidates exist."
+  },
+  {
+    "real_name": "胡越舟",
+    "person_id": "cecab384-e462-4388-8e82-0c49ef911fbf",
+    "couldnt_find": true,
+    "notes": "Person identity is highly likely Yuezhou Hu (Tsinghua CS undergrad heading to UC Berkeley BAIR; advisors Jianfei Chen, Jun Zhu, Tuo Zhao). Strong recent activity: arXiv 2510.19779 'AdaSPEC' (Oct 2025), NeurIPS 2025 spotlight, GitHub repo yuezhouhu/adaspec, personal sites yuezhouhu.github.io and huyz2023.github.io. However, the actual email value is not exposed in any search snippet — Google Scholar shows only the 'verified email at mails.tsinghua.edu.cn' domain banner, and WebFetch was denied so I could not read the personal site directly. Per protocol ('Better to leave email empty than attach a wrong one'), not attaching. If a follow-up pass can fetch yuezhouhu.github.io or the AdaSPEC paper PDF, the corresponding-author email would likely confirm a 2-signal match."
+  }
+]

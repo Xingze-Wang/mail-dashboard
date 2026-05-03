@@ -1,0 +1,124 @@
+[
+  {
+    "id": "071e3d3f-4e78-4c65-8ba8-cd433815f683",
+    "emails": [
+      "jian.gu@monash.edu"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "071faebb-578c-4c4a-b56f-4d1234fe45f4",
+    "emails": [
+      "gyjgyj123@sjtu.edu.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": {
+      "title": "Any3DAvatar: Fast and High-Quality Full-Head 3D Avatar Reconstruction from Single Portrait Image",
+      "author_name": "Yujie Gao",
+      "arxiv_id": "2604.13856"
+    }
+  },
+  {
+    "id": "073de645-f255-491b-a245-007bc8f2543a",
+    "emails": [
+      "220252099@seu.edu.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": {
+      "title": "Industrial Surface Defect Detection via Diffusion Generation and Asymmetric Student-Teacher Network",
+      "author_name": "Shuo Feng",
+      "arxiv_id": "2604.19240"
+    }
+  },
+  {
+    "id": "076a61c4-9c91-43ec-bd97-aa97df7e4ab1",
+    "emails": [
+      "chaoxia.yuan@nuist.edu.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "07724e60-f0fe-4125-ba42-300dd725a4d8",
+    "emails": [
+      "lixuesong@bit.edu.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "0774f51b-bafe-4502-9942-7e60abe8fafa",
+    "emails": [
+      "haoyu.zhao@whu.edu.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "078d1cfa-f450-4128-9cb8-686a34825acb",
+    "emails": [
+      "hanshilong20@nudt.edu.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "07a94461-ae8c-48fa-bfb3-cb6e77e4974c",
+    "emails": [
+      "jinlong.wu@wisc.edu"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "07cb5f14-22ae-4535-8da1-2b5a7d6bc101",
+    "emails": [
+      "jingli.phd@hotmail.com"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": {
+      "title": "D-QRELO: Training- and Data-Free Delta Compression for Large Language Models via Quantization and Residual Low-Rank Approximation",
+      "author_name": "Jing Li",
+      "arxiv_id": "2604.16940"
+    }
+  },
+  {
+    "id": "07dce02e-b9e1-44d6-a6d5-fb300df9ab89",
+    "emails": [
+      "mlyang@scu.edu.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  }
+]

@@ -1,0 +1,120 @@
+[
+  {
+    "id": "08a1790b-b5a1-4199-a3ad-22c73798ef83",
+    "emails": [
+      "zhuzhu_cs@zju.edu.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "08ca6f4d-a9ae-4895-b5c3-3f688cf07e98",
+    "emails": [
+      "yizhiliu@umd.edu"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "08ce10b9-48f3-4192-ac77-33fc185635f4",
+    "emails": [
+      "llshen@szu.edu.com"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": {
+      "title": "KoCo: Conditioning Language Model Pre-training on Knowledge Coordinates",
+      "author_name": "Linlin Shen",
+      "arxiv_id": "2604.12397"
+    }
+  },
+  {
+    "id": "08fa3fb5-cf11-449c-bcec-9bf579030c23",
+    "emails": [
+      "murphythu@gmail.com"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "08fc1061-aa8b-46ec-8bc1-34ad8aa90261",
+    "emails": [
+      "leiwang@nudt.edu.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "09038be5-ebac-4e75-a00f-37bb4c7a5aa9",
+    "emails": [
+      "jiashengsi@qlu.edu.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": {
+      "title": "Beyond Meta-Reasoning: Metacognitive Consolidation for Self-Improving LLM Reasoning",
+      "author_name": "Jiasheng Si",
+      "arxiv_id": "2604.17399"
+    }
+  },
+  {
+    "id": "090ad042-f5b1-4244-bd0d-8259e056bd85",
+    "emails": [
+      "zhenyaoma@stu.xmu.edu.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "09166b96-cdd4-409a-b4f0-d096ec23cb4e",
+    "emails": [
+      "ty.shi@mail.utoronto.ca"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "0929ba7f-90c8-414d-8f80-c7119716bfd8",
+    "emails": [
+      "chanx@microsoft.com"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  },
+  {
+    "id": "09403860-46c4-4b93-b631-a099f1046fc5",
+    "emails": [
+      "gongy@buaa.edu.cn"
+    ],
+    "real_name": null,
+    "affiliation": null,
+    "has_hf": false,
+    "has_github": false,
+    "paper_hint": null
+  }
+]

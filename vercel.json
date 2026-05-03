@@ -1,8 +1,9 @@
 {
   "crons": [
-    {
-      "path": "/api/cron",
-      "schedule": "0 6 * * 1-5"
-    }
+    { "path": "/api/cron",                    "schedule": "0 6 * * 1-5" },
+    { "path": "/api/congress/jitr-tick",      "schedule": "0 7 * * 1-5" },
+    { "path": "/api/congress/weekly",         "schedule": "0 1 * * 1" },
+    { "path": "/api/congress/monthly",        "schedule": "0 2 1 * *" },
+    { "path": "/api/congress/postmortem-detect", "schedule": "0 3 * * *" }
   ]
 }

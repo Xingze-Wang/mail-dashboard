@@ -1,0 +1,17 @@
+{
+  "real_name": "刘偲",
+  "person_id": "9978bda3-41eb-4435-adb5-b02ebfacff44",
+  "email": {
+    "value": "liusi@buaa.edu.cn",
+    "confidence": 0.9,
+    "evidence": [
+      "https://arxiv.org/abs/2604.13596 — VGGT-Segmentor: Geometry-Enhanced Cross-View Segmentation; submitted 15 Apr 2026, last revised 16 Apr 2026; Si Liu listed as last author",
+      "https://arxiv.org/html/2604.13596v2 — author affiliation block lists 'liusi@buaa.edu.cn' under Beihang University as the corresponding-author email (HTML grep confirmed)",
+      "https://shi.buaa.edu.cn/liusi/zh_CN/index.htm — official BUAA faculty page for 刘偲 (surname char 刘 matches exactly)",
+      "https://scholar.google.com/citations?user=-QtVtNEAAAAJ&hl=en — Si Liu's Scholar profile (BUAA verified email domain)",
+      "https://colalab.net/publications/ — colalab.net (her lab) lists CVPR 2026 / AAAI 2026 / TPAMI 2026 acceptances confirming active 2026 research output"
+    ]
+  },
+  "couldnt_find": false,
+  "notes": "Identity already char-match confirmed in v1 (surname 刘 matches; BUAA Institute of AI prof; Scholar -QtVtNEAAAAJ; colalab.org/.net). The OPEN question was 30-day activity (April 2026). Found arXiv 2604.13596 'VGGT-Segmentor' submitted 2026-04-15 (v1) and revised 2026-04-16 (v2) with Si Liu as last author and email 'liusi@buaa.edu.cn' explicitly listed in the paper's author/affiliation block under Beihang University. That is direct, dated April-2026 public activity by exactly this person at exactly this email — strongest possible signal. Conf 0.9 (not 1.0 only because we did not personally meet/verify; the email is the one printed in her own arxiv submission this April)."
+}
