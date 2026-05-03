@@ -12,7 +12,13 @@ const PUBLIC_PREFIXES = [
 // /api/inbound is split: POST (Resend webhook) is public — protected by its
 // own INBOUND_SECRET bearer check inside the handler. GET (used by /inbox UI)
 // requires a session.
+//
+// /api/lark/webhook is fully public — Lark's URL-verification handshake
+// hits both GET and POST without auth, and message events are signed via
+// LARK_VERIFICATION_TOKEN which the handler validates internally. Without
+// this, Lark cannot register the webhook URL.
 const PUBLIC_POST_ONLY = ["/api/inbound"];
+const PUBLIC_LARK_WEBHOOK = "/api/lark/webhook";
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
@@ -22,7 +28,8 @@ export async function middleware(req: NextRequest) {
   const isPublic = PUBLIC_PREFIXES.some((p) => pathname.startsWith(p)) || pathname.includes(".");
   const isPublicPostOnly =
     req.method === "POST" && PUBLIC_POST_ONLY.some((p) => pathname.startsWith(p));
-  if (isPublic || isPublicPostOnly) {
+  const isLarkWebhook = pathname === PUBLIC_LARK_WEBHOOK;
+  if (isPublic || isPublicPostOnly || isLarkWebhook) {
     return NextResponse.next({ request: { headers: reqHeaders } });
   }
 

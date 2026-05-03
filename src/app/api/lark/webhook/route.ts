@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { supabase } from "@/lib/db";
 import { llmChat } from "@/lib/llm-proxy";
 import { TOOLS_PROMPT, type ToolProposal } from "@/lib/helper-tools";
@@ -250,65 +250,69 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, skipped: "incomplete event" }, { status: 200 });
   }
 
-  // 4. Resolve sender → rep
-  const rep = await resolveRepFromOpenId(senderOpenId);
-  if (!rep) {
-    // Unknown sender — reply with onboarding
-    await sendMessage({
-      receive_id: chatId,
-      receive_id_type: "chat_id",
-      text: `Hi! 我不认识你 (Lark open_id: ${senderOpenId.slice(0, 12)}...). 找 Xingze 把你绑定到 sales_reps 表 (lark_open_id 列), 之后就能聊了.`,
-    });
-    return NextResponse.json({ ok: true, action: "onboarding-reply" }, { status: 200 });
-  }
-
-  // 5. Persist user message + load short history
-  await supabase.from("lark_messages").insert({
-    chat_id: chatId,
-    message_id: messageId,
-    rep_id: rep.id,
-    role: "user",
-    text,
-    raw: body,
-  });
-  const { data: priorRows } = await supabase
-    .from("lark_messages")
-    .select("role, text")
-    .eq("chat_id", chatId)
-    .order("created_at", { ascending: false })
-    .limit(8);
-  const larkHistory = (priorRows ?? []).reverse().slice(0, -1) as { role: "user" | "assistant"; text: string }[];
-
-  // v1.5: cross-surface continuity. Only pull web history when the user
-  // signals they're referring to prior conversation ("之前 / 上次 / earlier" etc.)
-  // — otherwise the per-thread Lark history is enough and we save context.
-  let history = larkHistory;
-  if (userMentionsPriorContext(text)) {
-    const webHist = await loadCrossSurfaceHistory(rep.id, 4);
-    if (webHist.length > 0) {
-      history = [
-        ...webHist.map((m) => ({ ...m, text: `[web] ${m.text}` })),
-        ...larkHistory,
-      ];
-    }
-  }
-
-  // 6. Run the agent — async so we can ack the webhook fast
-  // Lark expects a 200 within ~3s; the LLM call takes 5-15s. Fire-and-forget
-  // the reply, return immediately.
-  const session: LarkSession = {
-    repId: rep.id,
-    role: rep.role,
-    repName: rep.name,
-    email: rep.email,
-  };
-  (async () => {
+  // ALL DB + LLM work moves into after() — returning 200 ASAP keeps us
+  // inside Lark's 3s ack window. Previously each Supabase round-trip
+  // (~250-500ms each: resolveRep + insert + history fetch) ran serially
+  // before ack, blowing the budget. Lark retries on 5xx within ~5s, so
+  // a slow ack ALSO meant duplicate processing.
+  after(async () => {
     try {
+      const rep = await resolveRepFromOpenId(senderOpenId);
+      if (!rep) {
+        await supabase.from("lark_messages").insert({
+          chat_id: chatId,
+          message_id: messageId,
+          rep_id: null,
+          role: "user",
+          text,
+          raw: body,
+        });
+        await sendMessage({
+          receive_id: chatId,
+          receive_id_type: "chat_id",
+          text: `Hi! 我不认识你 (Lark open_id: ${senderOpenId.slice(0, 12)}...). 找 Xingze 把你绑定到 sales_reps 表 (lark_open_id 列), 之后就能聊了.`,
+        }).catch((e) => console.error("[lark/webhook] onboarding sendMessage failed", e));
+        return;
+      }
+
+      await supabase.from("lark_messages").insert({
+        chat_id: chatId,
+        message_id: messageId,
+        rep_id: rep.id,
+        role: "user",
+        text,
+        raw: body,
+      });
+
+      const { data: priorRows } = await supabase
+        .from("lark_messages")
+        .select("role, text")
+        .eq("chat_id", chatId)
+        .order("created_at", { ascending: false })
+        .limit(8);
+      const larkHistory = (priorRows ?? []).reverse().slice(0, -1) as { role: "user" | "assistant"; text: string }[];
+
+      let history = larkHistory;
+      if (userMentionsPriorContext(text)) {
+        const webHist = await loadCrossSurfaceHistory(rep.id, 4);
+        if (webHist.length > 0) {
+          history = [
+            ...webHist.map((m) => ({ ...m, text: `[web] ${m.text}` })),
+            ...larkHistory,
+          ];
+        }
+      }
+
+      const session: LarkSession = {
+        repId: rep.id,
+        role: rep.role,
+        repName: rep.name,
+        email: rep.email,
+      };
+
       const reply = await runAgent(session, text, history);
       const { cleaned, proposal } = extractAnyProposal(reply);
 
-      // If the model proposed remember_about_rep, auto-execute (non-destructive).
-      // Other proposals get "do this on web" advice and the action stays stripped.
       let suffix = "";
       if (proposal) {
         const memorySuffix = await autoExecuteSafeProposal(session, proposal);
@@ -320,26 +324,29 @@ export async function POST(req: NextRequest) {
       }
       const finalReply = (cleaned + suffix).trim() || "(空)";
 
-      await sendMessage({
-        receive_id: chatId,
-        receive_id_type: "chat_id",
-        text: finalReply,
-      });
+      // Persist BEFORE sendMessage so we have proof the agent worked even
+      // if the outbound Lark call fails (network blip, expired token,
+      // synthetic chat in tests). The smoke harness reads this row.
       await supabase.from("lark_messages").insert({
         chat_id: chatId,
         rep_id: rep.id,
         role: "assistant",
         text: finalReply,
       });
+      await sendMessage({
+        receive_id: chatId,
+        receive_id_type: "chat_id",
+        text: finalReply,
+      }).catch((e) => console.error("[lark/webhook] reply sendMessage failed", e));
     } catch (err) {
-      console.error("[lark/webhook] agent error", err);
+      console.error("[lark/webhook] after() error", err);
       await sendMessage({
         receive_id: chatId,
         receive_id_type: "chat_id",
         text: "(出错了, 让 Xingze 看一下日志)",
       }).catch(() => {});
     }
-  })();
+  });
 
   return NextResponse.json({ ok: true }, { status: 200 });
 }
