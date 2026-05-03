@@ -76,9 +76,48 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   });
 
   const clickEvents = parsed.filter((e) => e.type === "email.clicked");
-  // Distinct link count gives "did this recipient explore vs. just
-  // tap the wechat link once" — useful signal for the helper later.
   const distinctLinks = new Set(clickEvents.map((c) => c.link).filter(Boolean));
+
+  // Fallback: if webhook_events has nothing for this email but Resend
+  // has actually been recording status, synthesize a minimal timeline
+  // from emails.status + created_at. Better than rendering "no real-
+  // time tracking" when the rep can SEE click rates working in the
+  // status badge. The synthesized events have _synthesized=true so the
+  // UI can render them with a different style if desired.
+  if (parsed.length === 0) {
+    const { data: full } = await supabase
+      .from("emails")
+      .select("status, created_at, updated_at")
+      .eq("id", email.id)
+      .maybeSingle();
+    if (full?.status) {
+      const STATUS_RANK: Record<string, number> = {
+        queued: 0, sent: 1, delivered: 2, opened: 3, clicked: 4, bounced: 5, complained: 5,
+      };
+      const reached = Object.entries(STATUS_RANK)
+        .filter(([, rank]) => rank <= (STATUS_RANK[full.status] ?? -1))
+        .filter(([s]) => s !== "queued") // queued is implicit
+        .map(([s]) => s);
+      const synthesized = reached.map((status, i) => ({
+        type: `email.${status}`,
+        occurredAt: i === reached.length - 1 ? (full.updated_at ?? full.created_at) : full.created_at,
+        link: null,
+        userAgent: null,
+        ipAddress: null,
+        timestamp: i === reached.length - 1 ? (full.updated_at ?? full.created_at) : full.created_at,
+        _synthesized: true,
+      }));
+      return NextResponse.json({
+        emailId: email.id,
+        resendId: email.resend_id,
+        eventCount: synthesized.length,
+        clickCount: synthesized.filter((e) => e.type === "email.clicked").length,
+        distinctLinkCount: 0,
+        events: synthesized,
+        _source: "synthesized_from_emails_status",
+      });
+    }
+  }
 
   return NextResponse.json({
     emailId: email.id,

@@ -107,6 +107,16 @@ const CongressIcon = () => (
   </svg>
 );
 
+// Insights icon — lightbulb, signaling "the page tells you what's
+// working" rather than "raw data dump."
+const InsightsIcon = () => (
+  <svg {...Common}>
+    <path d="M9 18h6" />
+    <path d="M10 22h4" />
+    <path d="M12 2a7 7 0 0 0-4 12.7c.9.7 1.4 1.4 1.5 2.3h5c.1-.9.6-1.6 1.5-2.3A7 7 0 0 0 12 2z" />
+  </svg>
+);
+
 const SettingsIcon = () => (
   <svg {...Common}>
     <circle cx="12" cy="12" r="3" />
@@ -138,13 +148,18 @@ const mainNav = [
   { href: "/emails",   label: "Emails",   Icon: EmailsIcon,   badgeKey: "unread" as const },
 ];
 
-// /analysis merged into /templates Performance tab — sidebar entry hidden.
 // /logs hidden from sidebar (still reachable via direct URL for debugging).
 // /congress added — admin only, the council-deliberation surface.
+// /analysis surfaces twice on purpose:
+//   - as "Insights" in tools nav for sales (their own scope) and admin
+//     (org-wide). Hero + conclusions, raw tables collapsed.
+//   - as the Performance tab inside /templates so admins can edit a
+//     template and see the same conclusions next to it.
 // Bench gets its own icon (BarChart3-style) so it doesn't visually
 // duplicate Scorer.
 const toolsNav = [
   { href: "/brief",     label: "Brief",     Icon: BriefIcon,     adminOnly: false },
+  { href: "/analysis",  label: "Insights",  Icon: InsightsIcon,  adminOnly: false },
   { href: "/templates", label: "Templates", Icon: TemplatesIcon, adminOnly: false },
   { href: "/congress",  label: "Congress",  Icon: CongressIcon,  adminOnly: true  },
   { href: "/scorer",    label: "Scorer",    Icon: ScorerIcon,    adminOnly: true  },
