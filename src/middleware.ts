@@ -5,6 +5,10 @@ const PUBLIC_PREFIXES = [
   "/login",
   "/api/auth",
   "/api/cron",
+  // Congress cron routes — each handler does its own Bearer-CRON_SECRET
+  // check, same pattern as /api/cron. Without this, middleware 401s
+  // them before they can validate.
+  "/api/congress",
   "/_next",
   "/favicon",
 ];
