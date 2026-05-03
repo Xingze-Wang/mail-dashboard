@@ -17,11 +17,18 @@ const PUBLIC_PREFIXES = [
 // own INBOUND_SECRET bearer check inside the handler. GET (used by /inbox UI)
 // requires a session.
 //
+// /api/webhook is the OTHER Resend webhook (the canonical event stream:
+// email.sent / delivered / opened / clicked / bounced / complained). The
+// handler validates Svix signatures internally via RESEND_WEBHOOK_SECRET.
+// This is the Tier 0 fix from docs/DATA_INTEGRITY_PLAN.md — without
+// allowlisting it, middleware 401s every Resend POST and webhook_events
+// stays empty (which is exactly the state we observed for ~30 days).
+//
 // /api/lark/webhook is fully public — Lark's URL-verification handshake
 // hits both GET and POST without auth, and message events are signed via
 // LARK_VERIFICATION_TOKEN which the handler validates internally. Without
 // this, Lark cannot register the webhook URL.
-const PUBLIC_POST_ONLY = ["/api/inbound"];
+const PUBLIC_POST_ONLY = ["/api/inbound", "/api/webhook"];
 const PUBLIC_LARK_WEBHOOK = "/api/lark/webhook";
 
 export async function middleware(req: NextRequest) {
