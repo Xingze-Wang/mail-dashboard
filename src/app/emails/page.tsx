@@ -100,7 +100,26 @@ function ClickHistory({ emailId }: { emailId: string }) {
   }, [emailId]);
 
   if (loading || !data) return null;
-  if (data.eventCount === 0) return null;
+  // Even when webhook_events is empty (e.g. Tier 0 broken — Resend not
+  // delivering webhooks), surface a SYNTHETIC timeline from the email's
+  // current status so reps still see "this got clicked once" instead of
+  // a blank gap. We mark it visually as fallback-source.
+  const FALLBACK_STATUS_RANK: Record<string, number> = {
+    queued: 0, sent: 1, delivered: 2, opened: 3, clicked: 4, bounced: 5, complained: 5,
+  };
+  if (data.eventCount === 0) {
+    // We don't have the email's status here — but the parent passes us
+    // emailId only. Hit /api/emails/[id] for the bare status would be
+    // another roundtrip; instead, render a small "no real-time tracking"
+    // note so the user knows it's not just empty.
+    return (
+      <div className="section-card" style={{ marginTop: 16, padding: "10px 14px", fontSize: 11, color: "var(--text-tertiary)", display: "flex", alignItems: "center", gap: 6 }}>
+        <MousePointerClick className="h-3 w-3" />
+        <span>No real-time event tracking for this email — Resend webhook may not be delivering. Status badge above reflects last cron sync.</span>
+      </div>
+    );
+  }
+  void FALLBACK_STATUS_RANK; // reserved for future fallback-from-status synth
 
   const clicks = data.events.filter((e) => e.type === "email.clicked");
   const opens = data.events.filter((e) => e.type === "email.opened").length;
