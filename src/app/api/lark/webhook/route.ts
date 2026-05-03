@@ -55,7 +55,9 @@ export async function POST(req: Request) {
   }
 
   const eventType = parsed.header?.event_type ?? parsed.type ?? "";
-  if (!eventType.startsWith("im.message")) {
+  const isMessage = eventType.startsWith("im.message");
+  const isCardAction = eventType.startsWith("card.action.trigger");
+  if (!isMessage && !isCardAction) {
     return NextResponse.json({ ok: true, skipped: eventType }, { status: 200 });
   }
   if (!parsed.event) {
@@ -67,10 +69,14 @@ export async function POST(req: Request) {
   const { after } = await import("next/server");
   after(async () => {
     try {
-      const { processInboundLarkMessage } = await import("@/lib/lark-agent");
-      await processInboundLarkMessage(parsed, "webhook");
+      const agent = await import("@/lib/lark-agent");
+      if (isCardAction) {
+        await agent.processJitrCardAction(parsed, "webhook");
+      } else {
+        await agent.processInboundLarkMessage(parsed, "webhook");
+      }
     } catch (err) {
-      console.error("[lark/webhook] processInboundLarkMessage threw", err);
+      console.error("[lark/webhook] handler threw", err);
     }
   });
 

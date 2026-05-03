@@ -176,6 +176,148 @@ ${question}
 }
 
 /**
+ * Handle a Lark interactive-card action (button click) for JITR offers.
+ * Card payload includes { value: { jitr_action: "accept"|"dismiss",
+ * offer_id: "uuid" } }.
+ *
+ * On accept: upsert a per-rep email_template (name=`rep_<lower>`)
+ * with the sales_phrase patched in. Mark the offer applied_at=now.
+ * On dismiss: just record the decision; no template change.
+ * Either way: DM the admin (Xingze) so they can see the decision flow.
+ */
+export async function processJitrCardAction(
+  rawEvent: unknown,
+  transport: "webhook" | "ws",
+): Promise<{ ok: boolean; reason?: string }> {
+  const env = rawEvent as { event?: unknown };
+  const event = (env.event ?? rawEvent) as {
+    operator?: { open_id?: string };
+    action?: { value?: { jitr_action?: string; offer_id?: string } };
+    token?: string;
+  };
+
+  const senderOpenId = event.operator?.open_id;
+  const action = event.action?.value?.jitr_action;
+  const offerId = event.action?.value?.offer_id;
+  if (!senderOpenId || !action || !offerId) {
+    return { ok: true, reason: "incomplete card action" };
+  }
+  if (action !== "accept" && action !== "dismiss") {
+    return { ok: true, reason: `unknown jitr_action: ${action}` };
+  }
+
+  const rep = await resolveRepFromOpenId(senderOpenId);
+  if (!rep) return { ok: true, reason: "unknown sender" };
+
+  // Look up the offer + verify it belongs to this rep
+  const { data: offer, error: offerErr } = await supabase
+    .from("jitr_offers")
+    .select("*")
+    .eq("id", offerId)
+    .maybeSingle();
+  if (offerErr || !offer) {
+    console.error(`[jitr/${transport}] offer not found:`, offerId, offerErr?.message);
+    return { ok: false, reason: "offer not found" };
+  }
+  if (offer.rep_id !== rep.id) {
+    console.error(`[jitr/${transport}] offer belongs to rep ${offer.rep_id} but click came from ${rep.id}`);
+    return { ok: false, reason: "offer/rep mismatch" };
+  }
+  if (offer.decision !== "pending") {
+    return { ok: true, reason: `already decided: ${offer.decision}` };
+  }
+
+  if (action === "accept") {
+    // Upsert per-rep template. Name convention: rep_<lowercase>.
+    // We don't try to surgically patch the template prose here — that's
+    // brittle. Instead we append the rep's preferred phrasing to the
+    // template's `notes` field as guidance for the next draft, and bump
+    // the rep's per-rep template active flag. The drafter (assembler)
+    // already prefers the per-rep template when present.
+    const tplName = `rep_${rep.name.toLowerCase().replace(/\s+/g, "_")}`;
+    const noteLine = `[JITR ${new Date().toISOString().slice(0,10)}] prefers: "${offer.sales_phrase.slice(0,80)}" (was: "${offer.ai_phrase.slice(0,80)}")`;
+
+    // Try to fetch existing per-rep template
+    const { data: existingTpl } = await supabase
+      .from("email_templates")
+      .select("*")
+      .eq("rep_id", rep.id)
+      .maybeSingle();
+
+    if (existingTpl) {
+      const newNotes = (existingTpl.notes || "").trim()
+        ? existingTpl.notes + "\n" + noteLine
+        : noteLine;
+      await supabase
+        .from("email_templates")
+        .update({ notes: newNotes, active: true, updated_at: new Date().toISOString() })
+        .eq("id", existingTpl.id);
+    } else {
+      // Clone global as a starting point
+      const { data: globalTpl } = await supabase
+        .from("email_templates")
+        .select("*")
+        .eq("name", "global")
+        .maybeSingle();
+      await supabase.from("email_templates").insert({
+        name: tplName,
+        rep_id: rep.id,
+        active: true,
+        subject_format: globalTpl?.subject_format ?? "Invitation to Apply - {{title}}的潜在算力支持机会",
+        intro_prompt: globalTpl?.intro_prompt ?? "",
+        greeting_format: globalTpl?.greeting_format ?? "{{first_name_or_you}}你好，",
+        rep_intro_format: globalTpl?.rep_intro_format ?? "我是奇绩创坛的{{rep_name}}。",
+        school_pitch_format: globalTpl?.school_pitch_format ?? "{{school_text}}（{{base_info}}）{{directions_text}}。",
+        cta_signoff_format: globalTpl?.cta_signoff_format ?? "如果{{closing_name}}对算力支持感兴趣，欢迎<a href=\"{{apply_url}}\">申请</a>或加我微信交流（{{rep_wechat}}）。",
+        notes: noteLine,
+      });
+    }
+
+    await supabase
+      .from("jitr_offers")
+      .update({ decision: "accept", decided_at: new Date().toISOString(), applied_at: new Date().toISOString() })
+      .eq("id", offerId);
+  } else {
+    await supabase
+      .from("jitr_offers")
+      .update({ decision: "dismiss", decided_at: new Date().toISOString() })
+      .eq("id", offerId);
+  }
+
+  // Notify admin (Xingze) — fire-and-forget
+  const { data: adminRow } = await supabase
+    .from("sales_reps")
+    .select("lark_open_id")
+    .eq("id", 5)
+    .maybeSingle();
+  if (adminRow?.lark_open_id) {
+    const verb = action === "accept" ? "✅ accepted" : "❌ dismissed";
+    const note = action === "accept"
+      ? "Will apply to their future drafts; stop-loss watching next 30 sends."
+      : "No template change.";
+    sendMessage({
+      receive_id: adminRow.lark_open_id,
+      receive_id_type: "open_id",
+      text: `JITR: ${rep.name} ${verb} pattern\n  AI: "${offer.ai_phrase.slice(0,60)}"\n  → "${offer.sales_phrase.slice(0,60)}"\n${note}`,
+    }).catch((e) => console.error(`[jitr/${transport}] admin notify failed:`, e));
+  }
+
+  // Reply to the rep with a confirmation in the same chat
+  const userMsg = action === "accept"
+    ? `好的, 已经加到你的模板里了 (rep_${rep.name.toLowerCase()}). 接下来 30 封看效果, 如果转化掉了我会自动回滚 + 告诉你.`
+    : `好的, 这次跳过. 之后类似的还会来问.`;
+  // Card actions don't have chat_id directly — we'd need to look up
+  // via card_message_id. For MVP, send to the rep's open_id (DM).
+  sendMessage({
+    receive_id: senderOpenId,
+    receive_id_type: "open_id",
+    text: userMsg,
+  }).catch((e) => console.error(`[jitr/${transport}] rep confirm failed:`, e));
+
+  return { ok: true, reason: `decision=${action}` };
+}
+
+/**
  * Process one inbound Lark message event end-to-end. Idempotent on
  * message_id (Lark redelivers if we don't ack in 3s, and the long-conn
  * SDK has its own at-least-once semantics).

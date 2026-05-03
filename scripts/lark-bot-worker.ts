@@ -19,7 +19,7 @@ import * as Lark from "@larksuiteoapi/node-sdk";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { processInboundLarkMessage } from "../src/lib/lark-agent.ts";
+import { processInboundLarkMessage, processJitrCardAction } from "../src/lib/lark-agent.ts";
 
 // ── env loader (no dotenv dep) ──────────────────────────────────────────
 function loadDotenv(p: string) {
@@ -141,6 +141,19 @@ const dispatcher = new Lark.EventDispatcher({}).register({
       console.log(`[worker] processed in ${Date.now() - t0}ms ok=${result.ok} reason=${result.reason ?? ""}`);
     } catch (err) {
       console.error(`[worker] processInboundLarkMessage threw:`, err);
+    }
+    return "";
+  },
+  // JITR card-action callback. Fires when a rep clicks a button on a
+  // JITR offer card. We dispatch to processJitrCardAction which updates
+  // jitr_offers, patches the per-rep template (on accept), and DMs admin.
+  "card.action.trigger": async (data: unknown) => {
+    const t0 = Date.now();
+    try {
+      const result = await processJitrCardAction({ event: data }, "ws");
+      console.log(`[worker] card action in ${Date.now() - t0}ms ok=${result.ok} reason=${result.reason ?? ""}`);
+    } catch (err) {
+      console.error(`[worker] processJitrCardAction threw:`, err);
     }
     return "";
   },
