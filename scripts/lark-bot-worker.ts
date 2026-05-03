@@ -88,6 +88,8 @@ const baseConfig = {
 
 console.log(`[worker] starting (region=${REGION}, domain=${baseConfig.domain}, app=${APP_ID.slice(0, 12)}...)`);
 
+let firstEnvelopeLogged = false;
+
 let wsClient = new Lark.WSClient({
   ...baseConfig,
   loggerLevel: Lark.LoggerLevel.info,
@@ -108,7 +110,19 @@ const dispatcher = new Lark.EventDispatcher({}).register({
     // event_id may be on env.header (envelope shape) or absent (some SDK
     // versions strip it). Fall back to message_id if missing — better than
     // no dedup at all.
-    const eventId = env.header?.event_id;
+    // SDK passes envelope shapes inconsistently across versions. Probe
+    // the top-level keys once on first receipt so we can see where the
+    // Lark fields actually live in this SDK build.
+    if (!firstEnvelopeLogged) {
+      console.log(`[worker] FIRST EVENT envelope keys: ${Object.keys(env).join(",")}`);
+      firstEnvelopeLogged = true;
+    }
+    // event_id can be at: env.header.event_id (envelope), env.event_id
+    // (flattened), env.schema-only payloads have no header at all.
+    const eventId =
+      env.header?.event_id ??
+      (env as { event_id?: string }).event_id ??
+      undefined;
     const innerEvent = env.event ?? data;
     const msg = (innerEvent as { message?: { message_id?: string; chat_id?: string } }).message;
     const messageId = msg?.message_id;
@@ -132,6 +146,27 @@ const dispatcher = new Lark.EventDispatcher({}).register({
   },
 });
 
+// Track WS health by hooking the SDK's logger output. The SDK emits
+// 'ws client ready' on connect and 'unable to connect' / 'system busy'
+// on failure. We watch console.log/error for these strings — gross but
+// the SDK doesn't expose state hooks.
+let wsHealthy = false;
+let lastReconnectAt = 0;
+const RECONNECT_COOLDOWN_MS = 30_000;
+
+const origLog = console.log.bind(console);
+const origErr = console.error.bind(console);
+console.log = (...args: unknown[]) => {
+  const s = args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ");
+  if (s.includes("ws client ready")) wsHealthy = true;
+  origLog(...args);
+};
+console.error = (...args: unknown[]) => {
+  const s = args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ");
+  if (s.includes("unable to connect") || s.includes("ws connect failed")) wsHealthy = false;
+  origErr(...args);
+};
+
 function startWS() {
   try {
     wsClient.start({ eventDispatcher: dispatcher });
@@ -141,6 +176,30 @@ function startWS() {
   }
 }
 startWS();
+
+// Watchdog: every 60s, if the SDK reported "unable to connect" and we
+// haven't reconnected in the cooldown window, tear down and start fresh.
+// This is the failure mode that ate every test message: SDK hits "system
+// busy", logs "unable to connect to the server after trying 1 times",
+// and silently stops trying. Without this watchdog the bot is dead until
+// the operator notices.
+setInterval(() => {
+  if (wsHealthy) return;
+  const now = Date.now();
+  if (now - lastReconnectAt < RECONNECT_COOLDOWN_MS) return;
+  lastReconnectAt = now;
+  console.log("[worker] WATCHDOG: ws unhealthy, restarting...");
+  try {
+    const ws = wsClient as unknown as { stop?: () => void };
+    ws.stop?.();
+  } catch (err) {
+    console.error("[worker] watchdog stop failed", err);
+  }
+  // Recreate the client — some SDK versions don't support .start() after
+  // .stop() on the same instance.
+  wsClient = new Lark.WSClient({ ...baseConfig, loggerLevel: Lark.LoggerLevel.info });
+  startWS();
+}, 60_000);
 
 // ── Heartbeat + stuck-connection watchdog (concern #3) ──────────────────
 //

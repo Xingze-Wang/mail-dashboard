@@ -42,23 +42,37 @@ export async function getTenantAccessToken(): Promise<string | null> {
   const secret = process.env.LARK_APP_SECRET;
   if (!appId || !secret) return null;
 
-  const res = await fetch(`${pickBase()}/auth/v3/tenant_access_token/internal`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ app_id: appId, app_secret: secret }),
-    signal: AbortSignal.timeout(8_000),
-  });
-  if (!res.ok) {
-    console.error("[lark] tenant_access_token http", res.status);
-    return null;
+  // 3 attempts × exponential backoff × 25s timeout. Lark's auth endpoint
+  // is occasionally slow from US networks (we've seen 15s+ timeouts);
+  // this stops a single transient hiccup from dropping replies.
+  let lastErr: unknown = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch(`${pickBase()}/auth/v3/tenant_access_token/internal`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ app_id: appId, app_secret: secret }),
+        signal: AbortSignal.timeout(25_000),
+      });
+      if (!res.ok) {
+        lastErr = `http ${res.status}`;
+        if (attempt < 2) await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt)));
+        continue;
+      }
+      const j = await res.json();
+      if (j.code !== 0) {
+        console.error("[lark] tenant_access_token err", j);
+        return null;
+      }
+      tokenCache = { token: j.tenant_access_token, expiresAt: now + (j.expire ?? 7200) * 1000 };
+      return tokenCache.token;
+    } catch (err) {
+      lastErr = err;
+      if (attempt < 2) await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt)));
+    }
   }
-  const j = await res.json();
-  if (j.code !== 0) {
-    console.error("[lark] tenant_access_token err", j);
-    return null;
-  }
-  tokenCache = { token: j.tenant_access_token, expiresAt: now + (j.expire ?? 7200) * 1000 };
-  return tokenCache.token;
+  console.error("[lark] tenant_access_token failed after 3 attempts:", lastErr);
+  return null;
 }
 
 // ─── Event verification ─────────────────────────────────────────────────
@@ -96,6 +110,39 @@ export function verifyLarkEvent(args: {
     return { ok: false, reason: `signature mismatch (got ${args.signature.slice(0, 8)}..., expected ${expected.slice(0, 8)}...)` };
   }
   return { ok: true };
+}
+
+// ─── Outbound: react to a message (emoji ack) ───────────────────────────
+//
+// Why: even when the LLM reply is slow or the outbound message API fails,
+// we want the user to know the bot SAW their message. A single emoji
+// reaction is instant feedback — much better UX than waiting 30s to see
+// either a reply or silence. We fire-and-forget; if it fails, no big deal,
+// the real reply is what matters.
+//
+// Lark API: POST /open-apis/im/v1/messages/{message_id}/reactions
+// emoji_type accepted values: "OK", "THUMBSUP", "HEART", "EYES", "DONE", etc.
+// Full list: https://open.feishu.cn/document/server-docs/im-v1/message-reaction/emojis-introduce
+export async function reactToMessage(args: {
+  message_id: string;
+  emoji_type: "EYES" | "OK" | "THUMBSUP" | "DONE" | "HEART";
+}): Promise<{ ok: boolean; error?: string }> {
+  const token = await getTenantAccessToken();
+  if (!token) return { ok: false, error: "no access token" };
+  const url = `${pickBase()}/im/v1/messages/${encodeURIComponent(args.message_id)}/reactions`;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ reaction_type: { emoji_type: args.emoji_type } }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok || j.code !== 0) return { ok: false, error: `${res.status} ${JSON.stringify(j).slice(0, 200)}` };
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
 }
 
 // ─── Outbound: send a text message ──────────────────────────────────────

@@ -1,21 +1,48 @@
-// Lark HTTP webhook — kept as a fallback transport. Primary is the
-// long-connection WebSocket worker (scripts/lark-bot-worker.mjs) which
-// avoids the public-URL + signature-verify + Vercel-deploy dance.
+// Lark HTTP webhook.
 //
-// All inbound-message logic lives in src/lib/lark-agent.ts so both
-// transports are byte-identical. This handler is just the HTTP shim:
-// signature verify → 200 ack inside Lark's 3s window via after().
+// Cold-start optimized: the URL-verification path (which Lark hits to
+// validate the webhook URL when you click Save in the Open Platform
+// console) returns the challenge with ZERO heavy imports. Supabase,
+// LLM proxy, agent code — none of it is loaded unless we have a real
+// inbound message event.
+//
+// Why: Lark's URL verification has a 3s timeout. From iad1 (Vercel's
+// default us-east) to feishu.cn the network alone is 200-300ms RTT;
+// loading the full agent module on cold start adds 1-2s; signature
+// verify adds 50ms. That's the 3s budget gone before we send the
+// echo. Fast-path the challenge → cold-start hits 200-400ms.
 
-import { NextRequest, NextResponse, after } from "next/server";
-import { verifyLarkEvent } from "@/lib/lark";
-import { processInboundLarkMessage } from "@/lib/lark-agent";
+import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
+// Pin to Hong Kong region so Lark traffic doesn't cross the Pacific.
+export const preferredRegion = ["hkg1"];
 
-export async function POST(req: NextRequest) {
+export async function POST(req: Request) {
   const rawBody = await req.text();
 
+  // FAST PATH: parse just enough to detect url_verification, return
+  // immediately. No imports, no DB, no signature check — Lark's URL
+  // verification is unsigned and the entire payload is plain JSON.
+  let parsed: { type?: string; challenge?: string; encrypt?: string; event?: unknown; header?: { event_type?: string } };
+  try {
+    parsed = JSON.parse(rawBody);
+  } catch {
+    return NextResponse.json({ error: "invalid JSON" }, { status: 400 });
+  }
+
+  if (parsed.type === "url_verification" && parsed.challenge) {
+    return NextResponse.json({ challenge: parsed.challenge });
+  }
+
+  if (parsed.encrypt) {
+    return NextResponse.json({ ok: false, reason: "encrypt not supported" }, { status: 200 });
+  }
+
+  // ALL OTHER PATHS: signature verify, then dispatch via after().
+  // Imports are dynamic so they only load on real message events.
+  const { verifyLarkEvent } = await import("@/lib/lark");
   const verify = verifyLarkEvent({
     rawBody,
     timestamp: req.headers.get("x-lark-request-timestamp"),
@@ -27,37 +54,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: verify.reason }, { status: 401 });
   }
 
-  let body: { type?: string; challenge?: string; encrypt?: string; event?: unknown; header?: { event_type?: string } };
-  try {
-    body = JSON.parse(rawBody);
-  } catch {
-    return NextResponse.json({ error: "invalid JSON" }, { status: 400 });
-  }
-
-  // URL verification challenge — Lark sends this once when you set the
-  // webhook URL in the Open Platform console. Echo the challenge back.
-  if (body.type === "url_verification" && body.challenge) {
-    return NextResponse.json({ challenge: body.challenge });
-  }
-
-  if (body.encrypt) {
-    console.error("[lark/webhook] encrypted body not supported (set encrypt_key off in app)");
-    return NextResponse.json({ ok: false, reason: "encrypt not supported" }, { status: 200 });
-  }
-
-  const eventType = body.header?.event_type ?? body.type ?? "";
+  const eventType = parsed.header?.event_type ?? parsed.type ?? "";
   if (!eventType.startsWith("im.message")) {
     return NextResponse.json({ ok: true, skipped: eventType }, { status: 200 });
   }
-  if (!body.event) {
+  if (!parsed.event) {
     return NextResponse.json({ ok: true, skipped: "no event" }, { status: 200 });
   }
 
   // ALL DB + LLM work moves into after() — returning 200 ASAP keeps us
   // inside Lark's 3s ack window.
+  const { after } = await import("next/server");
   after(async () => {
     try {
-      await processInboundLarkMessage(body, "webhook");
+      const { processInboundLarkMessage } = await import("@/lib/lark-agent");
+      await processInboundLarkMessage(parsed, "webhook");
     } catch (err) {
       console.error("[lark/webhook] processInboundLarkMessage threw", err);
     }
@@ -75,6 +86,7 @@ export async function GET() {
       app_secret_set: !!process.env.LARK_APP_SECRET,
       verification_token_set: !!process.env.LARK_VERIFICATION_TOKEN,
       region: process.env.LARK_REGION === "cn" ? "cn" : "global",
+      function_region: process.env.VERCEL_REGION || "(default)",
     },
   });
 }

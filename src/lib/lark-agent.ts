@@ -26,6 +26,7 @@ import {
   extractSenderOpenId,
   resolveRepFromOpenId,
   sendMessage,
+  reactToMessage,
 } from "@/lib/lark";
 
 const SYSTEM_BASE = `你是 Qiji 算力 program 的销售搭档. Lark 里的同事在跟你聊天.
@@ -238,6 +239,16 @@ export async function processInboundLarkMessage(
     text,
     raw: rawEvent,
   });
+
+  // Fire-and-forget 👀 reaction so the user sees IMMEDIATELY that the
+  // bot received their message — even if the LLM takes 30s or the reply
+  // sendMessage fails. No await, no error handling — if it fails the
+  // reply will arrive eventually and that's the real signal.
+  if (messageId) {
+    reactToMessage({ message_id: messageId, emoji_type: "EYES" }).catch((e) => {
+      console.error(`[lark-agent/${transport}] react failed (non-blocking):`, e);
+    });
+  }
 
   const { data: priorRows } = await supabase
     .from("lark_messages")
