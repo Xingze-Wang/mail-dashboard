@@ -16,6 +16,7 @@
     "integrity": "node scripts/integrity.mjs"
   },
   "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.62.1",
     "@libsql/client": "^0.17.2",
     "@prisma/adapter-libsql": "^7.6.0",
     "@prisma/adapter-pg": "^7.6.0",
