@@ -8,6 +8,12 @@ export default function CongressLayout({ children }: { children: ReactNode }) {
         <Link href="/congress" className="hover:text-zinc-900 dark:hover:text-zinc-100">
           Weekly
         </Link>
+        <Link href="/congress/discuss" className="hover:text-zinc-900 dark:hover:text-zinc-100">
+          Discuss
+        </Link>
+        <Link href="/congress/bench" className="hover:text-zinc-900 dark:hover:text-zinc-100">
+          Bench
+        </Link>
         <Link href="/congress/history" className="hover:text-zinc-900 dark:hover:text-zinc-100">
           History
         </Link>
