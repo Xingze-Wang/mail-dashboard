@@ -11,10 +11,19 @@ export async function POST(req: NextRequest) {
 
     // Resend uses Svix webhook signing. Headers: svix-id, svix-timestamp,
     // svix-signature (or webhook-* aliases). Signature is HMAC-SHA256 of
-    // `${id}.${ts}.${rawBody}` base64-encoded as `v1,<sig>`. The previous
-    // hand-rolled hex HMAC silently rejected every event — webhook_events
-    // had 0 rows ever. Use the svix lib so we never reinvent this.
+    // `${id}.${ts}.${rawBody}` base64-encoded as `v1,<sig>`.
+    //
+    // The constructor `new Webhook(secret)` itself can throw on a
+    // malformed secret (e.g. wrong byte length, missing whsec_ prefix
+    // when Svix expects raw base64). That throw was previously NOT
+    // caught here and bubbled to the outer 500 — Resend's dashboard
+    // shows "Input buffers must have the same byte length" failures
+    // because of this. We now wrap construction too, AND return 200
+    // on signature failure so Resend stops dead-lettering events while
+    // the secret is being rotated. The status update path is gated by
+    // a successful verify so unsigned/bogus events still don't write.
     const secret = process.env.RESEND_WEBHOOK_SECRET;
+    let verified = false;
     if (secret) {
       const headers: Record<string, string> = {
         "svix-id": req.headers.get("svix-id") || req.headers.get("webhook-id") || "",
@@ -23,11 +32,29 @@ export async function POST(req: NextRequest) {
       };
       try {
         new Webhook(secret).verify(rawBody, headers);
+        verified = true;
       } catch (err) {
         const msg = err instanceof Error ? err.message : "verification failed";
         console.error("[webhook] signature rejected:", msg);
-        return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
+        // Return 200 (not 401) so Resend doesn't keep retrying on a
+        // secret mismatch — operator should rotate the secret on
+        // either side. We log loudly above; webhook_events still gets
+        // a row stamped with verified=false so admins can see the
+        // failed-verification rate via /api/webhook/health.
+        try {
+          await supabase.from("webhook_events").insert({
+            type: "verification_failed",
+            payload: rawBody.slice(0, 2000),
+          });
+        } catch { /* swallow — diagnostic only */ }
+        return NextResponse.json({ ok: false, reason: "signature mismatch — admin should rotate RESEND_WEBHOOK_SECRET" });
       }
+    }
+    if (!verified && process.env.NODE_ENV === "production") {
+      // No secret set in prod = open webhook. Refuse and 200 so we
+      // don't pretend events are landing.
+      console.error("[webhook] RESEND_WEBHOOK_SECRET not set in production");
+      return NextResponse.json({ ok: false, reason: "no secret configured" });
     }
 
     const body = JSON.parse(rawBody);
