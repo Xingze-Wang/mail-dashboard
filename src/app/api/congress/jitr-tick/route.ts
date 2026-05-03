@@ -1,24 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
-import { spawn } from "node:child_process";
+import { runJitrTick } from "@/lib/congress-runners";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
+export const maxDuration = 120;
 
-// JITR daily tick. The orchestration is in scripts/jitr-tick.mjs which
-// is .mjs and pure node — we shell out from here. (Vercel's serverless
-// runtime supports this for Node functions.)
-//
-// For now: the cron entry exists but the .mjs path doesn't ship with
-// the Vercel deploy. Until we either port jitr-tick.mjs into a TS
-// runner or include scripts/ in the deploy bundle, this route returns
-// a not-implemented note. Run manually: node scripts/jitr-tick.mjs
+// JITR daily tick. Now wired to the TS runner — the .mjs script path
+// is no longer the source of truth (kept for manual local runs only).
 export async function GET(req: NextRequest) {
   if (req.headers.get("authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
-  void spawn; // referenced so import isn't tree-shaken; replace when we port
-  return NextResponse.json({
-    ok: true,
-    note: "JITR tick stub — run scripts/jitr-tick.mjs manually for now. Port to TS runner before relying on this cron.",
-  });
+  try {
+    const result = await runJitrTick({ dryRun: false });
+    return NextResponse.json(result);
+  } catch (err) {
+    return NextResponse.json({ ok: false, error: String(err).slice(0, 500) }, { status: 500 });
+  }
 }

@@ -155,17 +155,366 @@ export async function runWeeklyCongress(opts: RunOpts = {}): Promise<WeeklyResul
   return { outcome: "proposal", proposalId: row.id, title: synthJson.title };
 }
 
-// Monthly + postmortem stubs that the cron routes call. Their full
-// orchestration still lives in scripts/congress-monthly.ts and
-// scripts/congress-postmortem.ts; the cron just re-invokes that
-// orchestration in-process via dynamic import to avoid duplicating.
-export async function runMonthlyCongress(opts: RunOpts = {}): Promise<{ ok: boolean }> {
-  // For now: log only. The full Loop 3 lives in scripts/congress-monthly.ts
-  // and is operator-triggered. Cron entry is a placeholder so we don't
-  // forget the cadence — uncomment the import below to enable.
-  void opts;
-  await notifyAdminText("📅 Monthly Strategic Congress placeholder fired (full impl in scripts/congress-monthly.ts; run manually for now)");
-  return { ok: true };
+// ── Loop 3: Monthly Strategic Congress ─────────────────────────────────
+//
+// Different roster: Historian (grades Loop 2 outputs), Funnel Economist,
+// Constituent Advocate, Psychologist, Adversary, Synthesizer.
+// Output: 0-1 strategic_decisions row + (if approved) a strategic_directive.
+
+const MONTHLY_ROSTER: Persona[] = [
+  { key: "historian", display: "Historian",
+    system: "你是 Historian — 专门 grade 过去 90 天 tactical congress 通过的决定. 比较 expected_lift 和 actual_lift. 不留情面.",
+    question: "Read the graded tactical proposals in the evidence pack. For each: one-line verdict (hit / partial / miss / inconclusive) with the numbers. Then one sentence on the quarter's net trajectory." },
+  { key: "funnel_economist", display: "Funnel Economist",
+    system: "你是 funnel economist — 看整个漏斗 as a unit. 找 actual bottleneck.",
+    question: "Which funnel stage is actually the bottleneck right now? If you had to pick ONE stage to attack next quarter, which and why?" },
+  { key: "constituent_advocate", display: "Constituent Advocate",
+    system: "你 speaks for both researcher AND rep as humans. 关心 long-term trust + experience.",
+    question: "Beyond metrics, what's degrading or improving in the human experience — for recipients AND reps? Cite specifics." },
+  { key: "psychologist", display: "Psychologist",
+    system: "你是 psychologist. 在 strategic horizon 上你关心 long-term trust + emotional capital.",
+    question: "Looking at 90 days: are we building or eroding emotional capital with the Chinese AI research community? Are reps showing sustainable engagement or signs of mechanical script-running? What structural change would address the deepest psychological friction?" },
+  { key: "adversary", display: "Adversary",
+    system: "你 attack proposed STRATEGIC changes. Bigger swings, more skepticism.",
+    question: "If the panel proposes a structural change (new category, threshold redefinition, kill a distinction, hire a 6th rep), what's the most likely failure mode? What evidence is missing?" },
+  { key: "synthesizer", display: "Synthesizer",
+    system: "你 synthesize the panel into a strategic decision. JSON output only.",
+    question: `Produce JSON:
+{ "title":"one-line summary or 'no change this month'",
+  "outcome":"approved"|"rejected"|"deferred"|"no_proposal",
+  "directive_body":"if approved — one-paragraph directive that constrains Loop 2",
+  "rationale":"why",
+  "historian_summary":"one-sentence grade of last quarter overall: net positive / net zero / net negative" }
+JSON only, no markdown fence. Set max_tokens-friendly directive_body (under 800 chars).` },
+];
+
+async function gradeOverdueTacticals(): Promise<Array<{ id: string; title: string; expected: object; actual: object; grade: string }>> {
+  const { data: due } = await supabase
+    .from("tactical_proposals")
+    .select("*")
+    .eq("ship_decision", "approved")
+    .is("graded_at", null)
+    .lt("evaluation_due_at", new Date().toISOString());
+  const graded: Array<{ id: string; title: string; expected: object; actual: object; grade: string }> = [];
+  for (const p of due ?? []) {
+    if (!p.shipped_at) continue;
+    const startISO = p.shipped_at;
+    const endISO = new Date(new Date(startISO).getTime() + (p.weeks_to_evaluate ?? 4) * 7 * 24 * 3600 * 1000).toISOString();
+    const { data: postEmails } = await supabase.from("emails").select("status").gte("created_at", startISO).lt("created_at", endISO);
+    const sent = postEmails?.length ?? 0;
+    const opened = (postEmails ?? []).filter((e: { status: string }) => e.status === "opened" || e.status === "clicked").length;
+    const clicked = (postEmails ?? []).filter((e: { status: string }) => e.status === "clicked").length;
+    const exp = p.expected_lift as { metric?: string; delta_pp?: number } | null;
+    let grade: "hit" | "partial" | "miss" | "inconclusive" = "inconclusive";
+    if (sent < 30) grade = "inconclusive";
+    else if (exp?.metric === "open_rate" && exp?.delta_pp != null) {
+      const baseStart = new Date(new Date(startISO).getTime() - 28 * 24 * 3600 * 1000).toISOString();
+      const { data: baseEmails } = await supabase.from("emails").select("status").gte("created_at", baseStart).lt("created_at", startISO);
+      const baseSent = baseEmails?.length ?? 0;
+      const baseOpened = (baseEmails ?? []).filter((e: { status: string }) => e.status === "opened" || e.status === "clicked").length;
+      const baseRate = baseSent > 0 ? baseOpened / baseSent : 0;
+      const actualRate = sent > 0 ? opened / sent : 0;
+      const actualDelta = (actualRate - baseRate) * 100;
+      if (actualDelta >= exp.delta_pp * 0.8) grade = "hit";
+      else if (actualDelta >= exp.delta_pp * 0.3) grade = "partial";
+      else grade = "miss";
+    }
+    const actual = { sent, open_rate: sent > 0 ? opened / sent : 0, click_rate: sent > 0 ? clicked / sent : 0 };
+    graded.push({ id: p.id, title: p.title, expected: exp ?? {}, actual, grade });
+    await supabase.from("tactical_proposals").update({
+      graded_at: new Date().toISOString(),
+      actual_lift: actual,
+      grade,
+    }).eq("id", p.id);
+  }
+  return graded;
+}
+
+async function buildMonthlyEvidence(graded: Array<{ id: string; title: string; expected: object; actual: object; grade: string }>): Promise<string> {
+  const lines: string[] = [];
+  const constraints = await buildConstraintsPreamble();
+  if (constraints) lines.push(constraints);
+
+  lines.push(`## Last quarter's tactical proposals — graded`);
+  if (graded.length === 0) lines.push(`(no proposals were due for grading this cycle)`);
+  else for (const g of graded) {
+    lines.push(`  [${g.grade}] "${g.title}"`);
+    lines.push(`    expected: ${JSON.stringify(g.expected)}`);
+    lines.push(`    actual:   ${JSON.stringify(g.actual)}`);
+  }
+
+  const start90 = new Date(Date.now() - 90 * 24 * 3600 * 1000).toISOString();
+  const { count: leadsScanned } = await supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).gte("created_at", start90);
+  const { count: emailsSent } = await supabase.from("emails").select("*", { count: "exact", head: true }).gte("created_at", start90);
+  const { count: wechatAdds } = await supabase.from("brief_lookups").select("*", { count: "exact", head: true }).gte("marked_at", start90);
+  const { count: clickEventCount } = await supabase.from("webhook_events").select("*", { count: "exact", head: true }).eq("type", "email.clicked").gte("created_at", start90);
+  lines.push(`\n## 90-day funnel rollup`);
+  lines.push(`  arxiv leads scanned: ${leadsScanned ?? 0}`);
+  lines.push(`  emails sent: ${emailsSent ?? 0}`);
+  lines.push(`  click events: ${clickEventCount ?? 0}`);
+  lines.push(`  wechat adds: ${wechatAdds ?? 0}`);
+  if (emailsSent && wechatAdds) lines.push(`  send→wechat conversion: ${(100 * wechatAdds / emailsSent).toFixed(2)}%`);
+
+  const { data: leadsByDir } = await supabase.from("pipeline_leads").select("research_direction, status").gte("created_at", start90);
+  const dirTally = new Map<string, { sent: number; total: number }>();
+  for (const l of leadsByDir ?? []) {
+    const d = (l as { research_direction: string | null }).research_direction || "Other";
+    if (!dirTally.has(d)) dirTally.set(d, { sent: 0, total: 0 });
+    dirTally.get(d)!.total++;
+    if ((l as { status: string }).status === "sent") dirTally.get(d)!.sent++;
+  }
+  lines.push(`\n## Per-direction send (last 90d, top 10)`);
+  for (const [d, t] of [...dirTally].sort((a, b) => b[1].sent - a[1].sent).slice(0, 10)) lines.push(`  ${d}: sent=${t.sent}/${t.total}`);
+
+  const { data: tpls } = await supabase.from("email_templates").select("name, rep_id").eq("active", true);
+  lines.push(`\n## Active email templates: ${(tpls ?? []).map((t: { name: string }) => t.name).join(", ")}`);
+
+  return lines.join("\n");
+}
+
+export async function runMonthlyCongress(opts: RunOpts = {}): Promise<{ ok: boolean; outcome?: string; decisionId?: string; gradedCount?: number }> {
+  const graded = await gradeOverdueTacticals();
+  const evidencePack = await buildMonthlyEvidence(graded);
+
+  const personas: Record<string, string> = {};
+  let runningContext = "";
+  for (const p of MONTHLY_ROSTER) {
+    const text = await runOnePersona(p, evidencePack, runningContext, "Monthly Strategic Congress");
+    personas[p.key] = text;
+    runningContext += `\n\n### ${p.display}\n${text}`;
+  }
+
+  let synthJson: { title?: string; outcome?: string; directive_body?: string; rationale?: string; historian_summary?: string };
+  try {
+    const raw = personas.synthesizer.trim().replace(/^```(?:json)?\s*\n?/, "").replace(/\n?```\s*$/, "").trim();
+    synthJson = JSON.parse(raw);
+  } catch {
+    if (!opts.dryRun) {
+      await notifyAdminText(`📅 Monthly Strategic Congress: synthesizer JSON parse failed. Raw: ${personas.synthesizer?.slice(0, 400)}`);
+    }
+    return { ok: false, outcome: "parse_failed" };
+  }
+
+  if (opts.dryRun) {
+    return { ok: true, outcome: synthJson.outcome, gradedCount: graded.length };
+  }
+
+  const { data: decRow } = await supabase.from("strategic_decisions").insert({
+    title: synthJson.title || "(untitled)",
+    deliberation: { personas, graded_proposals: graded, evidence_pack_excerpt: evidencePack.slice(0, 3000) },
+    outcome: ["approved", "rejected", "deferred"].includes(synthJson.outcome ?? "") ? synthJson.outcome : "deferred",
+  }).select().single();
+  if (!decRow) return { ok: false };
+
+  let directiveId: string | null = null;
+  if (synthJson.outcome === "approved" && synthJson.directive_body) {
+    const { data: dirRow } = await supabase.from("strategic_directives").insert({
+      body: synthJson.directive_body,
+      source_decision_id: decRow.id,
+      notes: synthJson.rationale,
+    }).select().single();
+    if (dirRow) {
+      directiveId = dirRow.id;
+      await supabase.from("strategic_decisions").update({ resulting_directive_id: dirRow.id }).eq("id", decRow.id);
+    }
+  }
+
+  await notifyAdminText([
+    `🏛️ Monthly Strategic Congress`,
+    ``,
+    `Outcome: ${synthJson.outcome}`,
+    `Title: ${synthJson.title}`,
+    `Historian's grade: ${synthJson.historian_summary || "(no summary)"}`,
+    `Graded ${graded.length} tactical proposals: ${graded.map((g) => g.grade).join(", ") || "(none due)"}`,
+    ``,
+    synthJson.directive_body ? `Active directive (constrains Loop 2):\n${synthJson.directive_body.slice(0, 400)}` : "(no new directive)",
+    ``,
+    `Adversary: "${(personas.adversary || "").slice(0, 200)}"`,
+    `Psychologist: "${(personas.psychologist || "").slice(0, 200)}"`,
+    `decision_id=${decRow.id}${directiveId ? ` directive_id=${directiveId}` : ""}`,
+  ].join("\n"));
+
+  return { ok: true, outcome: synthJson.outcome, decisionId: decRow.id, gradedCount: graded.length };
+}
+
+// ── Loop 1: JITR (Daily Apprentice) ────────────────────────────────────
+//
+// Ports scripts/jitr-tick.mjs into the runner lib so cron can fire it.
+// Same logic: pending drift patterns → attribute to dominant rep →
+// send Lark interactive card → record jitr_offers row.
+
+const JITR_ATTRIBUTION_THRESHOLD = 0.6;
+const JITR_REOFFER_DAYS = 14;
+const ADMIN_REP_ID = 5;
+
+async function getLarkTokenAndBase(): Promise<{ token: string; base: string } | null> {
+  const appId = process.env.LARK_APP_ID;
+  const secret = process.env.LARK_APP_SECRET;
+  if (!appId || !secret) return null;
+  const base = process.env.LARK_REGION === "cn"
+    ? "https://open.feishu.cn/open-apis"
+    : "https://open.larksuite.com/open-apis";
+  const res = await fetch(`${base}/auth/v3/tenant_access_token/internal`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ app_id: appId, app_secret: secret }),
+    signal: AbortSignal.timeout(20_000),
+  });
+  const j = await res.json();
+  if (j.code !== 0) return null;
+  return { token: j.tenant_access_token, base };
+}
+
+async function sendJitrCard(token: string, base: string, openId: string, repName: string, pattern: { ai_phrase: string; sales_phrase: string; occurrence_count: number; offerId: string }): Promise<string | null> {
+  const card = {
+    config: { wide_screen_mode: true },
+    header: {
+      title: { content: `📝 一个小调整想法 - ${repName}`, tag: "plain_text" },
+      template: "blue",
+    },
+    elements: [
+      { tag: "div", text: { tag: "lark_md", content: `早. 我注意到最近 **${pattern.occurrence_count} 次** 你把这段:\n\n> ${pattern.ai_phrase}\n\n改成了这样:\n\n> ${pattern.sales_phrase}\n\n我可以把这条规则只加到 **你自己** 的草稿模板里, 以后自动这样写. 别的 rep 不受影响.` } },
+      { tag: "action", actions: [
+        { tag: "button", text: { tag: "plain_text", content: "好, 加到我的模板" }, type: "primary",
+          value: { jitr_action: "accept", offer_id: pattern.offerId } },
+        { tag: "button", text: { tag: "plain_text", content: "算了, 那次是临时" }, type: "default",
+          value: { jitr_action: "dismiss", offer_id: pattern.offerId } },
+      ] },
+      { tag: "note", elements: [{ tag: "plain_text", content: "如果加了之后效果不好, 系统会自动回滚 + 通知你." }] },
+    ],
+  };
+  const res = await fetch(`${base}/im/v1/messages?receive_id_type=open_id`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ receive_id: openId, msg_type: "interactive", content: JSON.stringify(card) }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok || j.code !== 0) return null;
+  return j.data?.message_id ?? null;
+}
+
+export async function runJitrTick(opts: RunOpts = {}): Promise<{ ok: boolean; offered: number; skipped: number; unboundReps: string[] }> {
+  const { data: patterns } = await supabase
+    .from("prompt_drift_patterns")
+    .select("*")
+    .eq("status", "pending")
+    .gte("occurrence_count", 2)
+    .order("occurrence_count", { ascending: false });
+
+  const { data: reps } = await supabase.from("sales_reps").select("id, name, lark_open_id, active").eq("active", true);
+  const repById = new Map((reps ?? []).map((r: { id: number }) => [r.id, r] as const));
+  const adminRep = repById.get(ADMIN_REP_ID) as { lark_open_id?: string } | undefined;
+
+  type Offered = { pattern: { id: number; ai_phrase: string; sales_phrase: string; occurrence_count: number }; rep: { id: number; name: string; lark_open_id: string }; offerId?: string };
+  const offered: Offered[] = [];
+  const skipped: Array<{ patternId: number; reason: string }> = [];
+  const unboundReps = new Set<string>();
+
+  for (const p of patterns ?? []) {
+    const exampleIds = (p.example_lead_ids || []).filter((s: unknown) => typeof s === "string" && (s as string).length > 0) as string[];
+    if (exampleIds.length === 0) { skipped.push({ patternId: p.id, reason: "no example_lead_ids" }); continue; }
+
+    const fullIds = exampleIds.filter((s) => s.length >= 36);
+    const prefixIds = exampleIds.filter((s) => s.length < 36);
+    const repCounts = new Map<number, number>();
+    if (fullIds.length > 0) {
+      const { data: leads } = await supabase.from("pipeline_leads").select("assigned_rep_id").in("id", fullIds);
+      for (const l of leads ?? []) {
+        const rid = (l as { assigned_rep_id: number | null }).assigned_rep_id;
+        if (rid != null) repCounts.set(rid, (repCounts.get(rid) ?? 0) + 1);
+      }
+    }
+    for (const prefix of prefixIds) {
+      const { data: leads } = await supabase.from("pipeline_leads").select("assigned_rep_id").like("id", `${prefix}%`).limit(5);
+      for (const l of leads ?? []) {
+        const rid = (l as { assigned_rep_id: number | null }).assigned_rep_id;
+        if (rid != null) repCounts.set(rid, (repCounts.get(rid) ?? 0) + 1);
+      }
+    }
+    const total = [...repCounts.values()].reduce((a, b) => a + b, 0);
+    if (total === 0) { skipped.push({ patternId: p.id, reason: "no leads resolvable" }); continue; }
+
+    const sorted = [...repCounts.entries()].sort((a, b) => b[1] - a[1]);
+    const [topRepId, topCount] = sorted[0];
+    if (topCount / total < JITR_ATTRIBUTION_THRESHOLD) {
+      skipped.push({ patternId: p.id, reason: `multi-rep (top ${topCount}/${total})` });
+      continue;
+    }
+    const rep = repById.get(topRepId) as { id: number; name: string; lark_open_id: string | null } | undefined;
+    if (!rep) { skipped.push({ patternId: p.id, reason: `rep_id=${topRepId} not active` }); continue; }
+    if (!rep.lark_open_id) {
+      unboundReps.add(rep.name);
+      skipped.push({ patternId: p.id, reason: `${rep.name} not bound to Lark` });
+      continue;
+    }
+
+    const cutoff = new Date(Date.now() - JITR_REOFFER_DAYS * 24 * 3600 * 1000).toISOString();
+    const { data: prior } = await supabase
+      .from("jitr_offers")
+      .select("id")
+      .eq("pattern_id", p.id)
+      .eq("rep_id", rep.id)
+      .gte("offered_at", cutoff)
+      .limit(1);
+    if (prior && prior.length > 0) {
+      skipped.push({ patternId: p.id, reason: `already offered to ${rep.name} within ${JITR_REOFFER_DAYS}d` });
+      continue;
+    }
+
+    offered.push({
+      pattern: { id: p.id, ai_phrase: p.ai_phrase, sales_phrase: p.sales_phrase, occurrence_count: p.occurrence_count },
+      rep: { id: rep.id, name: rep.name, lark_open_id: rep.lark_open_id },
+    });
+  }
+
+  if (opts.dryRun) {
+    return { ok: true, offered: offered.length, skipped: skipped.length, unboundReps: [...unboundReps] };
+  }
+
+  // Insert offer rows + send cards
+  const tokenInfo = await getLarkTokenAndBase();
+  if (!tokenInfo && offered.length > 0) {
+    return { ok: false, offered: 0, skipped: skipped.length, unboundReps: [...unboundReps] };
+  }
+  let sentCount = 0;
+  for (const o of offered) {
+    const { data: row } = await supabase.from("jitr_offers").insert({
+      pattern_id: o.pattern.id,
+      rep_id: o.rep.id,
+      ai_phrase: o.pattern.ai_phrase,
+      sales_phrase: o.pattern.sales_phrase,
+      occurrence_count: o.pattern.occurrence_count,
+    }).select().single();
+    if (!row) continue;
+    o.offerId = row.id;
+    if (tokenInfo) {
+      const messageId = await sendJitrCard(tokenInfo.token, tokenInfo.base, o.rep.lark_open_id, o.rep.name, { ...o.pattern, offerId: row.id });
+      if (messageId) {
+        await supabase.from("jitr_offers").update({ card_message_id: messageId }).eq("id", row.id);
+        sentCount++;
+      }
+    }
+  }
+
+  // Admin digest
+  if (adminRep?.lark_open_id) {
+    const lines: string[] = [];
+    lines.push(`📊 JITR daily — ${new Date().toISOString().slice(0, 10)}`);
+    lines.push(`offered: ${sentCount}  skipped: ${skipped.length}`);
+    if (offered.length > 0) {
+      lines.push(``, `sent to:`);
+      for (const o of offered) lines.push(`  • ${o.rep.name} ← "${o.pattern.ai_phrase.slice(0, 30)}…" → "${o.pattern.sales_phrase.slice(0, 30)}…"`);
+    }
+    if (unboundReps.size > 0) {
+      lines.push(``, `⚠️ unbound reps (Lark open_id missing) — they're missing JITR offers:`);
+      for (const n of unboundReps) lines.push(`  • ${n}`);
+      lines.push(`fix: have them DM the bot once, then bind via /api/lark/bind`);
+    }
+    await notifyAdminText(lines.join("\n"));
+  }
+
+  return { ok: true, offered: sentCount, skipped: skipped.length, unboundReps: [...unboundReps] };
 }
 
 export async function runPostmortemDetector(opts: RunOpts = {}): Promise<{ ok: boolean; fired: boolean }> {
