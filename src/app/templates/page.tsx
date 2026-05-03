@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { Plus, Pencil, Trash2, FileText, X, Eye, Zap, Loader2 } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 import { sanitizeHtml } from "@/lib/sanitize";
+import AnalysisPage from "@/app/analysis/page";
 
 interface Template {
   id: string;
@@ -60,7 +61,44 @@ const DEFAULT_INTRO_PROMPT = `根据论文写一句个性化开头（1句话）�
 
 const PIPELINE_PROMPT_NAME = "pipeline_intro_prompt";
 
+// Wrapper page: Editor / Performance tabs. Editor is the original
+// templates UI; Performance embeds the analysis page which lives at
+// src/app/analysis/page.tsx (kept as a route for direct linking).
 export default function TemplatesPage() {
+  const [tab, setTab] = useState<"editor" | "performance">("editor");
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 0, marginBottom: 20, borderBottom: "1px solid var(--border-light)" }}>
+        {(["editor", "performance"] as const).map((t) => {
+          const active = tab === t;
+          return (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              style={{
+                padding: "10px 16px",
+                fontSize: 14,
+                fontWeight: active ? 600 : 500,
+                color: active ? "var(--text)" : "var(--text-tertiary)",
+                background: "transparent",
+                border: "none",
+                borderBottom: active ? "2px solid var(--blue)" : "2px solid transparent",
+                marginBottom: -1,
+                cursor: "pointer",
+                textTransform: "capitalize",
+              }}
+            >
+              {t}
+            </button>
+          );
+        })}
+      </div>
+      {tab === "editor" ? <TemplatesEditor /> : <AnalysisPage />}
+    </div>
+  );
+}
+
+function TemplatesEditor() {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Template | null>(null);

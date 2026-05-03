@@ -108,21 +108,22 @@ function initialsOf(name: string | null | undefined): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
+// /inbox merged into /emails Receiving tab — sidebar entry removed.
+// Unread badge moves to Emails since that's now where inbound lives.
 const mainNav = [
   { href: "/",         label: "Overview", Icon: OverviewIcon },
   { href: "/pipeline", label: "Pipeline", Icon: PipelineIcon, badgeKey: "ready"  as const },
-  { href: "/inbox",    label: "Inbox",    Icon: InboxIcon,    badgeKey: "unread" as const },
-  { href: "/emails",   label: "Emails",   Icon: EmailsIcon },
+  { href: "/emails",   label: "Emails",   Icon: EmailsIcon,   badgeKey: "unread" as const },
 ];
 
+// /analysis merged into /templates Performance tab — sidebar entry hidden.
+// /logs hidden from sidebar (still reachable via direct URL for debugging).
 const toolsNav = [
   { href: "/brief",     label: "Brief",     Icon: BriefIcon,     adminOnly: false },
   { href: "/templates", label: "Templates", Icon: TemplatesIcon, adminOnly: false },
-  { href: "/analysis",  label: "Analysis",  Icon: ScorerIcon,    adminOnly: false },
   { href: "/scorer",    label: "Scorer",    Icon: ScorerIcon,    adminOnly: true  },
   { href: "/bench",     label: "Bench",     Icon: ScorerIcon,    adminOnly: true  },
   { href: "/drift",     label: "Drift",     Icon: DriftIcon,     adminOnly: true  },
-  { href: "/logs",      label: "Logs",      Icon: LogsIcon,      adminOnly: true  },
 ];
 
 interface NavItemProps {
