@@ -524,6 +524,10 @@ export default function EmailsPage() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchInput, setSearchInput] = useState("");
+  // Sending vs Receiving tabs (Resend-style). Sending pulls from `emails`
+  // table (outbound); Receiving pulls from `inbound_emails` and renders
+  // with `from` shown as the row's primary recipient field.
+  const [direction, setDirection] = useState<"sending" | "receiving">("sending");
 
   const fetchEmails = () => {
     setLoading(true);
@@ -531,11 +535,37 @@ export default function EmailsPage() {
     if (statusFilter) params.set("status", statusFilter);
     if (searchQuery) params.set("search", searchQuery);
 
-    fetch(`/api/emails?${params}`)
+    const path = direction === "sending" ? `/api/emails?${params}` : `/api/inbound?${params}`;
+    fetch(path)
       .then((res) => res.json())
       .then((data) => {
-        setEmails(data.emails);
-        setTotal(data.total);
+        // Normalize inbound rows into the Email shape so the existing
+        // table / detail view works without further branching. Inbound
+        // rows have `from` populated and `to` = our send address; we
+        // surface `from` as the primary identifier (matches Resend UI).
+        if (direction === "receiving") {
+          const normalized: Email[] = (data.emails ?? []).map((row: {
+            id: string; from: string; to: string; subject: string;
+            html?: string | null; text?: string | null; created_at: string; thread_id?: string | null;
+          }) => ({
+            id: row.id,
+            from: row.from,
+            // Show `from` (sender) as `to` so the existing "To" column
+            // labels render the OTHER party — what the user wants to see
+            // at a glance is "who is this from."
+            to: row.from,
+            subject: row.subject ?? "(no subject)",
+            html: row.html ?? "",
+            text: row.text ?? null,
+            status: "received",
+            createdAt: row.created_at,
+            resendId: null,
+          }));
+          setEmails(normalized);
+        } else {
+          setEmails(data.emails);
+        }
+        setTotal(data.total ?? data.emails?.length ?? 0);
         setTruncated(!!data.truncated);
         setScannedTotal(typeof data.scannedTotal === "number" ? data.scannedTotal : null);
       })
@@ -564,9 +594,13 @@ export default function EmailsPage() {
 
   useEffect(() => {
     fetchEmails();
-  }, [page, statusFilter, searchQuery]);
+    // direction must be in deps so switching tabs refetches
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, statusFilter, searchQuery, direction]);
 
-  const statuses = ["all", "sent", "delivered", "clicked", "bounced", "complained"];
+  const statuses = direction === "sending"
+    ? ["all", "sent", "delivered", "clicked", "bounced", "complained"]
+    : ["all"]; // inbound has no per-status filter — every row is "received"
 
   // Detail view
   if (selected) {
@@ -659,6 +693,33 @@ export default function EmailsPage() {
             Compose
           </button>
         </div>
+      </div>
+
+      {/* ── Sending / Receiving tabs (Resend-style) ── */}
+      <div style={{ display: "flex", gap: 0, marginBottom: 20, borderBottom: "1px solid var(--border-light)" }}>
+        {(["sending", "receiving"] as const).map((d) => {
+          const active = direction === d;
+          return (
+            <button
+              key={d}
+              onClick={() => { setDirection(d); setPage(1); setStatusFilter(null); }}
+              style={{
+                padding: "10px 16px",
+                fontSize: 14,
+                fontWeight: active ? 600 : 500,
+                color: active ? "var(--text)" : "var(--text-tertiary)",
+                background: "transparent",
+                border: "none",
+                borderBottom: active ? "2px solid var(--blue)" : "2px solid transparent",
+                marginBottom: -1,
+                cursor: "pointer",
+                textTransform: "capitalize",
+              }}
+            >
+              {d}
+            </button>
+          );
+        })}
       </div>
 
       {/* ── Search ── */}
