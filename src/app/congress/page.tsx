@@ -1,284 +1,243 @@
-// /congress — index of all council activity.
-//
-// Three sections, in order of "what does the admin actually need to see":
-//   1. Pending decisions — tactical_proposals where ship_decision='pending'.
-//      Click → /congress/proposals/[id] (full discussion).
-//   2. Recent shipped — last 10 decisions, with status, expected vs actual.
-//   3. Active strategic directives — what currently constrains Loop 2.
-//
-// Reps see read-only. Admin sees approve/reject inline.
+// /congress weekly tactical congress index — current proposals + past decisions.
+// Data: GET /api/congress/index (live tactical_proposals + jitr stats).
+// Design: drop-in from advisor 2026-05-03. Server component reads via fetch
+// at request time so SSR has data.
 
-"use client";
-
-import { useEffect, useState } from "react";
 import Link from "next/link";
+import { headers, cookies } from "next/headers";
+import { CATEGORY_LABEL, SCOPE_LABEL, type Proposal, type DecisionStatus } from "@/lib/congress/types";
+import { dbToProposal } from "@/lib/congress/adapter";
+import { StatusPill } from "@/components/congress/StatusPill";
+import DecisionForm from "./DecisionForm";
 
-interface Proposal {
+export const dynamic = "force-dynamic";
+
+interface DbProposalRow {
   id: string;
   title: string;
   proposed_at: string;
   ship_decision: string;
   shipped_at: string | null;
+  decided_at: string | null;
   evaluation_due_at: string | null;
-  expected_lift: { metric?: string; delta_pp?: number } | null;
-  actual_lift: { open_rate?: number; click_rate?: number } | null;
+  weeks_to_evaluate: number;
+  expected_lift: { metric?: string; delta_pp?: number; rationale?: string } | null;
+  actual_lift: { sent?: number; open_rate?: number; click_rate?: number } | null;
   grade: string | null;
+  change_spec: { kind?: string; details?: Record<string, unknown> } | null;
+  deliberation: { personas?: Record<string, string>; evidence_pack_excerpt?: string } | null;
 }
 
-interface Directive {
-  id: string;
-  body: string;
-  effective_from: string;
-  active: boolean;
-}
-
-interface Decision {
-  id: string;
-  title: string;
-  outcome: string;
-  decided_at: string;
-}
-
-interface CongressData {
-  pending: Proposal[];
-  recent: Proposal[];
-  directives: Directive[];
-  recent_strategic: Decision[];
+interface IndexResponse {
+  pending: DbProposalRow[];
+  recent: DbProposalRow[];
+  directives: { id: string; body: string; effective_from: string }[];
   jitr_offers_pending: number;
   jitr_offers_accepted_30d: number;
   unbound_reps: string[];
 }
 
-export default function CongressPage() {
-  const [data, setData] = useState<CongressData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [acting, setActing] = useState<string | null>(null);
+async function getIndex(): Promise<IndexResponse | null> {
+  const h = await headers();
+  const c = await cookies();
+  const host = h.get("host") ?? "qiji-pipeline.vercel.app";
+  const proto = host.startsWith("localhost") ? "http" : "https";
+  // Forward cookies for auth
+  const cookieStr = c.getAll().map((x) => `${x.name}=${x.value}`).join("; ");
+  const res = await fetch(`${proto}://${host}/api/congress/index`, {
+    headers: { cookie: cookieStr },
+    cache: "no-store",
+  });
+  if (!res.ok) return null;
+  return res.json();
+}
 
-  useEffect(() => {
-    fetch("/api/congress/index")
-      .then((r) => (r.ok ? r.json() : null))
-      .then(setData)
-      .finally(() => setLoading(false));
-  }, []);
-
-  async function decide(id: string, approved: boolean) {
-    setActing(id);
-    try {
-      const r = await fetch(`/api/tactical/${id}/decide?approved=${approved ? 1 : 0}`, { method: "POST" });
-      if (r.ok) {
-        // Refresh
-        const fresh = await fetch("/api/congress/index").then((x) => x.json());
-        setData(fresh);
-      } else {
-        alert(`decide failed: ${await r.text()}`);
-      }
-    } finally {
-      setActing(null);
-    }
+export default async function CongressWeeklyPage() {
+  const data = await getIndex();
+  if (!data) {
+    return (
+      <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-6 text-[13px] text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+        Unable to load congress data — sign in as admin.
+      </div>
+    );
   }
 
-  if (loading) return <div style={{ padding: 24 }}>Loading…</div>;
-  if (!data) return <div style={{ padding: 24, color: "var(--text-tertiary)" }}>No congress data — admin only.</div>;
+  const pending = data.pending.map(dbToProposal);
+  const recent = data.recent.map(dbToProposal);
+
+  // Header summary stats
+  const shippedCount = recent.filter((p) => p.decision === "approved" || p.decision === "measuring").length;
+  const revertedCount = recent.filter((p) => p.decision === "reverted").length;
+  const measuringCount = recent.filter((p) => p.decision === "measuring").length;
+  const currentWeek = pending[0]?.week ?? recent[0]?.week ?? "—";
 
   return (
-    <div style={{ padding: "24px 32px", maxWidth: 1100, margin: "0 auto" }}>
-      <div style={{ marginBottom: 28 }}>
-        <h1 style={{ fontSize: 24, fontWeight: 600, margin: 0 }}>Congress</h1>
-        <p style={{ color: "var(--text-tertiary)", fontSize: 13, marginTop: 6 }}>
-          Four loops. Daily JITR · Weekly Tactical · Monthly Strategic · Quarterly Postmortem.
-        </p>
-      </div>
-
-      {/* Pending decisions — top of page, requires action */}
-      <Section title={`Pending decisions (${data.pending.length})`} subtitle="Tactical proposals waiting for your approval">
-        {data.pending.length === 0 ? (
-          <Empty msg="Nothing pending. Loop 2 runs Monday 1am UTC." />
-        ) : (
-          data.pending.map((p) => (
-            <div key={p.id} className="section-card" style={{ padding: 16, marginBottom: 12 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <Link href={`/congress/proposals/${p.id}`} style={{ fontSize: 15, fontWeight: 600, color: "var(--text)", textDecoration: "none" }}>
-                    {p.title}
-                  </Link>
-                  <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 4 }}>
-                    Proposed {fmt(p.proposed_at)} · Expected lift{" "}
-                    {p.expected_lift?.delta_pp != null
-                      ? `+${p.expected_lift.delta_pp}pp ${p.expected_lift.metric ?? ""}`
-                      : "(unspecified)"}{" "}
-                    · Evaluate after{" "}
-                    {p.evaluation_due_at ? `${Math.ceil((new Date(p.evaluation_due_at).getTime() - Date.now()) / 86400000)}d` : "?"}
-                  </div>
-                </div>
-                <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-                  <button
-                    onClick={() => decide(p.id, true)}
-                    disabled={acting === p.id}
-                    style={btnPrimary}
-                  >
-                    {acting === p.id ? "..." : "Approve"}
-                  </button>
-                  <button
-                    onClick={() => decide(p.id, false)}
-                    disabled={acting === p.id}
-                    style={btnSecondary}
-                  >
-                    Reject
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))
-        )}
-      </Section>
-
-      {/* Recent shipped — what we approved + how it's grading */}
-      <Section title="Recent decisions" subtitle="Last 10 tactical proposals + their grades">
-        {data.recent.length === 0 ? (
-          <Empty msg="No shipped decisions yet." />
-        ) : (
-          <table style={{ width: "100%", fontSize: 13, borderCollapse: "collapse" }}>
-            <thead>
-              <tr style={{ borderBottom: "1px solid var(--border-light)", color: "var(--text-tertiary)", textAlign: "left" }}>
-                <th style={{ padding: "8px 6px", fontWeight: 500 }}>Title</th>
-                <th style={{ padding: "8px 6px", fontWeight: 500 }}>Decision</th>
-                <th style={{ padding: "8px 6px", fontWeight: 500 }}>Expected</th>
-                <th style={{ padding: "8px 6px", fontWeight: 500 }}>Actual</th>
-                <th style={{ padding: "8px 6px", fontWeight: 500 }}>Grade</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.recent.map((p) => (
-                <tr key={p.id} style={{ borderBottom: "1px solid var(--border-light)" }}>
-                  <td style={{ padding: "10px 6px" }}>
-                    <Link href={`/congress/proposals/${p.id}`} style={{ color: "var(--text)", textDecoration: "none" }}>
-                      {p.title}
-                    </Link>
-                  </td>
-                  <td style={{ padding: "10px 6px" }}>
-                    <span style={chip(p.ship_decision)}>{p.ship_decision}</span>
-                  </td>
-                  <td style={{ padding: "10px 6px", color: "var(--text-secondary)" }}>
-                    {p.expected_lift?.delta_pp != null ? `+${p.expected_lift.delta_pp}pp` : "—"}
-                  </td>
-                  <td style={{ padding: "10px 6px", color: "var(--text-secondary)" }}>
-                    {p.actual_lift?.click_rate != null ? `${(p.actual_lift.click_rate * 100).toFixed(2)}% click` : "—"}
-                  </td>
-                  <td style={{ padding: "10px 6px" }}>
-                    {p.grade ? <span style={chip(p.grade)}>{p.grade}</span> : <span style={{ color: "var(--text-tertiary)" }}>pending</span>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </Section>
-
-      {/* Active directives — what currently shapes Loop 2 */}
-      <Section title={`Active strategic directives (${data.directives.length})`} subtitle="Loop 2 reads these as constraints every week">
-        {data.directives.length === 0 ? (
-          <Empty msg="No active directives. Monthly congress runs the 1st." />
-        ) : (
-          data.directives.map((d) => (
-            <div key={d.id} className="section-card" style={{ padding: 14, marginBottom: 8, fontSize: 13 }}>
-              <div style={{ color: "var(--text)" }}>{d.body}</div>
-              <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 6 }}>
-                Effective {fmt(d.effective_from)}
-              </div>
-            </div>
-          ))
-        )}
-      </Section>
-
-      {/* JITR status — Daily loop health */}
-      <Section title="Daily JITR (Loop 1)" subtitle="Per-rep micro-decisions from drift patterns">
-        <div className="section-card" style={{ padding: 14, fontSize: 13 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
-            <Stat label="Offers pending" value={data.jitr_offers_pending} />
-            <Stat label="Accepts (30d)" value={data.jitr_offers_accepted_30d} />
-            <Stat label="Unbound reps" value={data.unbound_reps.length} />
+    <>
+      <header className="mb-6 flex items-end justify-between border-b border-zinc-200 pb-4 dark:border-zinc-800">
+        <div>
+          <div className="mb-1 text-xs text-zinc-500 dark:text-zinc-500">Congress · Weekly</div>
+          <h1 className="text-lg font-medium">Tactical congress · week {currentWeek}</h1>
+          <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400">
+            {pending.length === 0 ? "No new proposals this week" : `${pending.length} proposal${pending.length === 1 ? "" : "s"} pending decision`}
+          </p>
+        </div>
+        <div className="text-right text-xs">
+          <div className="text-zinc-500 dark:text-zinc-500">Last 4 weeks</div>
+          <div>
+            <span className="font-medium text-emerald-700 dark:text-emerald-400">{shippedCount} shipped</span>{" "}
+            ·{" "}
+            <span className="font-medium text-red-700 dark:text-red-400">{revertedCount} reverted</span>{" "}
+            ·{" "}
+            <span className="font-medium text-zinc-600 dark:text-zinc-400">{measuringCount} measuring</span>
           </div>
-          {data.unbound_reps.length > 0 && (
-            <div style={{ marginTop: 12, fontSize: 12, color: "var(--text-tertiary)" }}>
-              Unbound: {data.unbound_reps.join(", ")} — they need to DM the bot once to be reachable.
-            </div>
+        </div>
+      </header>
+
+      {pending.length === 0 ? (
+        <div className="mb-8 rounded-xl border border-zinc-200 bg-zinc-50 p-6 text-center text-[13px] text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+          Nothing pending. Loop 2 runs Monday 1am UTC.
+        </div>
+      ) : (
+        pending.map((p) => <ProposalCard key={p.id} proposal={p} />)
+      )}
+
+      <section className="mt-8">
+        <h2 className="text-base font-medium">Past decisions</h2>
+        <div className="mt-2 text-[13px]">
+          {recent.length === 0 ? (
+            <div className="py-6 text-center text-zinc-500 dark:text-zinc-400">No decisions yet.</div>
+          ) : (
+            recent.map((d, i) => (
+              <Link
+                key={d.id}
+                href={`/congress/proposals/${d.id}`}
+                className={`flex items-center gap-3 py-2.5 hover:bg-zinc-50 dark:hover:bg-zinc-900 ${
+                  i < recent.length - 1 ? "border-b border-zinc-200 dark:border-zinc-800" : ""
+                }`}
+              >
+                <span className="min-w-[44px] text-xs text-zinc-500 dark:text-zinc-500">W{d.week}</span>
+                <StatusPill status={d.decision} />
+                <span className="flex-1 truncate">{d.title}</span>
+                <span
+                  className={
+                    d.outcome_lift?.startsWith("+")
+                      ? "font-medium text-emerald-700 dark:text-emerald-400"
+                      : d.outcome_lift?.startsWith("−") || d.outcome_lift?.startsWith("-")
+                        ? "font-medium text-red-700 dark:text-red-400"
+                        : "text-zinc-500 dark:text-zinc-400"
+                  }
+                >
+                  {d.outcome_lift ?? d.outcome_status ?? "—"}
+                </span>
+              </Link>
+            ))
           )}
         </div>
-      </Section>
+      </section>
 
-      {/* Recent strategic decisions */}
-      {data.recent_strategic.length > 0 && (
-        <Section title="Recent strategic decisions" subtitle="From Monthly congress (Loop 3)">
-          {data.recent_strategic.map((d) => (
-            <div key={d.id} className="section-card" style={{ padding: 14, marginBottom: 8, fontSize: 13 }}>
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: "var(--text)" }}>{d.title}</span>
-                <span style={chip(d.outcome)}>{d.outcome}</span>
+      {/* Active strategic directives — what currently constrains Loop 2 */}
+      {data.directives.length > 0 && (
+        <section className="mt-8">
+          <h2 className="text-base font-medium">Active strategic directives</h2>
+          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+            Loop 2 reads these as constraints every week.
+          </p>
+          <div className="mt-2 text-[13px]">
+            {data.directives.map((d) => (
+              <div key={d.id} className="rounded-md bg-zinc-50 p-3 px-3.5 dark:bg-zinc-900 mb-2">
+                <p className="m-0">{d.body}</p>
+                <div className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                  Effective {new Date(d.effective_from).toLocaleDateString()}
+                </div>
               </div>
-              <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 4 }}>
-                Decided {fmt(d.decided_at)}
-              </div>
-            </div>
-          ))}
-        </Section>
+            ))}
+          </div>
+        </section>
       )}
-    </div>
+
+      {/* JITR daily — the apprentice's pulse */}
+      <section className="mt-8">
+        <h2 className="text-base font-medium">Daily JITR (Loop 1)</h2>
+        <div className="mt-2 grid grid-cols-3 gap-3 text-[13px]">
+          <Stat label="Offers pending" value={data.jitr_offers_pending} />
+          <Stat label="Accepts (30d)" value={data.jitr_offers_accepted_30d} />
+          <Stat label="Unbound reps" value={data.unbound_reps.length} />
+        </div>
+        {data.unbound_reps.length > 0 && (
+          <div className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+            Unbound: {data.unbound_reps.join(", ")} — they need to DM the bot once.
+          </div>
+        )}
+      </section>
+    </>
   );
 }
 
-function Section({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
+function ProposalCard({ proposal }: { proposal: Proposal }) {
+  const firstPos = proposal.positions[0];
+  const adv = proposal.attacks[0];
   return (
-    <div style={{ marginBottom: 32 }}>
-      <div style={{ marginBottom: 12 }}>
-        <h2 style={{ fontSize: 15, fontWeight: 600, margin: 0, color: "var(--text)" }}>{title}</h2>
-        {subtitle && <p style={{ fontSize: 12, color: "var(--text-tertiary)", margin: "4px 0 0 0" }}>{subtitle}</p>}
+    <article className="mb-4 rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
+      <div className="mb-2.5 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="rounded bg-sky-100 px-2 py-0.5 text-[11px] font-medium text-sky-800 dark:bg-sky-950 dark:text-sky-200">
+            {CATEGORY_LABEL[proposal.category] ?? proposal.category}
+          </span>
+          <span className="text-xs text-zinc-500 dark:text-zinc-500">
+            Scope: {SCOPE_LABEL[proposal.scope]}
+          </span>
+        </div>
+        <span className="text-xs text-zinc-500 dark:text-zinc-500">
+          Est. {proposal.stats.weeks_to_significance}w to verify
+        </span>
       </div>
-      {children}
-    </div>
+
+      <h3 className="mb-3.5 text-base font-medium">
+        <Link href={`/congress/proposals/${proposal.id}`} className="hover:underline">
+          {proposal.title}
+        </Link>
+      </h3>
+
+      <div className="mb-3.5 grid grid-cols-2 gap-3">
+        {firstPos && (
+          <QuoteCard speaker={firstPos.persona.replace("_", " ")} text={firstPos.message} />
+        )}
+        {adv ? (
+          <QuoteCard speaker="Adversary counters" text={adv.message} />
+        ) : (
+          proposal.positions[1] && (
+            <QuoteCard speaker={proposal.positions[1].persona.replace("_", " ")} text={proposal.positions[1].message} />
+          )
+        )}
+      </div>
+
+      <div className="mb-1 text-[11px] font-medium text-zinc-500 dark:text-zinc-400">Evidence</div>
+      <div className="mb-3.5 rounded-md bg-zinc-50 p-2 px-3 font-mono text-xs leading-relaxed dark:bg-zinc-950">
+        sample {proposal.stats.sample_size} · baseline {proposal.stats.baseline} · projected Δ {proposal.stats.projected_delta} · rollback {proposal.stats.rollback}
+      </div>
+
+      <DecisionForm proposalId={proposal.id} voteSummary={proposal.vote_summary} />
+    </article>
   );
 }
 
-function Empty({ msg }: { msg: string }) {
-  return <div style={{ padding: 16, fontSize: 13, color: "var(--text-tertiary)", fontStyle: "italic" }}>{msg}</div>;
+function QuoteCard({ speaker, text }: { speaker: string; text: string }) {
+  return (
+    <div className="rounded-md bg-zinc-50 p-3 dark:bg-zinc-950">
+      <div className="mb-1 text-[11px] font-medium capitalize text-zinc-500 dark:text-zinc-400">{speaker}</div>
+      <p className="text-[13px] leading-relaxed">{text}</p>
+    </div>
+  );
 }
 
 function Stat({ label, value }: { label: string; value: number | string }) {
   return (
-    <div>
-      <div style={{ fontSize: 22, fontWeight: 600, color: "var(--text)" }}>{value}</div>
-      <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>{label}</div>
+    <div className="rounded-md bg-zinc-50 p-3 dark:bg-zinc-900">
+      <div className="text-[22px] font-medium">{value}</div>
+      <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{label}</div>
     </div>
   );
 }
 
-function fmt(iso: string | null): string {
-  if (!iso) return "?";
-  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
-
-const btnPrimary: React.CSSProperties = {
-  padding: "6px 14px", borderRadius: 6, border: "none", background: "#22c55e", color: "white",
-  fontSize: 13, fontWeight: 500, cursor: "pointer",
-};
-const btnSecondary: React.CSSProperties = {
-  padding: "6px 14px", borderRadius: 6, border: "1px solid var(--border)", background: "transparent",
-  color: "var(--text)", fontSize: 13, fontWeight: 500, cursor: "pointer",
-};
-
-function chip(state: string): React.CSSProperties {
-  const colors: Record<string, [string, string]> = {
-    pending: ["rgba(148,163,184,0.15)", "var(--text-secondary)"],
-    approved: ["rgba(34,197,94,0.12)", "#22c55e"],
-    rejected: ["rgba(239,68,68,0.12)", "#ef4444"],
-    deferred: ["rgba(99,102,241,0.12)", "#6366f1"],
-    hit: ["rgba(34,197,94,0.12)", "#22c55e"],
-    partial: ["rgba(234,179,8,0.12)", "#eab308"],
-    miss: ["rgba(239,68,68,0.12)", "#ef4444"],
-    inconclusive: ["rgba(148,163,184,0.15)", "var(--text-secondary)"],
-  };
-  const [bg, fg] = colors[state] ?? colors.pending;
-  return {
-    display: "inline-block", padding: "2px 8px", borderRadius: 4, fontSize: 11,
-    background: bg, color: fg, fontWeight: 500,
-  };
-}
+// keep DecisionStatus referenced so unused-import lint stays clean
+export type _D = DecisionStatus;
