@@ -9,6 +9,10 @@ const PUBLIC_PREFIXES = [
   // check, same pattern as /api/cron. Without this, middleware 401s
   // them before they can validate.
   "/api/congress",
+  // Webhook diagnostic — no PII, returns "have we ever received an
+  // event" so admins can verify Resend → us plumbing externally
+  // (e.g. from Resend dashboard, no cookie). Tier 0 visibility tool.
+  "/api/webhook/health",
   "/_next",
   "/favicon",
 ];
