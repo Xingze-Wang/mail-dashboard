@@ -63,7 +63,7 @@ export function SimTimeline({ companies, results, stepsCompleted, onCellClick, a
               {steps.map((s) => {
                 const weeklyResult = results.find((r) => r.company_id === company.id && r.step === s && r.loop === "weekly");
                 const monthlyResult = results.find((r) => r.company_id === company.id && r.step === s && r.loop === "monthly");
-                const isActive = activeCell?.companyId === company.id && activeCell?.step === s;
+                const isActive = activeCell?.companyId === company.id && activeCell?.step === s && activeCell?.loop === "weekly";
                 const rec = weeklyResult?.recommendation;
 
                 const allWeeklyRecs = companies.map((c) =>
@@ -77,7 +77,7 @@ export function SimTimeline({ companies, results, stepsCompleted, onCellClick, a
                       onClick={() => weeklyResult && onCellClick(company.id, s, "weekly")}
                       className={`w-full rounded-md px-2 py-1.5 text-center transition-all ${
                         rec ? REC_COLOR[rec] : "bg-zinc-100 text-zinc-400 dark:bg-zinc-800 dark:text-zinc-600"
-                      } ${isActive ? "ring-2 ring-sky-400" : ""} ${isDivergent ? "ring-1 ring-amber-400" : ""}`}
+                      } ${isActive ? "ring-2 ring-sky-400" : isDivergent ? "ring-1 ring-amber-400" : ""}`}
                     >
                       <div className="text-[11px] font-semibold capitalize">{rec ?? "—"}</div>
                       {weeklyResult?.confidence != null && (
