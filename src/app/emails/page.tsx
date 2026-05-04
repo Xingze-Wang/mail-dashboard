@@ -88,24 +88,34 @@ function ClickHistory({ emailId }: { emailId: string }) {
   } | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const [fetchError, setFetchError] = useState<string | null>(null);
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setFetchError(null);
     fetch(`/api/emails/${emailId}/clicks`)
-      .then((r) => (r.ok ? r.json() : null))
+      .then((r) => {
+        if (!r.ok) { setFetchError(`HTTP ${r.status}`); return null; }
+        return r.json();
+      })
       .then((d) => { if (!cancelled) setData(d); })
-      .catch(() => { if (!cancelled) setData(null); })
+      .catch((e) => { if (!cancelled) setFetchError(String(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [emailId]);
 
-  if (loading || !data) return null;
-  // The /api/emails/[id]/clicks endpoint now synthesizes a minimal
-  // timeline from emails.status when webhook_events is empty. So we
-  // get chips for any email that's been delivered/opened/clicked even
-  // without real-time webhook history. Only truly zero-event emails
-  // (e.g. queued, never sent) render nothing.
-  if (data.eventCount === 0) return null;
+  if (loading) return (
+    <div style={{ marginTop: 16, fontSize: 12, color: "var(--text-tertiary)", display: "flex", alignItems: "center", gap: 6 }}>
+      <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading events…
+    </div>
+  );
+  if (fetchError) return (
+    <div style={{ marginTop: 16, fontSize: 12, color: "var(--coral, #ef4444)" }}>
+      Events error: {fetchError}
+    </div>
+  );
+  if (!data || data.eventCount === 0) return null;
 
   const clicks = data.events.filter((e) => e.type === "email.clicked");
   const opens = data.events.filter((e) => e.type === "email.opened").length;
