@@ -2,8 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Play, Zap, BarChart3, ChevronDown, ChevronRight, FileText, Mail } from "lucide-react";
+import { Loader2, Play, Zap, BarChart3, ChevronDown, ChevronRight, FileText, Mail, Users, Cpu } from "lucide-react";
+import dynamic from "next/dynamic";
+
+const SimPage = dynamic(() => import("./sim/page"), { ssr: false });
 import { SAMPLES } from "./samples";
+import { CONGRESS_SAMPLES } from "@/lib/bench-congress";
 
 interface ModelAgg {
   model: string;
@@ -45,8 +49,30 @@ interface RunDetail {
   }>;
 }
 
+interface CongressModelAgg {
+  model: string;
+  scoreAvg: number;
+  latencyAvg: number;
+  jsonValidPct: number | null;
+  errors: number;
+  runs: number;
+}
+
+interface CongressRun {
+  runId: string;
+  createdAt: string;
+  models: CongressModelAgg[];
+}
+
+interface CongressBenchData {
+  models: string[];
+  sampleCount: number;
+  runs: CongressRun[];
+}
+
 export default function BenchPage() {
   const router = useRouter();
+  const [tab, setTab] = useState<"writer" | "congress" | "sim">("writer");
   const [gated, setGated] = useState<"checking" | "allowed" | "forbidden">("checking");
   const [data, setData] = useState<BenchData | null>(null);
   const [running, setRunning] = useState(false);
@@ -54,6 +80,13 @@ export default function BenchPage() {
   const [openRun, setOpenRun] = useState<string | null>(null);
   const [openRunDetail, setOpenRunDetail] = useState<RunDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Congress bench state
+  const [congressData, setCongressData] = useState<CongressBenchData | null>(null);
+  const [congressPicked, setCongressPicked] = useState<Set<string>>(new Set());
+  const [congressRunning, setCongressRunning] = useState(false);
+  const [congressProgress, setCongressProgress] = useState<{ done: number; total: number; cur: string } | null>(null);
+  const [congressError, setCongressError] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/auth/me").then((r) => r.json()).then((d) => {
@@ -78,6 +111,51 @@ export default function BenchPage() {
   };
 
   useEffect(() => { if (gated === "allowed") refresh(); /* eslint-disable-next-line */ }, [gated]);
+
+  const refreshCongress = () => {
+    fetch("/api/bench/congress").then((r) => r.json()).then((d: CongressBenchData) => {
+      setCongressData(d);
+      if (congressPicked.size === 0 && d.models?.length) {
+        setCongressPicked(new Set([
+          "claude-sonnet-4.6", "claude-opus-4.5",
+          "gpt-5-mini", "gemini-2.5-flash",
+          "glm-4.7", "qwen3-235b",
+        ]));
+      }
+    }).catch((e) => setCongressError(String(e)));
+  };
+
+  useEffect(() => { if (gated === "allowed") refreshCongress(); /* eslint-disable-next-line */ }, [gated]);
+
+  const runCongressBench = async () => {
+    if (congressPicked.size === 0) return;
+    setCongressRunning(true);
+    setCongressError(null);
+    const models = Array.from(congressPicked);
+    const runId = `crun_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    setCongressProgress({ done: 0, total: models.length, cur: models[0] ?? "" });
+    let done = 0;
+    for (const m of models) {
+      setCongressProgress({ done, total: models.length, cur: m });
+      try {
+        const r = await fetch("/api/bench/congress", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ models: [m], runId }),
+        });
+        if (!r.ok) {
+          const e = await r.json().catch(() => ({}));
+          setCongressError(`${m}: ${e.error || `HTTP ${r.status}`}`);
+        }
+      } catch (e) {
+        setCongressError(`${m}: ${String(e)}`);
+      }
+      done++;
+      refreshCongress();
+    }
+    setCongressProgress(null);
+    setCongressRunning(false);
+  };
 
   const togglePick = (m: string) => {
     setPicked((prev) => {
@@ -151,21 +229,53 @@ export default function BenchPage() {
   }
 
   const latest = data?.runs?.[0];
+  const congressLatest = congressData?.runs?.[0];
+  const allModels = data?.models ?? congressData?.models ?? [];
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 28 }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 20 }}>
         <div>
           <h1 className="page-title" style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <Zap className="h-6 w-6" />
             Model Bench
           </h1>
           <p style={{ fontSize: 13, color: "var(--text-secondary)", marginTop: 6 }}>
-            Run any of the {data?.models?.length ?? 0} models on the actual tasks resend0412.py uses (paper-judgment + Chinese intro).
-            Each run = {pickedModels.size || "?"} models × 3 papers × 2 tasks = {(pickedModels.size || 0) * 6} calls.
+            Compare models on both writing tasks and congress deliberation quality.
           </p>
         </div>
       </div>
+
+      {/* Tab bar */}
+      <div style={{ display: "flex", gap: 4, borderBottom: "1px solid var(--border)", marginBottom: 24 }}>
+        <TabBtn active={tab === "writer"} onClick={() => setTab("writer")}>
+          <FileText className="h-3.5 w-3.5" /> Writer
+        </TabBtn>
+        <TabBtn active={tab === "congress"} onClick={() => setTab("congress")}>
+          <Users className="h-3.5 w-3.5" /> Congress
+        </TabBtn>
+        <TabBtn active={tab === "sim"} onClick={() => setTab("sim")}>
+          <Cpu className="h-3.5 w-3.5" /> Simulation
+        </TabBtn>
+      </div>
+
+      {tab === "sim" && <SimPage />}
+
+      {tab === "congress" && (
+        <CongressBenchTab
+          allModels={allModels}
+          data={congressData}
+          picked={congressPicked}
+          onToggle={(m) => setCongressPicked((prev) => { const n = new Set(prev); n.has(m) ? n.delete(m) : n.add(m); return n; })}
+          running={congressRunning}
+          progress={congressProgress}
+          error={congressError}
+          latest={congressLatest}
+          onRun={runCongressBench}
+        />
+      )}
+
+      {tab === "writer" && <>
 
       {/* Model selector — grouped by tier */}
       <div className="section-card" style={{ marginBottom: 24 }}>
@@ -293,7 +403,7 @@ export default function BenchPage() {
       {latestDetail && <CompareOutputs detail={latestDetail} />}
 
       {/* Historical runs */}
-      {data && data.runs.length > 0 && (
+      {tab === "writer" && data && data.runs.length > 0 && (
         <div className="section-card">
           <h3 style={{ marginBottom: 12 }}>History ({data.runs.length} runs)</h3>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -319,6 +429,210 @@ export default function BenchPage() {
           </div>
         </div>
       )}
+      </>}
+    </div>
+  );
+}
+
+// ───────────────────────── Shared tab button ─────────────────────────
+
+function TabBtn({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        padding: "8px 14px",
+        fontSize: 13,
+        fontWeight: active ? 600 : 400,
+        background: "transparent",
+        border: "none",
+        borderBottom: "2px solid " + (active ? "var(--fg)" : "transparent"),
+        color: active ? "var(--fg)" : "var(--muted)",
+        cursor: "pointer",
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        marginBottom: -1,
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+// ───────────────────────── Congress bench tab ─────────────────────────
+
+function CongressBenchTab({
+  allModels, data, picked, onToggle, running, progress, error, latest, onRun,
+}: {
+  allModels: string[];
+  data: { models: string[]; sampleCount: number; runs: { runId: string; createdAt: string; models: { model: string; scoreAvg: number; latencyAvg: number; jsonValidPct: number | null; errors: number; runs: number }[] }[] } | null;
+  picked: Set<string>;
+  onToggle: (m: string) => void;
+  running: boolean;
+  progress: { done: number; total: number; cur: string } | null;
+  error: string | null;
+  latest: { runId: string; createdAt: string; models: { model: string; scoreAvg: number; latencyAvg: number; jsonValidPct: number | null; errors: number; runs: number }[] } | undefined;
+  onRun: () => void;
+}) {
+  const [expandedRun, setExpandedRun] = useState<string | null>(null);
+  const [expandedRows, setExpandedRows] = useState<Array<{ model: string; task: string; sample_idx: number; score: number; latency_s: number; output_text: string; error: string | null }> | null>(null);
+
+  const toggleRun = async (runId: string) => {
+    if (expandedRun === runId) { setExpandedRun(null); setExpandedRows(null); return; }
+    setExpandedRun(runId);
+    setExpandedRows(null);
+    const d = await fetch(`/api/bench/${runId}`).then((r) => r.json());
+    setExpandedRows((d.rows ?? []).filter((r: { task: string }) => r.task === "congress"));
+  };
+
+  const models = allModels.length > 0 ? allModels : data?.models ?? [];
+  const groups: Record<string, string[]> = { "Frontier": [], "Fast / Cheap": [], "Chinese": [], "Other": [] };
+  for (const m of models) {
+    if (/^(claude-(opus|sonnet)-(4|3)|gpt-5(\.|$)|gpt-4\.1$|gemini-(2\.5-pro|3-pro)|grok-4|^o[13]$)/.test(m)) groups["Frontier"].push(m);
+    else if (/(mini|nano|flash|sonnet-4$|grok-3|o4-mini)/.test(m)) groups["Fast / Cheap"].push(m);
+    else if (/^(glm|qwen|deepseek|kimi)/.test(m)) groups["Chinese"].push(m);
+    else groups["Other"].push(m);
+  }
+
+  return (
+    <div>
+      <div className="section-card" style={{ marginBottom: 24 }}>
+        <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 16 }}>
+          Run any model through the full council deliberation ({CONGRESS_SAMPLES.length} evidence packs).
+          Scored on persona completeness, adversary quality, and synthesizer coherence.
+        </p>
+        <h3 style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+          <Users className="h-4 w-4" /> Pick models
+        </h3>
+        {Object.entries(groups).map(([gname, list]) =>
+          list.length === 0 ? null : (
+            <div key={gname} style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>{gname}</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {list.map((m) => (
+                  <button key={m} onClick={() => onToggle(m)} className={`dx-chip ${picked.has(m) ? "active" : ""}`} style={{ fontSize: 12 }} type="button">{m}</button>
+                ))}
+              </div>
+            </div>
+          )
+        )}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 16 }}>
+          <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
+            {picked.size} selected · {picked.size * CONGRESS_SAMPLES.length} deliberations
+          </span>
+          <button type="button" onClick={onRun} disabled={running || picked.size === 0} className="dx-primary" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+            {running ? "Running…" : "Run congress bench"}
+          </button>
+        </div>
+        {progress && (
+          <div style={{ marginTop: 12, padding: 8, background: "var(--bg)", borderRadius: 6, fontSize: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+              <span>Running: <strong>{progress.cur}</strong></span>
+              <span style={{ color: "var(--text-tertiary)" }}>{progress.done} / {progress.total}</span>
+            </div>
+            <div style={{ height: 4, background: "var(--border-light)", borderRadius: 2, overflow: "hidden" }}>
+              <div style={{ height: "100%", width: `${(progress.done / progress.total) * 100}%`, background: "var(--blue)", transition: "width 0.3s" }} />
+            </div>
+          </div>
+        )}
+        {error && <div style={{ marginTop: 12, fontSize: 12, color: "#DC2626" }}>{error}</div>}
+      </div>
+
+      {latest && (
+        <div className="section-card" style={{ marginBottom: 24 }}>
+          <h3 style={{ marginBottom: 12 }}>Latest run · <span style={{ fontWeight: 400, color: "var(--text-tertiary)", fontSize: 12 }}>{new Date(latest.createdAt).toLocaleString()}</span></h3>
+          <table className="data-table">
+            <thead><tr><th>Model</th><th>Congress Score</th><th>JSON Valid</th><th>Latency</th><th>Runs</th><th>Errors</th></tr></thead>
+            <tbody>
+              {latest.models.map((m) => (
+                <tr key={m.model}>
+                  <td style={{ fontWeight: 600 }}>{m.model}</td>
+                  <td style={{ color: m.scoreAvg >= 0.8 ? "var(--green)" : m.scoreAvg >= 0.5 ? "var(--gold)" : "var(--coral)", fontWeight: 700 }}>{m.scoreAvg.toFixed(2)}</td>
+                  <td style={{ color: "var(--text-tertiary)" }}>{m.jsonValidPct === null ? "—" : `${m.jsonValidPct}%`}</td>
+                  <td>{m.latencyAvg.toFixed(1)}s</td>
+                  <td style={{ color: "var(--text-tertiary)" }}>{m.runs}</td>
+                  <td style={{ color: m.errors > 0 ? "var(--coral)" : "var(--text-tertiary)" }}>{m.errors || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {data && data.runs.length > 0 && (
+        <div className="section-card">
+          <h3 style={{ marginBottom: 12 }}>History ({data.runs.length} runs)</h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {data.runs.map((r) => (
+              <div key={r.runId} style={{ background: "var(--bg)", border: "1px solid var(--border-light)", borderRadius: 6, overflow: "hidden" }}>
+                <button type="button" onClick={() => toggleRun(r.runId)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", background: "transparent", border: 0, cursor: "pointer", fontSize: 12, textAlign: "left" }}>
+                  {expandedRun === r.runId ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                  <span style={{ color: "var(--text-tertiary)" }}>{new Date(r.createdAt).toLocaleString()}</span>
+                  <span style={{ flex: 1, color: "var(--text)" }}>
+                    {r.models.length} models · best: <strong>{r.models[0]?.model}</strong> ({r.models[0]?.scoreAvg.toFixed(2)})
+                  </span>
+                  <code style={{ color: "var(--text-tertiary)", fontSize: 11 }}>{r.runId}</code>
+                </button>
+                {expandedRun === r.runId && (
+                  expandedRows === null
+                    ? <div style={{ padding: 12, fontSize: 12, color: "var(--text-tertiary)" }}><Loader2 className="h-4 w-4 animate-spin inline mr-2" />Loading…</div>
+                    : expandedRows.length === 0
+                      ? <div style={{ padding: 12, fontSize: 12, color: "var(--text-tertiary)" }}>No congress rows in this run.</div>
+                      : <CongressRunDetail rows={expandedRows} />
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CongressRunDetail({ rows }: { rows: Array<{ model: string; task: string; sample_idx: number; score: number; latency_s: number; output_text: string; error: string | null }> }) {
+  const [activeModel, setActiveModel] = useState<string | null>(null);
+  const models = [...new Set(rows.map((r) => r.model))];
+  const current = activeModel ?? models[0] ?? null;
+  return (
+    <div style={{ borderTop: "1px solid var(--border-light)", padding: 16 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14 }}>
+        {models.map((m) => (
+          <button key={m} type="button" onClick={() => setActiveModel(m)} className={`dx-chip ${current === m ? "active" : ""}`} style={{ fontSize: 11 }}>{m}</button>
+        ))}
+      </div>
+      {current && rows.filter((r) => r.model === current).map((row) => {
+        let raw = "";
+        let grade: Record<string, unknown> = {};
+        try { const p = JSON.parse(row.output_text || "{}"); raw = p.raw ?? ""; grade = p.grade ?? {}; } catch { raw = row.output_text || ""; }
+        const scoreColor = row.score >= 0.8 ? "var(--green)" : row.score >= 0.5 ? "var(--gold)" : "var(--coral)";
+        const sample = CONGRESS_SAMPLES[row.sample_idx];
+        return (
+          <div key={row.sample_idx} style={{ marginBottom: 18, border: "1px solid var(--border-light)", borderRadius: 8, overflow: "hidden" }}>
+            <div style={{ display: "flex", gap: 10, padding: "8px 12px", background: "var(--bg)", borderBottom: "1px solid var(--border-light)", fontSize: 11.5, alignItems: "center" }}>
+              <span style={{ fontWeight: 600 }}>Pack {row.sample_idx + 1}:</span>
+              <span style={{ color: "var(--text-secondary)", flex: 1 }}>{sample?.title}</span>
+              <span style={{ color: scoreColor, fontWeight: 700 }}>★ {row.score.toFixed(2)}</span>
+              <span style={{ color: "var(--text-tertiary)" }}>{row.latency_s}s</span>
+            </div>
+            {!row.error && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, padding: "8px 12px", borderBottom: "1px solid var(--border-light)" }}>
+                {(grade.personasPresent as string[] | undefined)?.map((p) => (
+                  <span key={p} style={{ padding: "2px 6px", borderRadius: 4, fontSize: 10.5, fontWeight: 600, background: "var(--dx-green-soft)", color: "var(--dx-green)" }}>✓ {p}</span>
+                ))}
+                {!!grade.adversaryPresent && <span style={{ padding: "2px 6px", borderRadius: 4, fontSize: 10.5, fontWeight: 600, background: "var(--dx-green-soft)", color: "var(--dx-green)" }}>✓ adversary</span>}
+                {!!grade.synthesizerOk && <span style={{ padding: "2px 6px", borderRadius: 4, fontSize: 10.5, fontWeight: 600, background: "var(--dx-green-soft)", color: "var(--dx-green)" }}>✓ synthesizer</span>}
+                {typeof grade.recommendation === "string" && <span style={{ padding: "2px 6px", borderRadius: 4, fontSize: 10.5, background: "#E0F2FE", color: "#0369A1" }}>{grade.recommendation}</span>}
+              </div>
+            )}
+            {row.error
+              ? <div style={{ padding: "8px 12px", fontSize: 12, color: "var(--coral)" }}>{row.error}</div>
+              : <pre style={{ margin: 0, padding: "10px 12px", fontSize: 11, color: "var(--text-secondary)", overflowX: "auto", maxHeight: 200, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{raw.slice(0, 1200)}{raw.length > 1200 ? "\n…" : ""}</pre>
+            }
+          </div>
+        );
+      })}
     </div>
   );
 }
