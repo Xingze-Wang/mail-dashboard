@@ -1,21 +1,28 @@
-import { readFileSync } from "node:fs";
-import { createClient } from "@supabase/supabase-js";
+// scripts/apply-038.mjs
+import { readFileSync } from "fs";
+import { resolve, dirname } from "path";
+import { fileURLToPath } from "url";
 
-const sb = createClient(
-  "https://erguqrisqtugfysofwdd.supabase.co",
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVyZ3VxcmlzcXR1Z2Z5c29md2RkIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTQxNzY1MywiZXhwIjoyMDg0OTkzNjUzfQ.du-2N1m5W9jKsFVQpmNfMVnKpqTk3Vxmi96JBxMccEM",
-  { auth: { persistSession: false } },
-);
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const sql = readFileSync(resolve(__dirname, "../migrations/038-bench-sim.sql"), "utf8");
 
-const sql = readFileSync("migrations/038-jitr-offers.sql", "utf8");
-const { error } = await sb.rpc("_exec_sql", { sql_text: sql });
-if (error) {
-  console.error("FAIL:", error.message);
-  process.exit(1);
+const url = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
+const key = process.env.SUPABASE_SERVICE_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY;
+if (!url || !key) { console.error("Missing SUPABASE_URL or SUPABASE_SERVICE_KEY"); process.exit(1); }
+
+const res = await fetch(`${url}/rest/v1/rpc/exec_sql`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json", apikey: key, Authorization: `Bearer ${key}` },
+  body: JSON.stringify({ sql }),
+});
+
+if (!res.ok) {
+  // Fallback: use the SQL editor endpoint
+  const res2 = await fetch(`${url}/rest/v1/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", apikey: key, Authorization: `Bearer ${key}`, "Prefer": "return=minimal" },
+    body: sql,
+  });
+  if (!res2.ok) { console.error("Migration failed", await res2.text()); process.exit(1); }
 }
-const probe = await sb.from("jitr_offers").select("id", { head: true, count: "exact" });
-if (probe.error) {
-  console.error("Schema reload failed:", probe.error.message);
-  process.exit(1);
-}
-console.log(`OK: jitr_offers live (${probe.count ?? 0} rows).`);
+console.log("Migration 038 applied.");
