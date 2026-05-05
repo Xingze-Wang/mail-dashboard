@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useLocale, t } from "@/lib/i18n";
 import {
   Send,
   CheckCircle2,
@@ -55,14 +56,7 @@ const CHART_TOOLTIP = {
   boxShadow: "0 4px 12px rgba(0,0,0,0.06)",
 };
 
-const statCards = [
-  { key: "totalSent", label: "Sent", icon: Send, color: "var(--blue)" },
-  { key: "totalDelivered", label: "Delivered", icon: CheckCircle2, color: "var(--green)" },
-  { key: "totalClicked", label: "Clicked", icon: MousePointerClick, color: "var(--purple)" },
-  { key: "totalBounced", label: "Bounced", icon: AlertTriangle, color: "var(--coral)" },
-  { key: "totalInbound", label: "Received", icon: Inbox, color: "var(--blue)" },
-  { key: "wechatTotal", label: "WeChat", icon: MessageCircle, color: "var(--green)" },
-];
+// Built inside component so labels react to locale.
 
 interface MyMetrics {
   repId: number;
@@ -76,10 +70,20 @@ interface MyMetrics {
 }
 
 export default function OverviewPage() {
+  const locale = useLocale();
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [me, setMe] = useState<{ repId: number; repName: string; role: "admin" | "sales" } | null>(null);
   const [myMetrics, setMyMetrics] = useState<MyMetrics | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const statCards = [
+    { key: "totalSent",      label: t("stat.sent",      locale), icon: Send,             color: "var(--blue)"   },
+    { key: "totalDelivered", label: t("stat.delivered", locale), icon: CheckCircle2,     color: "var(--green)"  },
+    { key: "totalClicked",   label: t("stat.clicked",   locale), icon: MousePointerClick,color: "var(--purple)" },
+    { key: "totalBounced",   label: t("stat.bounced",   locale), icon: AlertTriangle,    color: "var(--coral)"  },
+    { key: "totalInbound",   label: t("stat.received",  locale), icon: Inbox,            color: "var(--blue)"   },
+    { key: "wechatTotal",    label: t("stat.wechat",    locale), icon: MessageCircle,    color: "var(--green)"  },
+  ];
 
   useEffect(() => {
     fetch("/api/auth/me")
@@ -205,7 +209,7 @@ export default function OverviewPage() {
     return (
       <div>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 28 }}>
-          <h1 className="page-title">Overview</h1>
+          <h1 className="page-title">{t("overview.title", locale)}</h1>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 16, marginBottom: 24 }}>
           {Array.from({ length: 6 }).map((_, i) => (
@@ -230,21 +234,21 @@ export default function OverviewPage() {
       <div>
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 28 }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 14 }}>
-            <h1 className="page-title">My Pipeline</h1>
-            <span className="lead-count">{me?.repName} · personal view</span>
+            <h1 className="page-title">{t("overview.myPipeline", locale)}</h1>
+            <span className="lead-count">{me?.repName} · {t("overview.personalView", locale)}</span>
           </div>
           <a href="/pipeline#mode=review" className="btn btn-primary" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-            Open next batch
+            {t("overview.openNextBatch", locale)}
           </a>
         </div>
 
         {/* Pipeline counters (from /api/metrics/me) */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 16 }}>
           {[
-            { label: "Assigned to me",  value: m?.assigned ?? 0, color: "var(--text)" },
-            { label: "Ready to send",   value: m?.ready ?? 0,    color: "var(--blue)" },
-            { label: "Sent",            value: m?.sent ?? 0,     color: "var(--green)" },
-            { label: "WeChat added",    value: m?.wechat ?? 0,   color: "var(--green)" },
+            { label: t("stat.assignedToMe", locale), value: m?.assigned ?? 0, color: "var(--text)" },
+            { label: t("stat.readyToSend",  locale), value: m?.ready ?? 0,    color: "var(--blue)" },
+            { label: t("stat.sent",         locale), value: m?.sent ?? 0,     color: "var(--green)" },
+            { label: t("stat.wechatAdded",  locale), value: m?.wechat ?? 0,   color: "var(--green)" },
           ].map((c) => (
             <div key={c.label} className="stat-card">
               <div className="stat-label">{c.label}</div>
@@ -256,19 +260,19 @@ export default function OverviewPage() {
         {/* Funnel rates (from /api/metrics, scoped by server) */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 24 }}>
           <div className="stat-card">
-            <div className="stat-label">Delivery rate</div>
+            <div className="stat-label">{t("stat.deliveryRate", locale)}</div>
             <div className="stat-value" style={{ color: "var(--green)" }}>{funnel?.deliveryRate ?? "0"}%</div>
           </div>
           <div className="stat-card">
-            <div className="stat-label">Click rate</div>
+            <div className="stat-label">{t("stat.clickRate", locale)}</div>
             <div className="stat-value" style={{ color: "var(--blue)" }}>{funnel?.clickRate ?? "0"}%</div>
           </div>
           <div className="stat-card">
-            <div className="stat-label">Lead rate (WeChat / Sent)</div>
+            <div className="stat-label">{t("stat.leadRateFull", locale)}</div>
             <div className="stat-value" style={{ color: "var(--green)" }}>{m?.leadRate ?? "0.0"}%</div>
           </div>
           <div className="stat-card">
-            <div className="stat-label">Replies</div>
+            <div className="stat-label">{t("stat.replies", locale)}</div>
             <div className="stat-value">{m?.replied ?? 0}</div>
           </div>
         </div>
@@ -279,7 +283,7 @@ export default function OverviewPage() {
           <div className="section-card" style={{ marginBottom: 24 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
               <TrendingUp style={{ width: 16, height: 16, color: "var(--text-secondary)" }} />
-              <h3 style={{ marginBottom: 0 }}>Last 30 Days — My sends</h3>
+              <h3 style={{ marginBottom: 0 }}>{t("overview.last30My", locale)}</h3>
             </div>
             <ResponsiveContainer width="100%" height={240}>
               <AreaChart data={daily}>
@@ -310,8 +314,8 @@ export default function OverviewPage() {
   if (!metrics) {
     return (
       <div>
-        <h1 className="page-title">Overview</h1>
-        <p style={{ color: "var(--text-secondary)", marginTop: 12 }}>Failed to load metrics</p>
+        <h1 className="page-title">{t("overview.title", locale)}</h1>
+        <p style={{ color: "var(--text-secondary)", marginTop: 12 }}>{t("overview.failedMetrics", locale)}</p>
       </div>
     );
   }
@@ -323,8 +327,8 @@ export default function OverviewPage() {
       {/* ── Page Header ── */}
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 28 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 14 }}>
-          <h1 className="page-title">Overview</h1>
-          <span className="lead-count">Email delivery & activity</span>
+          <h1 className="page-title">{t("overview.title", locale)}</h1>
+          <span className="lead-count">{t("overview.subtitle", locale)}</span>
         </div>
       </div>
 
@@ -349,10 +353,10 @@ export default function OverviewPage() {
       {/* ── Rates ── */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 24 }}>
         {[
-          { label: "Delivery Rate", value: o.deliveryRate, suffix: "%", color: "var(--green)" },
-          { label: "Click Rate", value: o.clickRate, suffix: "%", color: "var(--blue)" },
+          { label: t("stat.deliveryRate", locale), value: o.deliveryRate, suffix: "%", color: "var(--green)" },
+          { label: t("stat.clickRate",    locale), value: o.clickRate,    suffix: "%", color: "var(--blue)" },
           {
-            label: "Lead Rate (WeChat)",
+            label: t("stat.leadRate", locale),
             // Denominator is Resend-actual totalSent (live), NOT
             // pipeline_leads.sent (~30 rows). Using pipeline sent here
             // inflated the rate by ~30x because most historical sends
@@ -377,7 +381,7 @@ export default function OverviewPage() {
       <div className="section-card" style={{ marginBottom: 24 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
           <TrendingUp style={{ width: 16, height: 16, color: "var(--text-secondary)" }} />
-          <h3 style={{ marginBottom: 0 }}>Last 30 Days</h3>
+          <h3 style={{ marginBottom: 0 }}>{t("overview.last30", locale)}</h3>
         </div>
         <ResponsiveContainer width="100%" height={280}>
           <AreaChart data={metrics.dailyStats}>
@@ -403,15 +407,15 @@ export default function OverviewPage() {
       {/* ── Recent Events ── */}
       <div className="section-card" style={{ padding: 0 }}>
         <div style={{ padding: "20px 24px", borderBottom: "1px solid var(--border-light)" }}>
-          <h3 style={{ marginBottom: 0 }}>Recent Activity</h3>
+          <h3 style={{ marginBottom: 0 }}>{t("overview.recentActivity", locale)}</h3>
         </div>
         {metrics.recentEvents.length === 0 ? (
           <div className="empty-state" style={{ border: "none", padding: "48px 24px" }}>
             <div className="empty-icon">
               <Send style={{ width: 20, height: 20 }} />
             </div>
-            <h3>No activity yet</h3>
-            <p>Send your first email to see delivery events here.</p>
+            <h3>{t("overview.noActivity", locale)}</h3>
+            <p>{t("overview.noActivitySub", locale)}</p>
           </div>
         ) : (
           <div>

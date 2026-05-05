@@ -55,6 +55,8 @@ import { AddLeadModal } from "./AddLeadModal";
 import { ReassignModal } from "./ReassignModal";
 import { paletteFor, initialsFor } from "./repColors";
 import { isAgeGated } from "@/lib/policy";
+import { ActiveContractCard } from "@/components/ActiveContractCard";
+import { useLocale, t } from "@/lib/i18n";
 
 const ChannelsTab = dynamic(() => import("./ChannelsTab").then((m) => m.ChannelsTab), {
   loading: () => <TabLoader />,
@@ -304,6 +306,38 @@ function ChannelIcon({ ch }: { ch: ChannelKey }) {
 export default function PipelinePage() {
   const { toast } = useToast();
   const router = useRouter();
+  const locale = useLocale();
+
+  const SEND_MODES_L = [
+    { key: "browse" as const, label: t("pipeline.browse", locale) },
+    { key: "review" as const, label: t("pipeline.review", locale) },
+    { key: "bulk"   as const, label: t("pipeline.bulk",   locale) },
+  ];
+
+  const CHANNELS_L = [
+    { key: "all"    as const, label: t("pipeline.all",        locale), color: undefined },
+    { key: "arxiv"  as const, label: "arXiv",                          color: "var(--dx-src-arxiv)" },
+    { key: "hf"     as const, label: "Hugging Face",                   color: "var(--dx-src-hf)" },
+    { key: "github" as const, label: "GitHub",                         color: "var(--dx-src-gh)" },
+    { key: "ph"     as const, label: "Product Hunt",                   color: "var(--dx-src-ph)" },
+  ];
+
+  const STATUS_CHIPS_L = [
+    { key: "all"      as const, label: t("pipeline.allStatus", locale) },
+    { key: "drafting" as const, label: t("pipeline.drafting",  locale) },
+    { key: "ripening" as const, label: t("pipeline.ripening",  locale) },
+    { key: "ready"    as const, label: t("pipeline.ready",     locale) },
+    { key: "sent"     as const, label: t("stat.sent",          locale) },
+    { key: "replied"  as const, label: t("pipeline.replied",   locale) },
+    { key: "skipped"  as const, label: t("pipeline.skipped",   locale) },
+  ];
+
+  const SORT_OPTIONS_L = [
+    { key: "newest"   as const, label: t("pipeline.sortNewest",   locale) },
+    { key: "score"    as const, label: t("pipeline.sortScore",    locale) },
+    { key: "tier"     as const, label: t("pipeline.sortTier",     locale) },
+    { key: "activity" as const, label: t("pipeline.sortActivity", locale) },
+  ];
 
   const [addLeadOpen, setAddLeadOpen] = useState(false);
   const [reassignOpen, setReassignOpen] = useState(false);
@@ -840,7 +874,7 @@ export default function PipelinePage() {
             <span>Pipeline</span>
           </div>
           <div className="dx-page-title">
-            Pipeline
+            {t("pipeline.title", locale)}
             <span className="dx-subtle">
               {channelCounts.all.toLocaleString()} active leads
               {refreshing && (
@@ -852,29 +886,32 @@ export default function PipelinePage() {
         <div className="dx-topbar-actions">
           {isAdmin && (
             <button onClick={() => setReassignOpen(true)} className="dx-secondary">
-              Re-assign…
+              {t("pipeline.reassign", locale)}
             </button>
           )}
           <button onClick={handleScan} disabled={scanning} className="dx-secondary">
             {scanning ? <Loader2 style={{ width: 13, height: 13 }} className="animate-spin" /> : <Zap />}
-            {scanning ? "Scanning…" : "Scan arXiv"}
+            {scanning ? "Scanning…" : t("pipeline.scanArxiv", locale)}
           </button>
           <button className="dx-secondary" type="button" onClick={handleExport}>
             <Download />
-            Export
+            {t("pipeline.export", locale)}
           </button>
           {isAdmin && (
             <button className="dx-secondary" type="button" onClick={handleOpenSettings}>
               <SettingsIcon />
-              Settings
+              {t("pipeline.settings", locale)}
             </button>
           )}
           <button className="dx-primary" type="button" onClick={() => setAddLeadOpen(true)}>
             <Plus />
-            Add lead
+            {t("pipeline.addLead", locale)}
           </button>
         </div>
       </div>
+
+      {/* ── Active contract from this week's deliberation ── */}
+      <ActiveContractCard />
 
       {/* ── Stat strip ── */}
       <div className="dx-stat-strip">
@@ -903,9 +940,9 @@ export default function PipelinePage() {
           {/* Channel filter bar — only render when multiple channels
               have leads. With one channel active it's just visual
               noise. */}
-          {CHANNELS.filter((c) => c.key !== "all" && channelCounts[c.key] > 0).length > 1 && (
+          {CHANNELS_L.filter((c) => c.key !== "all" && channelCounts[c.key] > 0).length > 1 && (
             <div className="dx-channel-bar">
-              {CHANNELS.map((c) => (
+              {CHANNELS_L.map((c) => (
                 <button
                   key={c.key}
                   type="button"
@@ -924,7 +961,7 @@ export default function PipelinePage() {
               status chips, rep pills, sort. One row instead of three. */}
           <div className="dx-stream-toolbar">
             <div className="dx-chip-group" role="tablist" aria-label="Send mode" style={{ marginRight: 8 }}>
-              {SEND_MODES.map((m) => (
+              {SEND_MODES_L.map((m) => (
                 <button
                   key={m.key}
                   type="button"
@@ -946,7 +983,7 @@ export default function PipelinePage() {
             )}
 
             <div className="dx-chip-group">
-              {STATUS_CHIPS.map((s) => {
+              {STATUS_CHIPS_L.map((s) => {
                 // Apply the same repFilter as the rendered list so chip
                 // counts match what sales actually sees. Previously
                 // counts used raw `leads` ignoring repFilter, so the
@@ -1005,7 +1042,7 @@ export default function PipelinePage() {
               onChange={(e) => setSort(e.target.value as SortKey)}
               aria-label="Sort cards"
             >
-              {SORT_OPTIONS.map((o) => (
+              {SORT_OPTIONS_L.map((o) => (
                 <option key={o.key} value={o.key}>{o.label}</option>
               ))}
             </select>
@@ -1114,7 +1151,7 @@ export default function PipelinePage() {
                   <div className="dx-empty-title">
                     {channelFilter === "all"
                       ? "No leads yet"
-                      : `No ${CHANNELS.find((c) => c.key === channelFilter)?.label} leads`}
+                      : `No ${CHANNELS_L.find((c) => c.key === channelFilter)?.label} leads`}
                   </div>
                   <div className="dx-empty-text">
                     {channelFilter === "arxiv" || channelFilter === "all"

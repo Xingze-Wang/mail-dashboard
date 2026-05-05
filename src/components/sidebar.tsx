@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useLocale, t } from "@/lib/i18n";
 import { useEffect, useState } from "react";
 
 /* ── Inline SVG icons (matching mockup-v2-light.html) ───────────────── */
@@ -148,32 +149,7 @@ function initialsOf(name: string | null | undefined): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-// /inbox merged into /emails Receiving tab — sidebar entry removed.
-// Unread badge moves to Emails since that's now where inbound lives.
-const mainNav = [
-  { href: "/",         label: "Overview", Icon: OverviewIcon },
-  { href: "/pipeline", label: "Pipeline", Icon: PipelineIcon, badgeKey: "ready"  as const },
-  { href: "/emails",   label: "Emails",   Icon: EmailsIcon,   badgeKey: "unread" as const },
-];
-
-// /logs hidden from sidebar (still reachable via direct URL for debugging).
-// /congress added — admin only, the council-deliberation surface.
-// /analysis surfaces twice on purpose:
-//   - as "Insights" in tools nav for sales (their own scope) and admin
-//     (org-wide). Hero + conclusions, raw tables collapsed.
-//   - as the Performance tab inside /templates so admins can edit a
-//     template and see the same conclusions next to it.
-// Bench gets its own icon (BarChart3-style) so it doesn't visually
-// duplicate Scorer.
-const toolsNav = [
-  { href: "/brief",     label: "Brief",     Icon: BriefIcon,     adminOnly: false },
-  { href: "/analysis",  label: "Insights",  Icon: InsightsIcon,  adminOnly: false },
-  { href: "/templates", label: "Templates", Icon: TemplatesIcon, adminOnly: false },
-  { href: "/congress",  label: "Congress",  Icon: CongressIcon,  adminOnly: true  },
-  { href: "/scorer",    label: "Scorer",    Icon: ScorerIcon,    adminOnly: true  },
-  { href: "/bench",     label: "Bench",     Icon: BenchIcon,     adminOnly: true  },
-  { href: "/drift",     label: "Drift",     Icon: DriftIcon,     adminOnly: true  },
-];
+// Nav arrays are built inside Sidebar() so labels can be localized.
 
 interface NavItemProps {
   href: string;
@@ -196,6 +172,23 @@ function NavItem({ href, label, Icon, active, badge }: NavItemProps) {
 export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
+  const locale = useLocale();
+
+  const mainNav = [
+    { href: "/",         label: t("nav.overview", locale), Icon: OverviewIcon },
+    { href: "/pipeline", label: t("nav.pipeline", locale), Icon: PipelineIcon, badgeKey: "ready"  as const },
+    { href: "/emails",   label: t("nav.emails",   locale), Icon: EmailsIcon,   badgeKey: "unread" as const },
+  ];
+
+  const toolsNav = [
+    { href: "/brief",     label: t("nav.brief",     locale), Icon: BriefIcon,     adminOnly: false },
+    { href: "/analysis",  label: t("nav.insights",  locale), Icon: InsightsIcon,  adminOnly: false },
+    { href: "/templates", label: t("nav.templates", locale), Icon: TemplatesIcon, adminOnly: false },
+    { href: "/congress",  label: t("nav.congress",  locale), Icon: CongressIcon,  adminOnly: true  },
+    { href: "/scorer",    label: t("nav.scorer",    locale), Icon: ScorerIcon,    adminOnly: true  },
+    { href: "/bench",     label: t("nav.bench",     locale), Icon: BenchIcon,     adminOnly: true  },
+    { href: "/drift",     label: t("nav.drift",     locale), Icon: DriftIcon,     adminOnly: true  },
+  ];
   const [unread, setUnread] = useState(0);
   const [ready, setReady]   = useState(0);
   const [me, setMe] = useState<{ repId: number; repName: string; role: "admin" | "sales" } | null>(null);
@@ -418,7 +411,7 @@ export function Sidebar() {
               {me?.repName ?? "Signed out"}
             </span>
             <span style={{ fontSize: 11.5, color: me?.role === "admin" ? "#B45309" : "var(--text-tertiary)", fontWeight: me?.role === "admin" ? 600 : 400 }}>
-              {me?.role === "admin" ? "Admin" : me ? "Growth" : ""}
+              {me?.role === "admin" ? t("account.admin", locale) : me ? t("account.growth", locale) : ""}
             </span>
           </div>
           <svg
@@ -446,7 +439,7 @@ export function Sidebar() {
             }}
           >
             <div style={{ padding: "10px 12px 6px", fontSize: 10.5, fontWeight: 600, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.06em", borderBottom: "1px solid var(--border-light)" }}>
-              Accounts
+              {t("account.accounts", locale)}
             </div>
             {accounts.map((a) => (
               <div
@@ -465,12 +458,12 @@ export function Sidebar() {
                   <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {a.repName}
                     {a.active && (
-                      <span style={{ marginLeft: 6, fontSize: 10, color: "#16a34a", fontWeight: 600 }}>● active</span>
+                      <span style={{ marginLeft: 6, fontSize: 10, color: "#16a34a", fontWeight: 600 }}>● {t("account.active", locale)}</span>
                     )}
                   </div>
                   <div style={{ fontSize: 10.5, color: a.role === "admin" ? "#B45309" : "var(--text-tertiary)", fontWeight: a.role === "admin" ? 600 : 400 }}>
-                    {a.role === "admin" ? "Admin" : "Growth"}
-                    {switching === a.repId && <span style={{ marginLeft: 6 }}>switching…</span>}
+                    {a.role === "admin" ? t("account.admin", locale) : t("account.growth", locale)}
+                    {switching === a.repId && <span style={{ marginLeft: 6 }}>{t("account.switching", locale)}</span>}
                   </div>
                 </div>
                 {!a.active && (
@@ -504,7 +497,7 @@ export function Sidebar() {
                   <line x1="12" y1="8" x2="12" y2="16" />
                   <line x1="8" y1="12" x2="16" y2="12" />
                 </svg>
-                Add another account
+                {t("account.add", locale)}
               </Link>
               {me?.role === "admin" && (
                 <Link
@@ -521,7 +514,7 @@ export function Sidebar() {
                     <circle cx="12" cy="12" r="3" />
                     <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" />
                   </svg>
-                  Settings
+                  {t("account.settings", locale)}
                 </Link>
               )}
               <button
@@ -539,7 +532,7 @@ export function Sidebar() {
                   <polyline points="16 17 21 12 16 7" />
                   <line x1="21" y1="12" x2="9" y2="12" />
                 </svg>
-                Sign out current
+                {t("account.signout", locale)}
               </button>
             </div>
           </div>

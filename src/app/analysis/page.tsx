@@ -9,10 +9,12 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Loader2, ArrowUpRight, ArrowDownRight, ArrowRight, MessageSquareMore } from "lucide-react";
+import { useLocale, t, type Locale } from "@/lib/i18n";
 import type { InsightsPayload, InsightCard, GeoSplit } from "@/app/api/insights/route";
 
 export default function InsightsPage() {
   const router = useRouter();
+  const locale = useLocale();
   const [data, setData] = useState<InsightsPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -35,7 +37,7 @@ export default function InsightsPage() {
     return (
       <div style={{ padding: "120px 0", textAlign: "center", color: "var(--text-tertiary)" }}>
         <Loader2 className="h-5 w-5 animate-spin" style={{ display: "inline-block" }} />
-        <div style={{ marginTop: 12, fontSize: 13 }}>Picking what matters most…</div>
+        <div style={{ marginTop: 12, fontSize: 13 }}>{t("insights.loading", locale)}</div>
       </div>
     );
   }
@@ -43,7 +45,7 @@ export default function InsightsPage() {
   if (error || !data) {
     return (
       <div style={{ padding: 24, fontSize: 13, color: "var(--text-secondary)" }}>
-        Couldn&apos;t load insights{error ? `: ${error}` : ""}.
+        {t("insights.error", locale)}{error ? `: ${error}` : ""}.
       </div>
     );
   }
@@ -53,13 +55,13 @@ export default function InsightsPage() {
       {/* ── Page Header ── */}
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 28 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 14 }}>
-          <h1 className="page-title">Insights</h1>
+          <h1 className="page-title">{t("insights.title", locale)}</h1>
           <span className="lead-count">{data.headline.period}</span>
         </div>
       </div>
 
       {/* ── Hero stat cards ── */}
-      <Hero data={data} />
+      <Hero data={data} locale={locale} />
 
       {/* ── Bot intro ── */}
       <p style={{ margin: "24px 0 20px", fontSize: 14, lineHeight: 1.6, color: "var(--text-secondary)" }}>
@@ -69,22 +71,22 @@ export default function InsightsPage() {
       {/* ── Insight cards ── */}
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         {data.cards.length === 0 ? (
-          <EmptyCards />
+          <EmptyCards locale={locale} />
         ) : (
           data.cards.map((c, i) => <CardView key={i} card={c} />)
         )}
       </div>
 
-      {data.geo_split && <GeoSplitCard split={data.geo_split} />}
+      {data.geo_split && <GeoSplitCard split={data.geo_split} locale={locale} />}
 
-      <CutLinks />
+      <CutLinks locale={locale} />
 
-      <Footer prefs={data.prefs_seen} generatedAt={data.generated_at} />
+      <Footer prefs={data.prefs_seen} generatedAt={data.generated_at} locale={locale} />
     </div>
   );
 }
 
-function Hero({ data }: { data: InsightsPayload }) {
+function Hero({ data, locale }: { data: InsightsPayload; locale: Locale }) {
   const { headline } = data;
   const delta = headline.delta ?? 0;
   const deltaColor = delta > 0 ? "#16a34a" : delta < 0 ? "#dc2626" : "var(--text-tertiary)";
@@ -99,7 +101,7 @@ function Hero({ data }: { data: InsightsPayload }) {
           <div style={{ display: "flex", alignItems: "center", gap: 3, marginTop: 4, fontSize: 12, fontWeight: 600, color: deltaColor }}>
             <DeltaIcon className="h-3 w-3" />
             {delta > 0 ? `+${delta}` : delta}
-            <span style={{ fontWeight: 400, color: "var(--text-tertiary)", marginLeft: 2 }}>vs last week</span>
+            <span style={{ fontWeight: 400, color: "var(--text-tertiary)", marginLeft: 2 }}>{t("insights.vsLastWeek", locale)}</span>
           </div>
         )}
       </div>
@@ -153,15 +155,15 @@ function CardView({ card }: { card: InsightCard }) {
   );
 }
 
-function EmptyCards() {
+function EmptyCards({ locale }: { locale: Locale }) {
   return (
     <div className="empty-state">
-      <p>Nothing worth flagging right now.</p>
+      <p>{t("insights.empty", locale)}</p>
     </div>
   );
 }
 
-function GeoSplitCard({ split }: { split: GeoSplit }) {
+function GeoSplitCard({ split, locale }: { split: GeoSplit; locale: Locale }) {
   const fmt = (n: number) => `${(n * 100).toFixed(1)}%`;
   const dom = split.domestic;
   const ovs = split.overseas;
@@ -188,29 +190,29 @@ function GeoSplitCard({ split }: { split: GeoSplit }) {
   return (
     <div className="section-card" style={{ marginTop: 20 }}>
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 4 }}>
-        <h3 style={{ margin: 0 }}>Domestic (.cn) vs Overseas</h3>
+        <h3 style={{ margin: 0 }}>{t("insights.geo", locale)}</h3>
         <Link href="/analysis/geo" style={{ fontSize: 11.5, color: "#3B82F6", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 3 }}>
-          full breakdown <ArrowRight className="h-3 w-3" />
+          {t("insights.fullBreak", locale)} <ArrowRight className="h-3 w-3" />
         </Link>
       </div>
       <p style={{ margin: "0 0 18px", fontSize: 12.5, color: "var(--text-tertiary)", lineHeight: 1.5 }}>
-        Two-stage funnel — clicks come from the opener / subject; conversions come from the body / pitch.
+        {t("insights.geoSub", locale)}
       </p>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 8, marginBottom: 16 }}>
         <div style={{ fontSize: 10.5, fontWeight: 600, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-          Click rate (clicked / delivered)
+          {t("insights.ctr", locale)}
         </div>
-        <Bar label="Domestic .cn" value={dom.ctr} max={maxCtr} color="#dc2626" n={dom.delivered} />
-        <Bar label="Overseas"     value={ovs.ctr} max={maxCtr} color="#2563eb" n={ovs.delivered} />
+        <Bar label={t("insights.domestic", locale)} value={dom.ctr} max={maxCtr} color="#dc2626" n={dom.delivered} />
+        <Bar label={t("insights.overseas", locale)} value={ovs.ctr} max={maxCtr} color="#2563eb" n={ovs.delivered} />
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 8 }}>
         <div style={{ fontSize: 10.5, fontWeight: 600, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-          Post-click conversion (wechat / clicked)
+          {t("insights.conv", locale)}
         </div>
-        <Bar label="Domestic .cn" value={dom.postClickConv} max={maxConv} color="#dc2626" n={dom.clicked} />
-        <Bar label="Overseas"     value={ovs.postClickConv} max={maxConv} color="#2563eb" n={ovs.clicked} />
+        <Bar label={t("insights.domestic", locale)} value={dom.postClickConv} max={maxConv} color="#dc2626" n={dom.clicked} />
+        <Bar label={t("insights.overseas", locale)} value={ovs.postClickConv} max={maxConv} color="#2563eb" n={ovs.clicked} />
       </div>
 
       <div style={{
@@ -239,19 +241,19 @@ function GeoSplitCard({ split }: { split: GeoSplit }) {
   );
 }
 
-function CutLinks() {
+function CutLinks({ locale }: { locale: Locale }) {
   const cuts = [
-    { href: "/analysis/cut/geo_binary",  label: "Geography",         caption: "Domestic .cn vs overseas" },
-    { href: "/analysis/cut/direction",   label: "Research direction", caption: "Per-direction click + post-click conversion" },
-    { href: "/analysis/cut/school_tier", label: "School tier",        caption: "Tier 1 / 2 / 3 break-out" },
-    { href: "/analysis/cut/lead_tier",   label: "Lead tier",          caption: "Strong vs normal" },
-    { href: "/analysis/cut/h_index",     label: "H-index",            caption: "Author seniority buckets" },
-    { href: "/analysis/cut/citations",   label: "Citation count",     caption: "Author impact buckets" },
+    { href: "/analysis/cut/geo_binary",  label: t("insights.geoLink",    locale), caption: t("insights.geoDesc",    locale) },
+    { href: "/analysis/cut/direction",   label: t("insights.dirLink",    locale), caption: t("insights.dirDesc",    locale) },
+    { href: "/analysis/cut/school_tier", label: t("insights.schoolLink", locale), caption: t("insights.schoolDesc", locale) },
+    { href: "/analysis/cut/lead_tier",   label: t("insights.leadLink",   locale), caption: t("insights.leadDesc",   locale) },
+    { href: "/analysis/cut/h_index",     label: t("insights.hLink",      locale), caption: t("insights.hDesc",      locale) },
+    { href: "/analysis/cut/citations",   label: t("insights.citLink",    locale), caption: t("insights.citDesc",    locale) },
   ];
   return (
     <div className="section-card" style={{ padding: 0, marginTop: 20 }}>
       <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border-light)" }}>
-        <h3 style={{ marginBottom: 0 }}>More cuts</h3>
+        <h3 style={{ marginBottom: 0 }}>{t("insights.moreCuts", locale)}</h3>
       </div>
       <div>
         {cuts.map((c, i, arr) => (
@@ -275,18 +277,16 @@ function CutLinks() {
   );
 }
 
-function Footer({ prefs, generatedAt }: { prefs: string[]; generatedAt: string }) {
+function Footer({ prefs, generatedAt, locale }: { prefs: string[]; generatedAt: string; locale: Locale }) {
   return (
     <div style={{ marginTop: 24, fontSize: 11.5, color: "var(--text-tertiary)", display: "flex", flexDirection: "column", gap: 6 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <MessageSquareMore className="h-3.5 w-3.5" />
-        <span>
-          Tell the helper to change what shows up here — e.g. <em>&quot;hide drift alerts&quot;</em>, <em>&quot;focus on click rate&quot;</em>.
-        </span>
+        <span>{t("insights.helperHint", locale)}</span>
       </div>
       {prefs.length > 0 && (
         <div style={{ marginLeft: 19, display: "flex", flexWrap: "wrap", gap: 6 }}>
-          <span>Active preferences:</span>
+          <span>{t("insights.prefs", locale)}</span>
           {prefs.map((p, i) => (
             <span key={i} style={{
               padding: "2px 8px", borderRadius: 999,
@@ -299,7 +299,7 @@ function Footer({ prefs, generatedAt }: { prefs: string[]; generatedAt: string }
         </div>
       )}
       <div style={{ marginLeft: 19, fontSize: 10.5 }}>
-        Updated {new Date(generatedAt).toLocaleString()}
+        {t("insights.updated", locale)} {new Date(generatedAt).toLocaleString()}
       </div>
     </div>
   );
