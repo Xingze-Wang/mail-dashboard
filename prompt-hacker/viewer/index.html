@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>prompt-hacker — attack catalog</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <h1>prompt-hacker</h1>
+    <p class="tag">A community catalog of LLM jailbreak / lure / injection prompts. Run them against your own app.</p>
+  </header>
+
+  <section class="controls">
+    <input id="search" type="search" placeholder="Search id, title, description..." />
+    <select id="category"><option value="">all categories</option></select>
+    <select id="severity">
+      <option value="">all severities</option>
+      <option value="low">low</option>
+      <option value="medium">medium</option>
+      <option value="high">high</option>
+      <option value="critical">critical</option>
+    </select>
+    <span id="count" class="count"></span>
+  </section>
+
+  <main id="list"></main>
+
+  <footer>
+    <p>This is a defensive tool. We make jailbreaks visible so defenders can catch them.
+       <a href="https://github.com">Add an attack</a> via PR.</p>
+  </footer>
+
+  <script src="viewer.js"></script>
+</body>
+</html>

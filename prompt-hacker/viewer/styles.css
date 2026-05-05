@@ -1,0 +1,85 @@
+* { box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  margin: 0;
+  background: #0f1115;
+  color: #e6e6e6;
+  line-height: 1.5;
+}
+header {
+  padding: 32px 24px 16px;
+  border-bottom: 1px solid #222;
+}
+header h1 {
+  margin: 0 0 4px;
+  font-size: 22px;
+  letter-spacing: -0.01em;
+}
+.tag { color: #888; margin: 0; font-size: 14px; }
+
+.controls {
+  display: flex;
+  gap: 8px;
+  padding: 16px 24px;
+  border-bottom: 1px solid #222;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.controls input, .controls select {
+  background: #1a1d24;
+  border: 1px solid #2a2e38;
+  color: #e6e6e6;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+.controls input { flex: 1; min-width: 240px; }
+.count { color: #888; font-size: 13px; margin-left: auto; }
+
+main { padding: 16px 24px 64px; max-width: 960px; }
+.attack {
+  border: 1px solid #222;
+  border-radius: 6px;
+  padding: 16px;
+  margin-bottom: 12px;
+  background: #14171d;
+}
+.attack-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.attack-id { font-family: ui-monospace, "SF Mono", Menlo, monospace; color: #6fb3ff; font-size: 13px; }
+.attack-title { font-weight: 600; font-size: 15px; }
+.badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.sev-low      { background: #1e3a2b; color: #7fd99a; }
+.sev-medium   { background: #3a341e; color: #d9c47f; }
+.sev-high     { background: #3a2a1e; color: #d9a77f; }
+.sev-critical { background: #3a1e22; color: #ff7f8b; }
+.cat { background: #222; color: #aaa; }
+
+.attack-desc { color: #bbb; font-size: 14px; margin-top: 8px; }
+
+details { margin-top: 10px; }
+summary { cursor: pointer; color: #6fb3ff; font-size: 13px; user-select: none; }
+pre {
+  background: #0a0c10;
+  border: 1px solid #1f232c;
+  border-radius: 4px;
+  padding: 12px;
+  overflow-x: auto;
+  font-size: 12px;
+  white-space: pre-wrap;
+  margin-top: 8px;
+}
+.expected { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+.expected > div { background: #0e1116; border: 1px solid #1f232c; border-radius: 4px; padding: 10px; font-size: 13px; }
+.expected h4 { margin: 0 0 4px; font-size: 11px; color: #888; text-transform: uppercase; }
+.refs { margin-top: 8px; font-size: 12px; }
+.refs a { color: #6fb3ff; }
+
+footer { padding: 24px; color: #666; font-size: 12px; border-top: 1px solid #222; }
+footer a { color: #6fb3ff; }
+@media (max-width: 600px) { .expected { grid-template-columns: 1fr; } }

@@ -1,0 +1,39 @@
+{
+  "name": "prompt-hacker",
+  "version": "0.1.0",
+  "description": "Community catalog of LLM jailbreak / lure / injection prompts, plus a CLI to run them against your own LLM-backed app.",
+  "type": "module",
+  "bin": {
+    "prompt-hacker": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/cli.js",
+    "dev": "tsx src/cli.ts",
+    "viewer": "node -e \"console.log('Open viewer/index.html in a browser, or run: npx http-server viewer -p 8080')\""
+  },
+  "files": [
+    "dist",
+    "attacks",
+    "viewer",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "llm",
+    "security",
+    "jailbreak",
+    "prompt-injection",
+    "ai-safety",
+    "red-team"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0"
+  }
+}
