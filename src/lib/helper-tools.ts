@@ -61,6 +61,22 @@ export const READ_TOOL_NAMES = new Set([
   "dm_chat",
   "create_lark_doc",
   "add_to_lark_base",
+  // ── Bench-economy visibility (admin only).
+  "get_congress_state",
+  "get_company_minutes",
+  "get_recent_proposals",
+  "get_investor_thinking",
+  "get_contract_status",
+  // ── Bot's own artifact memory.
+  "get_my_artifacts",
+  // ── Mapping module (mapping team interaction).
+  "get_my_targets",
+  "get_pending_drafts",
+  "create_mapping_target",
+  "find_mapping_candidates",
+  "draft_for_lead",
+  "decide_draft",
+  "run_target_evolution",
 ]);
 
 export interface ToolProposal {
@@ -109,6 +125,25 @@ export const TOOLS_PROMPT = `## 工具系统
 - dm_chat — 给一个 Lark chat (群聊或 P2P) 发文字. args: { chat_id: string ("oc_..."), text: string }. **什么时候用**: 用户给你具体的 chat_id 让你发, 或者你已经知道某个团队群的 chat_id. 不要主动猜 chat_id.
 - create_lark_doc — 创建一个 Lark/飞书 docx 文档. args: { title: string, body?: string (paragraphs separated by blank lines) }. 返回: { ok, document_id, url }. **什么时候用**: 用户说 "整理成一份 doc / 写一个文档 / 起个 doc 把 X 总结一下". 创建后**立即**把 url 发给用户. body 里直接写 plain text, 不要 markdown 标题 (Lark 不渲染).
 - add_to_lark_base — 在 Lark 多维表格 (Bitable / Base) 里追加一行. args: { app_token: string, table_id: string, fields: { ColumnName: value, ... } }. **什么时候用**: 用户要把数据登记到一个已有的 Base. fields 的 key 是中文/英文列名 (不是列 id). 你不知道 app_token 和 table_id 的话, 让用户提供 (从 Base URL 里看: https://...feishu.cn/base/{app_token}?table={table_id}).
+
+**A3. 议事厅可见性工具 (admin only)** — bench economy 的状态. 当 admin 问 "congress 在干嘛 / X 公司这周怎么样 / 哪些 proposal 在等我 / 投资人怎么想的", 用这些工具拿真实数据, 不要瞎猜.
+- get_congress_state — args: {}. 返回: { companies: [{id, name, active, target_segment, thesis, record:{hit, miss, open}, latest_bet, pending_proposals}, ...], investor_balances }. **什么时候用**: admin 问 "congress 怎么样了" 时. 给个 1-2 句的快照: 谁在 hit / 谁在 miss / 谁有 pending.
+- get_company_minutes — 一家公司某次会议的完整 deliberation. args: { company_id: uuid, week?: number (省略=最近5次) }. 返回: meetings[].{ step, loop, recommendation, confidence, rationale, personas: {data_analyst, copywriter, ..., synthesizer}, debate: [...exchanges], attacks: [{attacks_persona, message, rebuttal}] }. **什么时候用**: admin 问 "Lean Fleet 第 3 周说了啥 / 那次会议 adversary 说什么了". personas 是 round-1 立场, debate 是 chair 调度的来回, attacks 是 round-2 攻击 + 反驳.
+- get_recent_proposals — args: { state?: "admin_review" | "editor_review" | "approved" | "rejected" | "executed" | "expired" }. 返回 20 条. **什么时候用**: "什么在等我决定" → state=admin_review. "editor 拦了什么" → state=editor_review.
+- get_investor_thinking — 一位 investor 的最新决策 + 累积 memory. args: { investor_id: uuid }. 返回: { investor: {id, name, style}, recent_memory: [{at, note}, ...], recent_bets: [{company, conviction, action, rationale, decided_at}, ...] }. **什么时候用**: admin 问 "Atlas 怎么看 / Bramble 在想什么 / Founder 上次怎么说的".
+- get_contract_status — args: { contract_id?: uuid (省略=列出所有 open 的) }. 返回: 有 contract_id 时 → 完整状态 + 最近事件. 无 → 当前所有 open contracts. **什么时候用**: "X 跑得怎么样 / 还有几天 closes / 这周谁的 contract 还没 hit".
+
+**A4. 自我记忆** — bot 之前给当前 rep 创建过哪些 doc / 发过哪些消息.
+- get_my_artifacts — args: { kind?: "lark_doc" | "lark_base" | "lark_dm" | "lark_chat_msg", days?: 30, limit?: 10 }. 返回: artifacts[].{ kind, title, url, created_at, meta }. **什么时候用**: rep 问 "你之前给我做的那个 doc 呢 / 上次的 doc 链接发我 / 我们之前聊过的那个表格". **重要规则**: 创建 doc / Base 之前先 lookup get_my_artifacts 看看是不是已经做过类似的, 别重复造.
+
+**A5. Mapping team 工具** — Mapping people 是另一组同事 (不是 sales rep, role='mapping'), 他们做 vertical-specific 外联. 跟 sales rep 不同的是: 他们**每封邮件都要先批准**才发. 这套工具帮他们.
+- get_my_targets — 当前 rep 拥有的所有 mapping target. args: { rep_id?: number (admin only) }. 返回: targets[].{ id, label, spec, candidate_active, active }.
+- get_pending_drafts — 等批准的 drafts. args: { target_id?: uuid, limit?: 10 }. 返回: drafts[].{ id, target_id, lead_id, subject, body_html, match_reason, created_at }. **什么时候用**: mapping 同事问 "有什么 draft 在等我". 一次给 1-2 条最近的, 不要列全部.
+- create_mapping_target — 创建一个新的 target. args: { label: string, spec: { vertical?, topic_keywords?, schools?, school_tier?, geo?, h_index_min?, citation_count_min?, custom_filters? }, guidelines?: string }. **什么时候用**: 当 mapping 同事第一次跟 bot 聊新 target 时, 通过 4 个简短问题问出来 (vertical / 学校 / 关键词 / 不要做的事), 然后 create.
+- find_mapping_candidates — 在 pipeline_leads 里搜符合 target 的 leads. args: { target_id: uuid, limit?: 10 }. 返回: leads[].{ id, title, author_name, author_email, matched_via }.
+- draft_for_lead — 给一个 lead 起草邮件. args: { target_id: uuid, lead_id: uuid }. 返回: { draft_id, subject, body_html }. **重要**: 起草后**不会自动发**, 需要 mapping 同事 decide_draft.
+- decide_draft — 批准 / 拒绝 / 编辑后批准. args: { draft_id: uuid, decision: "approve" | "reject" | "edit_and_approve", edited_subject?, edited_body_html?, reject_reason? }. **什么时候用**: mapping 同事说 "OK 发吧 / 改一下这里再发 / 不行".
+- run_target_evolution — admin only. 让 congress 看一遍 target 的 recent drafts + outcomes, 提议**一个**修改 (spec / template / guidelines / strategy_note). args: { target_id: uuid }. 返回: { proposed: { kind, rationale, diff } }.
 
 **B. 执行工具 (需要用户 confirm)** — 这些改变数据库. 你只是建议, UI 会弹卡让用户决定.
 

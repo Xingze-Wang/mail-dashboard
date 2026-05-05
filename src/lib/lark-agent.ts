@@ -357,6 +357,10 @@ export async function processInboundLarkMessage(
 
   const rep = await resolveRepFromOpenId(senderOpenId);
   if (!rep) {
+    // Unbound sender → treat as a client/applicant. Route through the
+    // client-agent path (different system prompt + outbound guardrail).
+    // The guard either sends or escalates to admin; we don't reply
+    // directly here.
     await supabase.from("lark_messages").insert({
       chat_id: chatId,
       message_id: messageId,
@@ -365,12 +369,39 @@ export async function processInboundLarkMessage(
       text,
       raw: rawEvent,
     });
-    await sendMessage({
-      receive_id: chatId,
-      receive_id_type: "chat_id",
-      text: `Hi! 我不认识你 (Lark open_id: ${senderOpenId.slice(0, 12)}...). 找 Xingze 把你绑定到 sales_reps 表 (lark_open_id 列), 之后就能聊了.`,
-    }).catch((e) => console.error(`[lark-agent/${transport}] onboarding sendMessage failed`, e));
-    return { ok: true, reason: "onboarding-reply" };
+    try {
+      const { draftClientReply, larkClientChannel } = await import("@/lib/client-agent");
+      // Pull last 6 messages in this chat for context.
+      const { data: recent } = await supabase
+        .from("lark_messages")
+        .select("role, text")
+        .eq("chat_id", chatId)
+        .order("created_at", { ascending: false })
+        .limit(6);
+      const history = (recent ?? []).reverse()
+        .filter((m) => (m.role === "user" || m.role === "assistant") && typeof m.text === "string" && m.text.length > 0)
+        .map((m) => ({ role: m.role as "user" | "assistant", text: m.text }));
+      const result = await draftClientReply({
+        userMessage: text,
+        channel: "lark",
+        clientId: senderOpenId,
+        history,
+      });
+      if (result.action === "send" && result.text) {
+        await larkClientChannel.sendToClient(senderOpenId, result.text);
+        await supabase.from("lark_messages").insert({
+          chat_id: chatId, message_id: null, rep_id: null,
+          role: "assistant", text: result.text, raw: { client_agent: true, draft_model: result.draft_model, guard_model: result.guard_model },
+        });
+        return { ok: true, reason: "client-agent-reply" };
+      }
+      // Suppressed → escalate to admin, stay silent on the client side.
+      await larkClientChannel.escalateToAdmin(senderOpenId, result.reason, result.draft_text);
+      return { ok: true, reason: "client-agent-suppressed-and-escalated" };
+    } catch (err) {
+      console.error(`[lark-agent/${transport}] client-agent path failed`, err);
+      return { ok: false, reason: `client-agent error: ${String(err).slice(0, 100)}` };
+    }
   }
 
   await supabase.from("lark_messages").insert({

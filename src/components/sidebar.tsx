@@ -183,6 +183,7 @@ export function Sidebar() {
   const toolsNav = [
     { href: "/brief",     label: t("nav.brief",     locale), Icon: BriefIcon,     adminOnly: false },
     { href: "/analysis",  label: t("nav.insights",  locale), Icon: InsightsIcon,  adminOnly: false },
+    { href: "/mapping",   label: "Mapping",                  Icon: TemplatesIcon, adminOnly: false },
     { href: "/templates", label: t("nav.templates", locale), Icon: TemplatesIcon, adminOnly: false },
     { href: "/congress",  label: t("nav.congress",  locale), Icon: CongressIcon,  adminOnly: true  },
     { href: "/scorer",    label: t("nav.scorer",    locale), Icon: ScorerIcon,    adminOnly: true  },

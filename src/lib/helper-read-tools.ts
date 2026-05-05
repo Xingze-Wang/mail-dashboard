@@ -434,10 +434,6 @@ export async function runReadTool(
         };
       }
       case "dm_user": {
-        // Send a Lark text DM to a user by open_id. Side-effect tool —
-        // listed under "lookup" so the lark-agent loop can fire it
-        // immediately. The user is in DM with the bot; they see what was
-        // sent and can correct course.
         const { sendMessage } = await import("@/lib/lark");
         const openId = String(args.open_id ?? "").trim();
         const text = String(args.text ?? "").trim();
@@ -447,10 +443,17 @@ export async function runReadTool(
         if (!text) return { tool: call.tool, result: { error: "text required" } };
         if (text.length > 4000) return { tool: call.tool, result: { error: "text too long (>4000 chars)" } };
         const r = await sendMessage({ receive_id: openId, receive_id_type: "open_id", text });
+        if (r.ok && r.message_id) {
+          await supabase.from("helper_artifacts").insert({
+            rep_id: session.repId, kind: "lark_dm",
+            lark_id: r.message_id,
+            title: text.slice(0, 100),
+            url: null, meta: { open_id: openId, length: text.length },
+          });
+        }
         return { tool: call.tool, result: r as unknown as Record<string, unknown> };
       }
       case "dm_chat": {
-        // Send a Lark text message to a chat by chat_id (group OR p2p).
         const { sendMessage } = await import("@/lib/lark");
         const chatId = String(args.chat_id ?? "").trim();
         const text = String(args.text ?? "").trim();
@@ -460,21 +463,34 @@ export async function runReadTool(
         if (!text) return { tool: call.tool, result: { error: "text required" } };
         if (text.length > 4000) return { tool: call.tool, result: { error: "text too long (>4000 chars)" } };
         const r = await sendMessage({ receive_id: chatId, receive_id_type: "chat_id", text });
+        if (r.ok && r.message_id) {
+          await supabase.from("helper_artifacts").insert({
+            rep_id: session.repId, kind: "lark_chat_msg",
+            lark_id: r.message_id,
+            title: text.slice(0, 100),
+            url: null, meta: { chat_id: chatId, length: text.length },
+          });
+        }
         return { tool: call.tool, result: r as unknown as Record<string, unknown> };
       }
       case "create_lark_doc": {
-        // Create a docx and (optionally) write a body. Returns the URL.
         const { createLarkDoc } = await import("@/lib/lark");
         const title = String(args.title ?? "").trim();
         const body = typeof args.body === "string" ? args.body : "";
         if (!title) return { tool: call.tool, result: { error: "title required" } };
         if (title.length > 200) return { tool: call.tool, result: { error: "title too long (>200 chars)" } };
         const r = await createLarkDoc({ title, body });
+        if (r.ok && r.document_id && r.url) {
+          await supabase.from("helper_artifacts").insert({
+            rep_id: session.repId, kind: "lark_doc",
+            lark_id: r.document_id,
+            title,
+            url: r.url, meta: { body_length: body.length },
+          });
+        }
         return { tool: call.tool, result: r as unknown as Record<string, unknown> };
       }
       case "add_to_lark_base": {
-        // Append a row to a Lark Base table.
-        // args: { app_token, table_id, fields: { ColumnName: value, ... } }
         const { addToLarkBase } = await import("@/lib/lark");
         const appToken = String(args.app_token ?? "").trim();
         const tableId = String(args.table_id ?? "").trim();
@@ -485,8 +501,254 @@ export async function runReadTool(
           return { tool: call.tool, result: { error: "app_token, table_id, fields required" } };
         }
         const r = await addToLarkBase({ app_token: appToken, table_id: tableId, fields });
+        if (r.ok && r.record_id) {
+          await supabase.from("helper_artifacts").insert({
+            rep_id: session.repId, kind: "lark_base",
+            lark_id: r.record_id,
+            title: `Row in ${tableId.slice(0, 12)}…`,
+            url: null, meta: { app_token: appToken, table_id: tableId, field_count: Object.keys(fields).length },
+          });
+        }
         return { tool: call.tool, result: r as unknown as Record<string, unknown> };
       }
+      case "get_my_artifacts": {
+        const kind = args.kind ? String(args.kind) : null;
+        const days = Math.max(1, Math.min(180, Number(args.days) || 30));
+        const limit = Math.max(1, Math.min(50, Number(args.limit) || 10));
+        const since = new Date(Date.now() - days * 86_400_000).toISOString();
+        let q = supabase.from("helper_artifacts")
+          .select("id, kind, lark_id, title, url, meta, created_at")
+          .eq("rep_id", session.repId)
+          .gte("created_at", since)
+          .order("created_at", { ascending: false })
+          .limit(limit);
+        if (kind) q = q.eq("kind", kind);
+        const { data } = await q;
+        return { tool: call.tool, result: { artifacts: data ?? [] } };
+      }
+
+      // ── Mapping module tools ────────────────────────────────────────
+      case "get_my_targets": {
+        // List mapping targets owned by this rep (or all if admin).
+        const targetRep = session.role === "admin" && args.rep_id ? Number(args.rep_id) : session.repId;
+        const { data } = await supabase
+          .from("mapping_targets")
+          .select("id, owner_rep_id, label, spec, candidate_active, active, created_at")
+          .eq("owner_rep_id", targetRep)
+          .eq("active", true)
+          .order("created_at", { ascending: false });
+        return { tool: call.tool, result: { targets: data ?? [] } };
+      }
+      case "get_pending_drafts": {
+        const targetId = args.target_id ? String(args.target_id) : null;
+        const limit = Math.max(1, Math.min(20, Number(args.limit) || 10));
+        let q = supabase
+          .from("mapping_drafts")
+          .select("id, target_id, lead_id, subject, body_html, match_reason, created_at, target:mapping_targets(label, owner_rep_id)")
+          .eq("state", "pending")
+          .order("created_at", { ascending: false })
+          .limit(limit);
+        if (targetId) q = q.eq("target_id", targetId);
+        const { data } = await q;
+        // Filter to only drafts the rep owns (admin sees all)
+        const filtered = (data ?? []).filter((d) =>
+          session.role === "admin" || (d.target as unknown as { owner_rep_id: number } | null)?.owner_rep_id === session.repId
+        );
+        return { tool: call.tool, result: { drafts: filtered } };
+      }
+      case "create_mapping_target": {
+        const label = String(args.label ?? "").trim();
+        const spec = (args.spec && typeof args.spec === "object") ? args.spec as Record<string, unknown> : null;
+        if (!label || !spec) return { tool: call.tool, result: { error: "label, spec required" } };
+        const { createTarget } = await import("@/lib/mapping");
+        const r = await createTarget({
+          owner_rep_id: session.repId,
+          label,
+          spec: spec as never, // TargetSpec shape
+          guidelines: typeof args.guidelines === "string" ? args.guidelines : undefined,
+        });
+        return { tool: call.tool, result: r as unknown as Record<string, unknown> };
+      }
+      case "find_mapping_candidates": {
+        const targetId = String(args.target_id ?? "").trim();
+        if (!targetId) return { tool: call.tool, result: { error: "target_id required" } };
+        const { findCandidateLeads } = await import("@/lib/mapping");
+        const r = await findCandidateLeads({ target_id: targetId, limit: Number(args.limit) || 10 });
+        return { tool: call.tool, result: r as unknown as Record<string, unknown> };
+      }
+      case "draft_for_lead": {
+        const targetId = String(args.target_id ?? "").trim();
+        const leadId = String(args.lead_id ?? "").trim();
+        if (!targetId || !leadId) return { tool: call.tool, result: { error: "target_id, lead_id required" } };
+        const { draftForLead } = await import("@/lib/mapping");
+        const r = await draftForLead({ target_id: targetId, lead_id: leadId });
+        return { tool: call.tool, result: r as unknown as Record<string, unknown> };
+      }
+      case "decide_draft": {
+        const draftId = String(args.draft_id ?? "").trim();
+        const decision = String(args.decision ?? "").trim();
+        if (!draftId || !["approve", "reject", "edit_and_approve"].includes(decision)) {
+          return { tool: call.tool, result: { error: "draft_id, decision (approve|reject|edit_and_approve) required" } };
+        }
+        const { decideDraft } = await import("@/lib/mapping");
+        const r = await decideDraft({
+          draft_id: draftId,
+          decision: decision as "approve" | "reject" | "edit_and_approve",
+          decided_by: session.repId,
+          edited_subject: typeof args.edited_subject === "string" ? args.edited_subject : undefined,
+          edited_body_html: typeof args.edited_body_html === "string" ? args.edited_body_html : undefined,
+          reject_reason: typeof args.reject_reason === "string" ? args.reject_reason : undefined,
+        });
+        return { tool: call.tool, result: r as unknown as Record<string, unknown> };
+      }
+      case "run_target_evolution": {
+        if (session.role !== "admin") return { tool: call.tool, result: { error: "admin only" } };
+        const targetId = String(args.target_id ?? "").trim();
+        if (!targetId) return { tool: call.tool, result: { error: "target_id required" } };
+        const { runEvolutionLoop } = await import("@/lib/mapping");
+        const r = await runEvolutionLoop({ target_id: targetId });
+        return { tool: call.tool, result: r as unknown as Record<string, unknown> };
+      }
+
+      // ── Bench-economy read tools ───────────────────────────────────
+      // The bot can describe the timeline museum, current contracts,
+      // pending proposals, investor convictions, and meeting transcripts.
+      // Admin-only because the bench economy is not surfaced to sales.
+      case "get_congress_state": {
+        if (session.role !== "admin") return { tool: call.tool, result: { error: "admin only" } };
+        const [{ data: companies }, { data: contracts }, { data: bets }, { data: ledger }, { data: pendingProps }] = await Promise.all([
+          supabase.from("bench_companies").select("id, name, active, target_segment, thesis").order("created_at"),
+          supabase.from("company_contracts").select("id, company_id, state, target_score, running_score, opened_at, closes_at").order("opened_at", { ascending: false }).limit(40),
+          supabase.from("investor_bets").select("investor_id, company_id, conviction, action, decided_at").order("decided_at", { ascending: false }).limit(60),
+          supabase.from("investor_capital_ledger").select("investor_id, balance_after, occurred_at").order("occurred_at", { ascending: false }),
+          supabase.from("company_proposals").select("id, company_id, state").in("state", ["editor_review", "admin_review"]),
+        ]);
+        const balByInv = new Map<string, number>();
+        for (const r of ledger ?? []) {
+          if (!balByInv.has(r.investor_id as string)) balByInv.set(r.investor_id as string, Number(r.balance_after));
+        }
+        const latestBetByCo = new Map<string, { conviction: number; action: string; decided_at: string }>();
+        for (const b of bets ?? []) {
+          const key = b.company_id as string;
+          if (!latestBetByCo.has(key)) latestBetByCo.set(key, { conviction: Number(b.conviction), action: String(b.action), decided_at: b.decided_at as string });
+        }
+        const pendingByCo = new Map<string, number>();
+        for (const p of pendingProps ?? []) pendingByCo.set(p.company_id as string, (pendingByCo.get(p.company_id as string) ?? 0) + 1);
+        const companyView = (companies ?? []).map((c) => {
+          const cid = c.id as string;
+          const myContracts = (contracts ?? []).filter((ct) => ct.company_id === cid);
+          const hit = myContracts.filter((c2) => c2.state === "hit").length;
+          const miss = myContracts.filter((c2) => c2.state === "missed").length;
+          const open = myContracts.filter((c2) => c2.state === "open").length;
+          return {
+            id: cid, name: c.name, active: c.active, target_segment: c.target_segment, thesis: c.thesis,
+            record: { hit, miss, open },
+            latest_bet: latestBetByCo.get(cid) ?? null,
+            pending_proposals: pendingByCo.get(cid) ?? 0,
+          };
+        });
+        return { tool: call.tool, result: { companies: companyView, investor_balances: Array.from(balByInv.entries()).map(([id, balance]) => ({ id, balance })) } };
+      }
+
+      case "get_company_minutes": {
+        if (session.role !== "admin") return { tool: call.tool, result: { error: "admin only" } };
+        const companyId = String(args.company_id ?? "").trim();
+        const week = args.week != null ? Number(args.week) : null;
+        if (!companyId) return { tool: call.tool, result: { error: "company_id required" } };
+        let q = supabase.from("bench_step_results").select("step, loop, personas, recommendation, confidence, rationale, extra_fields, created_at").eq("company_id", companyId).order("created_at", { ascending: false });
+        if (week != null) q = q.eq("step", week);
+        const { data } = await q.limit(week != null ? 1 : 5);
+        if (!data || data.length === 0) return { tool: call.tool, result: { meetings: [] } };
+        return { tool: call.tool, result: { meetings: data.map((m) => ({
+          step: m.step, loop: m.loop,
+          recommendation: m.recommendation, confidence: m.confidence,
+          rationale: (m.rationale as string | null)?.slice(0, 500) ?? null,
+          personas: m.personas as Record<string, string>,
+          debate: ((m.extra_fields as Record<string, unknown>)?.debate ?? []) as unknown[],
+          attacks: ((m.extra_fields as Record<string, unknown>)?.attacks ?? []) as unknown[],
+          when: m.created_at,
+        })) } };
+      }
+
+      case "get_recent_proposals": {
+        if (session.role !== "admin") return { tool: call.tool, result: { error: "admin only" } };
+        const stateFilter = args.state ? String(args.state) : null;
+        let q = supabase
+          .from("company_proposals")
+          .select("id, company_id, kind, state, prediction, created_at, expires_at, editor_review_id, company:bench_companies(name)")
+          .order("created_at", { ascending: false })
+          .limit(20);
+        if (stateFilter) q = q.eq("state", stateFilter);
+        const { data } = await q;
+        return { tool: call.tool, result: { proposals: (data ?? []).map((p) => ({
+          id: p.id,
+          company: (p.company as unknown as { name: string } | null)?.name ?? null,
+          kind: p.kind,
+          state: p.state,
+          prediction: (p.prediction as string).slice(0, 280),
+          created_at: p.created_at,
+          expires_at: p.expires_at,
+        })) } };
+      }
+
+      case "get_investor_thinking": {
+        if (session.role !== "admin") return { tool: call.tool, result: { error: "admin only" } };
+        const invId = String(args.investor_id ?? "").trim();
+        if (!invId) return { tool: call.tool, result: { error: "investor_id required" } };
+        const [{ data: inv }, { data: bets }] = await Promise.all([
+          supabase.from("investor_agents").select("id, name, style, memory").eq("id", invId).maybeSingle(),
+          supabase.from("investor_bets").select("company_id, conviction, action, rationale, decided_at, company:bench_companies(name)").eq("investor_id", invId).order("decided_at", { ascending: false }).limit(20),
+        ]);
+        if (!inv) return { tool: call.tool, result: { error: "investor not found" } };
+        return { tool: call.tool, result: {
+          investor: { id: inv.id, name: inv.name, style: inv.style },
+          recent_memory: ((inv.memory ?? []) as Array<{ at: string; note: string }>).slice(-12),
+          recent_bets: (bets ?? []).map((b) => ({
+            company: (b.company as unknown as { name: string } | null)?.name ?? null,
+            conviction: Number(b.conviction),
+            action: b.action,
+            rationale: (b.rationale as string).slice(0, 280),
+            decided_at: b.decided_at,
+          })),
+        } };
+      }
+
+      case "get_contract_status": {
+        if (session.role !== "admin") return { tool: call.tool, result: { error: "admin only" } };
+        const contractId = args.contract_id ? String(args.contract_id) : null;
+        if (contractId) {
+          const [{ data: ct }, { data: events }] = await Promise.all([
+            supabase.from("company_contracts").select("*, company:bench_companies(name)").eq("id", contractId).maybeSingle(),
+            supabase.from("contract_event_attributions").select("event_kind, points_awarded, occurred_at").eq("contract_id", contractId).order("occurred_at", { ascending: false }).limit(30),
+          ]);
+          if (!ct) return { tool: call.tool, result: { error: "contract not found" } };
+          return { tool: call.tool, result: {
+            id: ct.id, company: (ct.company as unknown as { name: string } | null)?.name ?? null,
+            action_label: ct.action_label, segment: ct.segment, prediction: ct.prediction,
+            target: Number(ct.target_score), running: Number(ct.running_score),
+            state: ct.state, capital_staked: Number(ct.capital_staked),
+            opened_at: ct.opened_at, closes_at: ct.closes_at, settled_at: ct.settled_at,
+            postmortem: ct.postmortem,
+            recent_events: events ?? [],
+          } };
+        }
+        // No contract_id → list current open contracts org-wide.
+        const { data } = await supabase.from("company_contracts")
+          .select("id, action_label, segment, target_score, running_score, opened_at, closes_at, company:bench_companies(name)")
+          .eq("state", "open")
+          .order("closes_at");
+        return { tool: call.tool, result: { open_contracts: (data ?? []).map((ct) => ({
+          id: ct.id,
+          company: (ct.company as unknown as { name: string } | null)?.name ?? null,
+          action_label: ct.action_label,
+          segment: ct.segment,
+          target: Number(ct.target_score),
+          running: Number(ct.running_score),
+          opened_at: ct.opened_at,
+          closes_at: ct.closes_at,
+        })) } };
+      }
+
       default:
         return { tool: call.tool, result: { error: `unknown tool: ${call.tool}` } };
     }
