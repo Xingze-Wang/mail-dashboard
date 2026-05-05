@@ -178,11 +178,22 @@ export default function ScorerPage() {
       <ScorerHealthHero onClickTab={(t) => setTab(t)} />
 
       {/* Tab nav */}
-      <div style={{ display: "flex", gap: 4, marginBottom: 24, borderBottom: "1px solid var(--border)" }}>
+      <div style={{ display: "flex", gap: 4, marginBottom: 8, borderBottom: "1px solid var(--border)" }}>
         <ScorerTabBtn active={tab === "lead"} onClick={() => setTab("lead")} icon={<Star style={{ width: 14, height: 14 }} />} label="Lead quality" />
         <ScorerTabBtn active={tab === "email"} onClick={() => setTab("email")} icon={<Sparkles style={{ width: 14, height: 14 }} />} label="Email quality" />
         <ScorerTabBtn active={tab === "conversion"} onClick={() => setTab("conversion")} icon={<Target style={{ width: 14, height: 14 }} />} label="Conversion" />
         <ScorerTabBtn active={tab === "match"} onClick={() => setTab("match")} icon={<Users2 style={{ width: 14, height: 14 }} />} label="Sales match" />
+      </div>
+
+      {/* Sub-pages — calibration + demand live as their own routes
+          (cross-model comparisons heavy enough to warrant separate URLs). */}
+      <div style={{ display: "flex", gap: 14, marginBottom: 22, fontSize: 12.5 }}>
+        <a href="/scorer/calibration" style={{ color: "var(--blue)", textDecoration: "none" }}>
+          → Model calibration leaderboard
+        </a>
+        <a href="/scorer/demand" style={{ color: "var(--blue)", textDecoration: "none" }}>
+          → Demand calibration (predicted vs observed)
+        </a>
       </div>
 
       {tab === "email" && <EmailQualityTab />}
