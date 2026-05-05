@@ -1,90 +1,93 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { requireAdmin } from "@/lib/auth-helpers";
-import { benchCongressOneModel, CONGRESS_SAMPLES } from "@/lib/bench-congress";
-import { listKnownModels } from "@/lib/bench";
+import { runAllConfigsOnSample, CONGRESS_CONFIGS, CONGRESS_SAMPLES } from "@/lib/bench-congress";
 
 export const maxDuration = 300;
 
-// GET /api/bench/congress → leaderboard (congress task rows only)
+// GET /api/bench/congress → all congress_config runs grouped by run_id + sample
 export async function GET(req: NextRequest) {
   const gate = await requireAdmin(req);
   if ("response" in gate) return gate.response;
 
   const { data: rows } = await supabase
     .from("model_bench_runs")
-    .select("model, task, score, latency_s, tokens_in, tokens_out, json_valid, error, created_at, run_id, output_text")
-    .eq("task", "congress")
+    .select("run_id, model, task, sample_idx, score, latency_s, tokens_out, json_valid, error, created_at, output_text")
+    .eq("task", "congress_config")
     .order("created_at", { ascending: false })
-    .limit(1000);
+    .limit(500);
 
-  const byRun = new Map<string, typeof rows>();
+  // Group: run_id → sample_idx → config rows
+  const byRun = new Map<string, { createdAt: string; samples: Map<number, typeof rows> }>();
   for (const r of rows ?? []) {
     const k = r.run_id as string;
-    if (!byRun.has(k)) byRun.set(k, []);
-    byRun.get(k)!.push(r);
+    if (!byRun.has(k)) byRun.set(k, { createdAt: r.created_at as string, samples: new Map() });
+    const idx = Number(r.sample_idx);
+    const entry = byRun.get(k)!;
+    if (!entry.samples.has(idx)) entry.samples.set(idx, []);
+    entry.samples.get(idx)!.push(r);
   }
 
+  const runs = Array.from(byRun.entries()).map(([runId, { createdAt, samples }]) => ({
+    runId,
+    createdAt,
+    samples: Array.from(samples.entries())
+      .sort((a, b) => a[0] - b[0])
+      .map(([sampleIdx, configRows]) => ({
+        sampleIdx,
+        sampleTitle: CONGRESS_SAMPLES[sampleIdx]?.title ?? `Sample ${sampleIdx}`,
+        configs: (configRows ?? []).map((r) => {
+          let parsed: Record<string, unknown> = {};
+          try { parsed = JSON.parse(r.output_text as string); } catch { /* leave empty */ }
+          return {
+            configId: parsed.configId as string ?? (r.model as string).split("/")[0].replace("congress:", ""),
+            configName: parsed.configName as string ?? r.model,
+            recommendation: parsed.recommendation as string ?? null,
+            confidence: parsed.confidence as number ?? null,
+            change: parsed.change as { kind: string; details: string } | null ?? null,
+            rationale: parsed.rationale as string ?? null,
+            extraFields: (parsed.extraFields as Record<string, string>) ?? {},
+            personas: (parsed.personas as Record<string, string>) ?? {},
+            latency_s: Number(r.latency_s),
+            error: r.error as string | null,
+          };
+        }),
+      })),
+  }));
+
   return NextResponse.json({
-    models: listKnownModels(),
-    sampleCount: CONGRESS_SAMPLES.length,
-    runs: Array.from(byRun.entries()).map(([runId, items]) => ({
-      runId,
-      createdAt: items?.[0]?.created_at ?? null,
-      models: aggregateByModel(items ?? []),
-    })),
+    configs: CONGRESS_CONFIGS.map((c) => ({ id: c.id, name: c.name, tagline: c.tagline, color: c.color, model: c.model })),
+    samples: CONGRESS_SAMPLES.map((s) => ({ id: s.id, title: s.title })),
+    runs,
   });
 }
 
-function aggregateByModel(rows: Array<Record<string, unknown>>) {
-  const byModel = new Map<string, { scores: number[]; lat: number[]; errs: number; jsonOk: number; jsonTot: number }>();
-  for (const r of rows) {
-    const m = r.model as string;
-    const e = byModel.get(m) ?? { scores: [], lat: [], errs: 0, jsonOk: 0, jsonTot: 0 };
-    if (r.error) e.errs++;
-    e.lat.push(Number(r.latency_s) || 0);
-    e.scores.push(Number(r.score) || 0);
-    e.jsonTot++;
-    if (r.json_valid) e.jsonOk++;
-    byModel.set(m, e);
-  }
-  const avg = (xs: number[]) => xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0;
-  return Array.from(byModel.entries()).map(([model, s]) => ({
-    model,
-    scoreAvg: Math.round(avg(s.scores) * 100) / 100,
-    latencyAvg: Math.round(avg(s.lat) * 10) / 10,
-    jsonValidPct: s.jsonTot > 0 ? Math.round((s.jsonOk / s.jsonTot) * 100) : null,
-    errors: s.errs,
-    runs: s.scores.length,
-  })).sort((a, b) => b.scoreAvg - a.scoreAvg);
-}
-
-// POST /api/bench/congress { models: [...], runId? }
+// POST /api/bench/congress { sampleId?: string } → run all configs on one sample
 export async function POST(req: NextRequest) {
   const gate = await requireAdmin(req);
   if ("response" in gate) return gate.response;
 
   const body = await req.json().catch(() => ({}));
-  const requested: string[] = Array.isArray(body.models) && body.models.length > 0
-    ? body.models
-    : listKnownModels();
+  const sampleId = typeof body.sampleId === "string" ? body.sampleId : null;
+  const sample = sampleId
+    ? CONGRESS_SAMPLES.find((s) => s.id === sampleId) ?? CONGRESS_SAMPLES[0]
+    : CONGRESS_SAMPLES[0];
 
-  const runId: string = body.runId
-    ?? `crun_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const runId: string = body.runId ?? `crun_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 
-  const results = await Promise.allSettled(
-    requested.map((m) => benchCongressOneModel(m, runId)),
-  );
+  const results = await runAllConfigsOnSample(sample, runId);
 
-  const perModel = requested.map((model, i) => {
-    const res = results[i];
-    if (res.status === "fulfilled") {
-      const rows = res.value;
-      const scores = rows.map((r) => r.score);
-      return { model, scoreAvg: scores.reduce((a, b) => a + b, 0) / (scores.length || 1), rows: rows.length };
-    }
-    return { model, error: String(res.reason).slice(0, 200), rows: 0 };
+  return NextResponse.json({
+    runId,
+    sampleId: sample.id,
+    sampleTitle: sample.title,
+    configs: results.map((r) => ({
+      configId: r.configId,
+      configName: r.configName,
+      recommendation: r.recommendation,
+      confidence: r.confidence,
+      change: r.change,
+      rationale: r.rationale,
+    })),
   });
-
-  return NextResponse.json({ runId, perModel });
 }

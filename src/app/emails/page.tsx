@@ -10,7 +10,12 @@ import {
   Cpu,
   ExternalLink,
   Inbox as InboxIcon,
-  MousePointerClick,
+  Send,
+  CheckCircle2,
+  MailOpen,
+  MousePointer2,
+  AlertTriangle,
+  XCircle,
 } from "lucide-react";
 import { formatDate, getStatusColor, getStatusDot } from "@/lib/utils";
 import { ComposeModal } from "@/components/compose-modal";
@@ -74,11 +79,9 @@ interface ClickEvent {
   timestamp: string | null;
 }
 
-// Mirror Resend's per-email "EMAIL EVENTS" panel: horizontal chip
-// timeline (Sent → Delivered → Opened → Clicked × N) + counts, with
-// the per-click link list below. Source: webhook_events via
-// /api/emails/[id]/clicks (which returns ALL event types, not just
-// clicks — older code filtered them out, hiding opened/delivered).
+// Resend-style horizontal stepper: icon + label + timestamp per event,
+// connector lines between, pastel pills colored by event type. Click
+// links appear as a quiet expandable list below the stepper.
 function ClickHistory({ emailId }: { emailId: string }) {
   const [data, setData] = useState<{
     eventCount: number;
@@ -87,8 +90,8 @@ function ClickHistory({ emailId }: { emailId: string }) {
     events: ClickEvent[];
   } | null>(null);
   const [loading, setLoading] = useState(true);
-
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [showLinks, setShowLinks] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -106,119 +109,126 @@ function ClickHistory({ emailId }: { emailId: string }) {
   }, [emailId]);
 
   if (loading) return (
-    <div style={{ marginTop: 16, fontSize: 12, color: "var(--text-tertiary)", display: "flex", alignItems: "center", gap: 6 }}>
+    <div style={{ marginTop: 24, fontSize: 12, color: "var(--text-tertiary)", display: "flex", alignItems: "center", gap: 6 }}>
       <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading events…
     </div>
   );
   if (fetchError) return (
-    <div style={{ marginTop: 16, fontSize: 12, color: "var(--coral, #ef4444)" }}>
-      Events error: {fetchError}
-    </div>
+    <div style={{ marginTop: 24, fontSize: 12, color: "#ef4444" }}>Events error: {fetchError}</div>
   );
   if (!data || data.eventCount === 0) return null;
 
   const clicks = data.events.filter((e) => e.type === "email.clicked");
-  const opens = data.events.filter((e) => e.type === "email.opened").length;
-  const delivered = data.events.some((e) => e.type === "email.delivered");
-  const sent = data.events.some((e) => e.type === "email.sent");
-  const bounced = data.events.some((e) => e.type === "email.bounced");
-  const complained = data.events.some((e) => e.type === "email.complained");
 
-  // Strip the "email." prefix and pretty-up the chip labels.
-  const chipLabel = (t: string) => t.replace(/^email\./, "");
-  // Resend-style colors: sent/delivered = blue/green, opened/clicked =
-  // accent, bounced/complained = red.
-  const chipBg = (t: string) => {
-    if (t === "email.bounced" || t === "email.complained") return "rgba(239, 68, 68, 0.12)";
-    if (t === "email.clicked" || t === "email.opened") return "rgba(99, 102, 241, 0.12)";
-    if (t === "email.delivered") return "rgba(34, 197, 94, 0.12)";
-    return "rgba(148, 163, 184, 0.15)";
+  // Per-event visual config — icon + tint that matches Resend's stepper.
+  const cfg: Record<string, { label: string; Icon: React.ComponentType<{ className?: string; style?: React.CSSProperties }>; tint: string; ring: string; iconColor: string }> = {
+    "email.sent":       { label: "Sent",       Icon: Send,         tint: "#F1F5F9", ring: "#CBD5E1", iconColor: "#475569" },
+    "email.delivered":  { label: "Delivered",  Icon: CheckCircle2, tint: "#ECFDF5", ring: "#A7F3D0", iconColor: "#059669" },
+    "email.opened":     { label: "Opened",     Icon: MailOpen,     tint: "#EFF6FF", ring: "#BFDBFE", iconColor: "#2563EB" },
+    "email.clicked":    { label: "Clicked",    Icon: MousePointer2, tint: "#F5F3FF", ring: "#DDD6FE", iconColor: "#7C3AED" },
+    "email.bounced":    { label: "Bounced",    Icon: XCircle,      tint: "#FEF2F2", ring: "#FCA5A5", iconColor: "#DC2626" },
+    "email.complained": { label: "Complained", Icon: AlertTriangle, tint: "#FFFBEB", ring: "#FDE68A", iconColor: "#D97706" },
   };
-  const chipFg = (t: string) => {
-    if (t === "email.bounced" || t === "email.complained") return "#ef4444";
-    if (t === "email.clicked" || t === "email.opened") return "#6366f1";
-    if (t === "email.delivered") return "#22c55e";
-    return "var(--text-secondary)";
-  };
+  const fallback = cfg["email.sent"];
 
   return (
-    <div className="section-card" style={{ marginTop: 16, padding: "14px 18px" }}>
-      {/* Aggregate header — counts at a glance */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <MousePointerClick className="h-4 w-4" style={{ color: "var(--text-secondary)" }} />
-          <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>Email events</span>
-        </div>
-        {sent && <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>· sent</span>}
-        {delivered && <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>· delivered</span>}
-        {opens > 0 && (
-          <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>· {opens} open{opens === 1 ? "" : "s"}</span>
-        )}
-        {data.clickCount > 0 && (
-          <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
-            · {data.clickCount} click{data.clickCount === 1 ? "" : "s"}
-            {data.distinctLinkCount > 1 ? ` (${data.distinctLinkCount} distinct)` : ""}
-          </span>
-        )}
-        {bounced && <span style={{ fontSize: 11, color: "#ef4444" }}>· bounced</span>}
-        {complained && <span style={{ fontSize: 11, color: "#ef4444" }}>· complained</span>}
+    <div style={{ marginTop: 24 }}>
+      <div style={{ fontSize: 10.5, fontWeight: 600, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12 }}>
+        Email events
       </div>
 
-      {/* Horizontal chip timeline — every event in chronological order */}
+      {/* Stepper — icon dots in a row connected by hairlines */}
       <div style={{
+        position: "relative",
         display: "flex",
-        gap: 6,
+        gap: 0,
         overflowX: "auto",
-        paddingBottom: 6,
-        marginBottom: clicks.length > 0 ? 12 : 0,
+        padding: "8px 4px 14px",
       }}>
-        {data.events.map((e, i) => (
-          <div
-            key={i}
-            title={`${e.type} — ${new Date(e.timestamp ?? e.occurredAt).toLocaleString()}${e.link ? "\n" + e.link : ""}`}
-            style={{
+        {data.events.map((e, i) => {
+          const c = cfg[e.type] ?? fallback;
+          const Icon = c.Icon;
+          const isLast = i === data.events.length - 1;
+          return (
+            <div key={i} style={{
               display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              gap: 3,
-              padding: "6px 10px",
-              borderRadius: 6,
-              background: chipBg(e.type),
-              fontSize: 11,
-              fontWeight: 500,
-              color: chipFg(e.type),
-              whiteSpace: "nowrap",
-              minWidth: "fit-content",
+              alignItems: "flex-start",
+              flex: isLast ? "0 0 auto" : "1 1 0",
+              minWidth: 96,
+            }}>
+              {/* Step body */}
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, minWidth: 0 }}>
+                <div style={{
+                  width: 38, height: 38, borderRadius: "50%",
+                  background: c.tint,
+                  border: `1.5px solid ${c.ring}`,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  flexShrink: 0,
+                }}>
+                  <Icon className="h-[18px] w-[18px]" style={{ color: c.iconColor }} />
+                </div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text)" }}>{c.label}</div>
+                <div style={{ fontSize: 10.5, color: "var(--text-tertiary)", whiteSpace: "nowrap" }}>
+                  {new Date(e.timestamp ?? e.occurredAt).toLocaleString(undefined, {
+                    month: "short", day: "numeric",
+                    hour: "numeric", minute: "2-digit",
+                  })}
+                </div>
+              </div>
+              {/* Connector */}
+              {!isLast && (
+                <div style={{
+                  flex: 1,
+                  height: 1.5,
+                  background: "var(--border)",
+                  marginTop: 19, // align to icon center (38/2)
+                  minWidth: 16,
+                }} />
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Click links — collapsed by default, expand to see destinations */}
+      {clicks.length > 0 && (
+        <div style={{ marginTop: 8 }}>
+          <button
+            type="button"
+            onClick={() => setShowLinks((v) => !v)}
+            style={{
+              fontSize: 11.5, color: "var(--text-tertiary)",
+              background: "transparent", border: 0, cursor: "pointer",
+              padding: 0, display: "inline-flex", alignItems: "center", gap: 4,
             }}
           >
-            <span style={{ textTransform: "capitalize" }}>{chipLabel(e.type)}</span>
-            <span style={{ fontSize: 10, color: "var(--text-tertiary)", fontWeight: 400 }}>
-              {new Date(e.timestamp ?? e.occurredAt).toLocaleString(undefined, {
-                month: "short",
-                day: "numeric",
-                hour: "numeric",
-                minute: "2-digit",
-              })}
-            </span>
-          </div>
-        ))}
-      </div>
-
-      {/* Per-click link list — only show if there were clicks */}
-      {clicks.length > 0 && (
-        <ul style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12, color: "var(--text-secondary)" }}>
-          {clicks.map((c, i) => (
-            <li key={i} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-              <span style={{ color: "var(--text)", wordBreak: "break-all" }}>
-                {c.link ?? "(unknown link)"}
-              </span>
-              <span style={{ color: "var(--text-tertiary)" }}>
-                {new Date(c.timestamp ?? c.occurredAt).toLocaleString()}
-                {c.ipAddress ? ` · ${c.ipAddress}` : ""}
-              </span>
-            </li>
-          ))}
-        </ul>
+            {showLinks ? "Hide" : "Show"} {clicks.length} click destination{clicks.length === 1 ? "" : "s"}
+            {data.distinctLinkCount > 1 ? ` · ${data.distinctLinkCount} distinct` : ""}
+          </button>
+          {showLinks && (
+            <ul style={{
+              marginTop: 8,
+              display: "flex", flexDirection: "column", gap: 8,
+              fontSize: 11.5,
+              padding: "10px 12px",
+              background: "var(--bg)",
+              border: "1px solid var(--border-light)",
+              borderRadius: 6,
+            }}>
+              {clicks.map((c, i) => (
+                <li key={i} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                  <span style={{ color: "var(--text)", wordBreak: "break-all" }}>
+                    {c.link ?? "(unknown link)"}
+                  </span>
+                  <span style={{ color: "var(--text-tertiary)" }}>
+                    {new Date(c.timestamp ?? c.occurredAt).toLocaleString()}
+                    {c.ipAddress ? ` · ${c.ipAddress}` : ""}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       )}
     </div>
   );
@@ -306,28 +316,37 @@ function BriefPanel({ email }: { email: Email }) {
     }
   };
 
-  // Not activated yet — show the button
+  // Not activated yet — quiet outlined call-to-action.
   if (!activated) {
     return (
       <button
         onClick={handleActivate}
         style={{
           width: "100%",
-          borderRadius: 10,
-          border: "1px solid #BBF7D0",
-          background: "var(--green-bg)",
-          padding: 20,
-          textAlign: "center",
+          borderRadius: 8,
+          border: "1px solid var(--border)",
+          background: "var(--card)",
+          padding: "12px 14px",
+          textAlign: "left",
           cursor: "pointer",
-          transition: "all 0.15s ease",
+          display: "flex", alignItems: "center", gap: 10,
+          transition: "border-color 0.15s ease, background 0.15s ease",
         }}
+        onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#16a34a"; e.currentTarget.style.background = "var(--bg)"; }}
+        onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.background = "var(--card)"; }}
       >
-        <p style={{ fontSize: 14, fontWeight: 600, color: "var(--green)", marginBottom: 4 }}>
-          Added on WeChat
-        </p>
-        <p style={{ fontSize: 12, color: "var(--green)", opacity: 0.7 }}>
-          Click to generate paper brief + talking points
-        </p>
+        <div style={{
+          width: 28, height: 28, borderRadius: "50%",
+          background: "#ECFDF5", border: "1px solid #A7F3D0",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          flexShrink: 0,
+        }}>
+          <CheckCircle2 className="h-4 w-4" style={{ color: "#059669" }} />
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>Mark added on WeChat</div>
+          <div style={{ fontSize: 11.5, color: "var(--text-tertiary)" }}>Records conversion · loads paper brief</div>
+        </div>
       </button>
     );
   }
@@ -372,8 +391,15 @@ function BriefPanel({ email }: { email: Email }) {
             <p style={{ fontSize: 11, color: "#B91C1C", opacity: 0.9, marginTop: 2 }}>{wechatError}</p>
           </div>
         ) : (
-          <div style={{ borderRadius: 8, background: "var(--green-bg)", border: "1px solid #BBF7D0", padding: "8px 14px" }}>
-            <p style={{ fontSize: 11, color: "var(--green)", fontWeight: 600 }}>Added on WeChat — recorded</p>
+          <div style={{
+            display: "inline-flex", alignItems: "center", gap: 6,
+            alignSelf: "flex-start",
+            fontSize: 11.5, fontWeight: 500, color: "#059669",
+            padding: "4px 10px", borderRadius: 999,
+            background: "#ECFDF5", border: "1px solid #A7F3D0",
+          }}>
+            <CheckCircle2 className="h-3 w-3" />
+            Added on WeChat
           </div>
         )}
         <div className="section-card" style={{ padding: 16 }}>

@@ -2,7 +2,7 @@ import { ArchitectureDiagram } from "@/components/congress/ArchitectureDiagram";
 
 export default function CongressArchitecturePage() {
   return (
-    <>
+    <div className="mx-auto max-w-7xl px-8 py-8">
       <header className="mb-6 border-b border-zinc-200 pb-4 dark:border-zinc-800">
         <div className="mb-1 text-xs text-zinc-500 dark:text-zinc-500">Congress · Architecture</div>
         <h1 className="text-lg font-medium">Four-loop council architecture</h1>
@@ -56,6 +56,6 @@ export default function CongressArchitecturePage() {
           </li>
         </ul>
       </section>
-    </>
+    </div>
   );
 }

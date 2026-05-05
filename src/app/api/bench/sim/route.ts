@@ -185,7 +185,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    await supabase.from("bench_step_results").insert(
+    const { data: insertedSteps } = await supabase.from("bench_step_results").insert(
       allResults.map((r) => ({
         session_id,
         company_id: r.company_id,
@@ -200,7 +200,52 @@ export async function POST(req: NextRequest) {
         latency_s: r.latency_s,
         error: r.error,
       })),
-    );
+    ).select("id, company_id, loop");
+
+    // ── Materialize approved synthesizer outputs as company_proposals so
+    //    the editor populates with real LLM thoughts. We submit only the
+    //    weekly results that produced an actionable change_spec; reject /
+    //    defer recommendations are read-only on the timeline.
+    try {
+      const { submitProposal } = await import("@/lib/proposals");
+      for (const r of allResults) {
+        if (r.loop !== "weekly") continue;
+        if (!r.change || !r.change.kind) continue;
+        if (r.recommendation !== "approve") continue;
+
+        // Map the synthesizer's change kind to our proposal kind taxonomy.
+        const kindMap: Record<string, "subject_test" | "draft_revise" | "routing_rule" | "pacing_change"> = {
+          subject_line_test: "subject_test",
+          template_phrase_swap: "draft_revise",
+          copy_edit: "draft_revise",
+          routing_tweak: "routing_rule",
+          scope_expansion: "pacing_change",
+        };
+        const proposalKind = kindMap[r.change.kind] ?? "draft_revise";
+
+        // Find the bench_step_results row id so we can link back.
+        const matchedStep = (insertedSteps ?? []).find(
+          (s) => s.company_id === r.company_id && s.loop === "weekly",
+        );
+
+        await submitProposal({
+          company_id: r.company_id,
+          contract_id: null,
+          investor_id: null,
+          kind: proposalKind,
+          payload: {
+            change: r.change,
+            step_id: matchedStep?.id ?? null,
+            step: r.step,
+            confidence: r.confidence,
+            session_id,
+          },
+          prediction: r.rationale ?? r.change.details ?? "",
+        }).catch((err) => console.error("[bench-sim] submitProposal failed", err));
+      }
+    } catch (err) {
+      console.error("[bench-sim] proposal materialization failed", err);
+    }
 
     for (const company of companies) {
       const state = stateMap.get(company.id)!;

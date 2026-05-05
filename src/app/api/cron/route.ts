@@ -193,9 +193,33 @@ export async function GET(req: NextRequest) {
     results.integrity = { error: String(err) };
   }
 
-  // ── Future steps ──
-  // Step 6: GitHub startup finder
-  // Step 7: Jike founder radar
+  // ── Step 7: settle expired contracts + reweight points table ──
+  // Sweep first so today's fitting sees yesterday's settled contracts;
+  // then refit so tomorrow's deliberation runs under updated weights.
+  try {
+    const { sweepClosedContracts } = await import("@/lib/contracts");
+    results.contract_sweep = await sweepClosedContracts();
+  } catch (err) {
+    results.contract_sweep = { error: String(err) };
+  }
+  try {
+    const { expireStaleProposals } = await import("@/lib/proposals");
+    results.proposal_sweep = await expireStaleProposals();
+  } catch (err) {
+    results.proposal_sweep = { error: String(err) };
+  }
+  try {
+    const { reweightAndPublish } = await import("@/lib/points-reweight");
+    results.points_reweight = await reweightAndPublish({ lookbackDays: 60 });
+  } catch (err) {
+    results.points_reweight = { error: String(err) };
+  }
+  try {
+    const { recomputeAllRepProfiles } = await import("@/lib/rep-profile");
+    results.rep_profiles = await recomputeAllRepProfiles({ lookbackDays: 90 });
+  } catch (err) {
+    results.rep_profiles = { error: String(err) };
+  }
 
   return NextResponse.json(results);
 }

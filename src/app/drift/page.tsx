@@ -176,42 +176,41 @@ export default function DriftPage() {
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 20 }}>
+      <div className="mb-5 flex items-start justify-between gap-4">
         <div>
-          <h1 className="page-title" style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <Activity className="h-6 w-6" />
+          <h1 className="flex items-center gap-2.5 text-lg font-medium">
+            <Activity className="h-5 w-5 text-zinc-500" />
             Drift
           </h1>
-          <p style={{ color: "var(--muted)", marginTop: 6, fontSize: 13 }}>
-            Patterns mined from sales edits. Accepted patterns are appended to <code>pipeline_intro_prompt</code>.
+          <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400">
+            Patterns mined from sales edits. Accepted patterns are appended to <code className="font-mono text-[12px]">pipeline_intro_prompt</code>.
           </p>
-          <p style={{ color: "var(--muted)", marginTop: 4, fontSize: 12 }}>
-            last mined at: {lastMinedAt ? new Date(lastMinedAt).toLocaleString() : "never run"}
+          <p className="mt-1 text-[11px] text-zinc-400 dark:text-zinc-600">
+            last mined: {lastMinedAt ? new Date(lastMinedAt).toLocaleString() : "never run"}
           </p>
         </div>
         {tab === "patterns" && (
           <button
-            className="btn primary"
             onClick={runMiner}
             disabled={mining}
-            style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-sky-300 bg-sky-100 px-3 py-1.5 text-[13px] font-medium text-sky-800 hover:bg-sky-200 disabled:opacity-60 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-200 dark:hover:bg-sky-900"
           >
-            <Play className="h-4 w-4" />
+            <Play className="h-3.5 w-3.5" />
             {mining ? "Mining…" : "Run miner (90d)"}
           </button>
         )}
       </div>
 
       {/* Tabs */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 20, borderBottom: "1px solid var(--border)" }}>
+      <div className="mb-5 flex gap-1 border-b border-zinc-200 dark:border-zinc-800">
         <TabButton active={tab === "patterns"} onClick={() => setTab("patterns")}>
-          <AlertTriangle className="h-4 w-4" /> Patterns
+          <AlertTriangle className="h-3.5 w-3.5" /> Patterns
         </TabButton>
         <TabButton active={tab === "disagreement"} onClick={() => setTab("disagreement")}>
-          <Scale className="h-4 w-4" /> Judge vs Human
+          <Scale className="h-3.5 w-3.5" /> Judge vs Human
         </TabButton>
         <TabButton active={tab === "human"} onClick={() => setTab("human")}>
-          <MessageSquare className="h-4 w-4" /> Human Signals
+          <MessageSquare className="h-3.5 w-3.5" /> Human Signals
         </TabButton>
       </div>
 
@@ -261,39 +260,19 @@ function PatternsView(props: {
     <div>
 
       {setupHint && (
-        <div
-          style={{
-            padding: "12px 14px",
-            border: "1px solid #FDE68A",
-            background: "#FFFBEB",
-            borderRadius: 8,
-            fontSize: 13,
-            color: "#92400E",
-            marginBottom: 16,
-            lineHeight: 1.55,
-          }}
-        >
+        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-3 text-[13px] leading-relaxed text-amber-800 dark:border-amber-800/40 dark:bg-amber-950/30 dark:text-amber-300">
           ⚠ {setupHint}
         </div>
       )}
 
       {mineNote && (
-        <div
-          style={{
-            padding: "10px 14px",
-            border: "1px solid var(--border)",
-            borderRadius: 8,
-            background: "var(--card)",
-            marginBottom: 16,
-            fontSize: 13,
-          }}
-        >
+        <div className="mb-4 rounded-lg border border-zinc-200 bg-zinc-50 px-3.5 py-3 text-[13px] text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
           {mineNote}
         </div>
       )}
 
       {/* Stat row */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 24 }}>
+      <div className="mb-6 grid grid-cols-4 gap-3">
         <StatCard label="Total mined" value={counts.total} />
         <StatCard label="Pending review" value={counts.pending} emphasis />
         <StatCard label="Accepted" value={counts.accepted} />
@@ -301,18 +280,18 @@ function PatternsView(props: {
       </div>
 
       {/* Filters */}
-      <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
+      <div className="mb-4 flex flex-wrap items-center gap-2">
         <Pill active={statusFilter === "pending"} onClick={() => setStatusFilter("pending")}>Pending ({counts.pending})</Pill>
         <Pill active={statusFilter === "accepted"} onClick={() => setStatusFilter("accepted")}>Accepted ({counts.accepted})</Pill>
         <Pill active={statusFilter === "ignored"} onClick={() => setStatusFilter("ignored")}>Ignored ({counts.ignored})</Pill>
         <Pill active={statusFilter === "all"} onClick={() => setStatusFilter("all")}>All ({counts.total})</Pill>
 
-        <div style={{ width: 1, height: 18, background: "var(--border)", margin: "0 4px" }} />
+        <div className="mx-1 h-4 w-px bg-zinc-200 dark:bg-zinc-700" />
 
         <select
           value={categoryFilter}
           onChange={(e) => setCategoryFilter(e.target.value)}
-          style={selectStyle}
+          className={selectCls}
         >
           <option value="all">All categories</option>
           {Object.keys(CATEGORY_LABEL).map((c) => (
@@ -325,7 +304,7 @@ function PatternsView(props: {
         <select
           value={repFilter}
           onChange={(e) => setRepFilter(e.target.value)}
-          style={selectStyle}
+          className={selectCls}
         >
           <option value="all">All reps</option>
           <option value="global">Global only</option>
@@ -337,24 +316,24 @@ function PatternsView(props: {
 
       {/* Pattern list */}
       {loading ? (
-        <div className="skeleton" style={{ height: 200 }} />
+        <div className="h-48 animate-pulse rounded-xl bg-zinc-100 dark:bg-zinc-800" />
       ) : patterns.length === 0 ? (
-        <div className="empty-state">
-          <div className="empty-icon">
-            <AlertTriangle style={{ width: 22, height: 22 }} />
-          </div>
-          <h3>No mined patterns yet</h3>
-          <p>The LLM miner needs ≥3 edited drafts (with edit_reasons or notes) within the lookback window to detect a pattern. At the team's current edit volume that threshold often isn't met — but the raw qualitative signal is still there.</p>
-          <p style={{ marginTop: 8 }}>
-            <button className="btn" onClick={onSwitchToHuman} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              <MessageSquare className="h-4 w-4" /> See raw human signals →
-            </button>
-            {" "}— every edit reason, edit note, and lead-correction the team has logged, even when there's not enough volume to mine a pattern.
+        <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-8 text-center dark:border-zinc-800 dark:bg-zinc-900">
+          <AlertTriangle className="mx-auto mb-3 h-6 w-6 text-zinc-400" />
+          <h3 className="mb-2 text-[14px] font-medium text-zinc-700 dark:text-zinc-300">No mined patterns yet</h3>
+          <p className="mb-4 text-[13px] text-zinc-500 dark:text-zinc-400">
+            The LLM miner needs ≥3 edited drafts (with edit reasons or notes) within the lookback window to detect a pattern. At the team&apos;s current edit volume that threshold often isn&apos;t met — but the raw qualitative signal is still there.
           </p>
-          <p style={{ marginTop: 8, fontSize: 12, color: "var(--text-tertiary)" }}>You can also click <b>Run miner</b> above to force a fresh pass.</p>
+          <button
+            onClick={onSwitchToHuman}
+            className="inline-flex items-center gap-1.5 rounded-md border border-zinc-200 px-3 py-1.5 text-[13px] text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
+          >
+            <MessageSquare className="h-3.5 w-3.5" /> See raw human signals →
+          </button>
+          <p className="mt-3 text-[11px] text-zinc-400 dark:text-zinc-600">You can also click <strong>Run miner</strong> above to force a fresh pass.</p>
         </div>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div className="flex flex-col gap-3">
           {patterns.map((p) => (
             <PatternCard
               key={p.id}
@@ -374,20 +353,11 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
   return (
     <button
       onClick={onClick}
-      style={{
-        padding: "8px 14px",
-        fontSize: 13,
-        fontWeight: active ? 600 : 400,
-        background: "transparent",
-        border: "none",
-        borderBottom: "2px solid " + (active ? "var(--fg)" : "transparent"),
-        color: active ? "var(--fg)" : "var(--muted)",
-        cursor: "pointer",
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 6,
-        marginBottom: -1,
-      }}
+      className={`-mb-px inline-flex items-center gap-1.5 border-b-2 px-3.5 pb-2.5 pt-2 text-[13px] transition-colors ${
+        active
+          ? "border-zinc-900 font-semibold text-zinc-900 dark:border-zinc-100 dark:text-zinc-100"
+          : "border-transparent font-normal text-zinc-400 hover:text-zinc-700 dark:text-zinc-500 dark:hover:text-zinc-300"
+      }`}
     >
       {children}
     </button>
@@ -834,12 +804,9 @@ function DisagreementList({
 
 function StatCard({ label, value, emphasis }: { label: string; value: number; emphasis?: boolean }) {
   return (
-    <div
-      className="stat-card"
-      style={emphasis ? { background: "linear-gradient(180deg, var(--card) 0%, var(--bg) 100%)", borderColor: "rgba(10,10,10,0.12)" } : undefined}
-    >
-      <div className="stat-label">{label}</div>
-      <div className="stat-value" style={emphasis ? { fontSize: 34 } : undefined}>{value}</div>
+    <div className={`rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900 ${emphasis ? "border-zinc-300 dark:border-zinc-700" : ""}`}>
+      <div className={`font-medium leading-none ${emphasis ? "text-[34px]" : "text-[28px]"}`}>{value}</div>
+      <div className="mt-1.5 text-xs text-zinc-500 dark:text-zinc-400">{label}</div>
     </div>
   );
 }
@@ -848,30 +815,18 @@ function Pill({ active, onClick, children }: { active: boolean; onClick: () => v
   return (
     <button
       onClick={onClick}
-      style={{
-        padding: "6px 14px",
-        fontSize: 12.5,
-        borderRadius: 999,
-        border: "1px solid " + (active ? "var(--fg)" : "var(--border)"),
-        background: active ? "var(--fg)" : "transparent",
-        color: active ? "var(--bg)" : "var(--fg)",
-        cursor: "pointer",
-        transition: "all 120ms",
-      }}
+      className={`rounded-full border px-3.5 py-1.5 text-[12px] transition-colors ${
+        active
+          ? "border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900"
+          : "border-zinc-200 bg-transparent text-zinc-700 hover:border-zinc-300 dark:border-zinc-700 dark:text-zinc-300 dark:hover:border-zinc-600"
+      }`}
     >
       {children}
     </button>
   );
 }
 
-const selectStyle: React.CSSProperties = {
-  padding: "6px 10px",
-  fontSize: 12.5,
-  borderRadius: 6,
-  border: "1px solid var(--border)",
-  background: "var(--card)",
-  color: "var(--fg)",
-};
+const selectCls = "rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-[12px] text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300";
 
 function PatternCard({
   p, busy, onAccept, onIgnore,
@@ -881,128 +836,114 @@ function PatternCard({
   onAccept: () => void;
   onIgnore: () => void;
 }) {
-  const color = CATEGORY_COLOR[p.category] ?? "#6b7280";
+  // Category accent — maps to Tailwind-safe color names
+  const categoryAccent: Record<string, { bg: string; text: string }> = {
+    ai_misunderstood: { bg: "bg-red-100 dark:bg-red-950/60", text: "text-red-700 dark:text-red-300" },
+    format: { bg: "bg-blue-100 dark:bg-blue-950/60", text: "text-blue-700 dark:text-blue-300" },
+    too_verbose: { bg: "bg-amber-100 dark:bg-amber-950/60", text: "text-amber-700 dark:text-amber-300" },
+    too_robotic: { bg: "bg-violet-100 dark:bg-violet-950/60", text: "text-violet-700 dark:text-violet-300" },
+    individual_taste: { bg: "bg-zinc-100 dark:bg-zinc-800", text: "text-zinc-600 dark:text-zinc-400" },
+  };
+  const accent = categoryAccent[p.category] ?? { bg: "bg-zinc-100 dark:bg-zinc-800", text: "text-zinc-600 dark:text-zinc-400" };
+
   return (
-    <div
-      style={{
-        padding: 16,
-        border: "1px solid var(--border)",
-        borderRadius: 10,
-        background: "var(--card)",
-        display: "grid",
-        gridTemplateColumns: "1fr auto",
-        gap: 16,
-      }}
-    >
-      <div style={{ minWidth: 0 }}>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
-          <span
-            style={{
-              padding: "2px 8px",
-              borderRadius: 4,
-              fontSize: 11,
-              fontWeight: 600,
-              background: color + "22",
-              color,
-            }}
-          >
+    <article className="rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+      {/* Header */}
+      <div className="flex items-start justify-between gap-4 border-b border-zinc-100 px-5 py-4 dark:border-zinc-800">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={`rounded px-2 py-0.5 text-[11px] font-semibold ${accent.bg} ${accent.text}`}>
             {CATEGORY_LABEL[p.category] ?? p.category}
           </span>
-          <span style={{ fontSize: 12, color: "var(--muted)" }}>×{p.occurrence_count}</span>
+          <span className="text-[12px] text-zinc-500 dark:text-zinc-400">
+            seen <strong className="font-semibold text-zinc-800 dark:text-zinc-200">×{p.occurrence_count}</strong>
+          </span>
           {p.rep_id !== null && (
-            <span style={{ fontSize: 11, color: "var(--muted)" }}>· {p.rep_name ?? `rep #${p.rep_id}`}</span>
+            <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+              · {p.rep_name ?? `rep #${p.rep_id}`}
+            </span>
           )}
           {p.status !== "pending" && (
             <span
-              style={{
-                fontSize: 11,
-                padding: "2px 6px",
-                borderRadius: 4,
-                background: p.status === "accepted" ? "#16a34a22" : "#6b728022",
-                color: p.status === "accepted" ? "#16a34a" : "#6b7280",
-              }}
+              className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${
+                p.status === "accepted"
+                  ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300"
+                  : "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
+              }`}
             >
-              {p.status}
-              {p.accepted_by ? ` by ${p.accepted_by}` : ""}
+              {p.status}{p.accepted_by ? ` by ${p.accepted_by}` : ""}
             </span>
           )}
-          <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--muted)" }}>
-            {new Date(p.detected_at).toLocaleDateString()}
-          </span>
         </div>
+        <span className="shrink-0 text-[11px] text-zinc-400 dark:text-zinc-600">
+          {new Date(p.detected_at).toLocaleDateString()}
+        </span>
+      </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 8 }}>
-          <DiffCol label="AI 写的" body={p.ai_phrase} bg="#fef2f2" border="#fecaca" />
-          <DiffCol label="Sales 改成" body={p.sales_phrase || "(删除)"} bg="#f0fdf4" border="#bbf7d0" />
+      {/* Before / after diff */}
+      <div className="grid grid-cols-2 gap-3 px-5 py-4">
+        <div className="rounded-lg border border-red-100 bg-red-50 p-3 dark:border-red-900/40 dark:bg-red-950/20">
+          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-red-400 dark:text-red-500">AI 写的</div>
+          <p className="text-[13px] leading-relaxed text-red-900 dark:text-red-200 whitespace-pre-wrap break-words">
+            {p.ai_phrase}
+          </p>
         </div>
+        <div className="rounded-lg border border-emerald-100 bg-emerald-50 p-3 dark:border-emerald-900/40 dark:bg-emerald-950/20">
+          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-500 dark:text-emerald-500">Sales 改成</div>
+          <p className="text-[13px] leading-relaxed text-emerald-900 dark:text-emerald-200 whitespace-pre-wrap break-words">
+            {p.sales_phrase || "(删除)"}
+          </p>
+        </div>
+      </div>
 
-        {p.prompt_patch && (
+      {/* Prompt patch — shown when present, styled as the "what to do about it" */}
+      {p.prompt_patch && (
+        <div className="border-t border-zinc-100 px-5 py-3 dark:border-zinc-800">
+          <div className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+            Suggested prompt patch
+          </div>
           <div
+            className="rounded-r-md py-2 pl-3 text-[12px] leading-relaxed text-zinc-700 dark:text-zinc-300"
             style={{
-              marginTop: 6,
-              padding: "8px 10px",
-              borderLeft: "3px solid " + color,
-              background: "var(--bg)",
-              fontSize: 12,
-              color: "var(--fg)",
-              borderRadius: "0 6px 6px 0",
+              borderLeft: `2px solid ${
+                p.category === "ai_misunderstood" ? "#dc2626"
+                : p.category === "too_robotic" ? "#7c3aed"
+                : p.category === "format" ? "#2563eb"
+                : "#d97706"
+              }`,
             }}
           >
-            <div style={{ fontWeight: 600, marginBottom: 2, color: "var(--muted)", fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.4 }}>
-              Suggested patch
-            </div>
             {p.prompt_patch}
           </div>
-        )}
+        </div>
+      )}
 
-        {Array.isArray(p.example_lead_ids) && p.example_lead_ids.length > 0 && (
-          <div style={{ marginTop: 8, fontSize: 11, color: "var(--muted)" }}>
-            examples: {p.example_lead_ids.slice(0, 5).join(", ")}
+      {/* Footer — example leads + actions */}
+      <div className={`flex items-center justify-between gap-4 px-5 py-3 ${p.prompt_patch ? "" : "border-t border-zinc-100 dark:border-zinc-800"}`}>
+        <div className="text-[11px] text-zinc-400 dark:text-zinc-600">
+          {Array.isArray(p.example_lead_ids) && p.example_lead_ids.length > 0
+            ? `Examples: ${p.example_lead_ids.slice(0, 4).join(", ")}${p.example_lead_ids.length > 4 ? " …" : ""}`
+            : "No example leads recorded"}
+        </div>
+        {p.status === "pending" && (
+          <div className="flex items-center gap-2">
+            <button
+              disabled={busy}
+              onClick={onAccept}
+              className="inline-flex items-center gap-1.5 rounded-md border border-sky-300 bg-sky-100 px-3 py-1.5 text-[12px] font-medium text-sky-800 hover:bg-sky-200 disabled:opacity-50 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-200 dark:hover:bg-sky-900"
+            >
+              <Check className="h-3.5 w-3.5" /> Accept
+            </button>
+            <button
+              disabled={busy}
+              onClick={onIgnore}
+              className="inline-flex items-center gap-1.5 rounded-md border border-zinc-200 px-3 py-1.5 text-[12px] text-zinc-600 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
+            >
+              <X className="h-3.5 w-3.5" /> Ignore
+            </button>
           </div>
         )}
       </div>
-
-      {p.status === "pending" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 6, alignSelf: "center" }}>
-          <button
-            className="btn primary"
-            disabled={busy}
-            onClick={onAccept}
-            style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
-          >
-            <Check className="h-4 w-4" /> Accept
-          </button>
-          <button
-            className="btn"
-            disabled={busy}
-            onClick={onIgnore}
-            style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
-          >
-            <X className="h-4 w-4" /> Ignore
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function DiffCol({ label, body, bg, border }: { label: string; body: string; bg: string; border: string }) {
-  return (
-    <div
-      style={{
-        padding: 10,
-        background: bg,
-        border: "1px solid " + border,
-        borderRadius: 6,
-      }}
-    >
-      <div style={{ fontSize: 10.5, fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4 }}>
-        {label}
-      </div>
-      <div style={{ fontSize: 13, color: "#1A1A1A", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-        {body}
-      </div>
-    </div>
+    </article>
   );
 }
 

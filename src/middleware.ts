@@ -49,7 +49,9 @@ export async function middleware(req: NextRequest) {
   }
 
   const token = req.cookies.get(AUTH_COOKIE)?.value;
+  console.log("[middleware] path:", pathname, "has_token:", !!token, "auth_secret_set:", !!process.env.AUTH_SECRET);
   const session = await verifySession(token);
+  console.log("[middleware] session:", session ? `repId=${session.repId}` : "null");
   if (session) {
     reqHeaders.set("x-rep-id", String(session.repId));
     reqHeaders.set("x-rep-name", session.repName);

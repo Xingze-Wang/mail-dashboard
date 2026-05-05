@@ -128,9 +128,9 @@ export default function CongressDiscussPage() {
   const currentTitle = proposalId ? "Proposal from DB" : useCustom ? customTitle : sample.title;
 
   return (
-    <div>
+    <div style={{ maxWidth: 880, margin: "0 auto" }}>
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 24 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 18 }}>
         <div>
           <h1 className="page-title" style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <Users className="h-6 w-6" />
@@ -140,6 +140,33 @@ export default function CongressDiscussPage() {
             Watch the council deliberate in real time — each persona reasons from the evidence in turn.
           </p>
         </div>
+      </div>
+
+      {/* Attribution — runs from this page are sandboxed; bench-sim runs are
+           the ones that materialize as company contracts + proposals. */}
+      <div style={{
+        marginBottom: 22,
+        padding: "10px 14px",
+        background: "var(--bg)",
+        border: "1px solid var(--border-light)",
+        borderLeft: "3px solid #94a3b8",
+        borderRadius: 8,
+        fontSize: 12,
+        color: "var(--text-secondary)",
+        display: "flex",
+        alignItems: "baseline",
+        gap: 10,
+        flexWrap: "wrap",
+      }}>
+        <span style={{
+          fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em",
+          color: "var(--text-tertiary)",
+        }}>Sandbox</span>
+        <span>
+          Runs here are read-only — they don&apos;t open contracts, stake capital, or write proposals.
+          For runs that flow into the museum wall, use{" "}
+          <a href="/bench/sim" style={{ color: "var(--blue, #3B82F6)" }}>/bench/sim</a>.
+        </span>
       </div>
 
       {/* Config panel */}

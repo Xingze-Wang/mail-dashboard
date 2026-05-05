@@ -68,6 +68,26 @@ async function buildWeeklyEvidence(): Promise<string> {
   const constraints = await buildConstraintsPreamble();
   if (constraints) lines.push(constraints);
 
+  // Geo split — domestic .cn vs overseas. Same dataset surfaced on /analysis.
+  // Two-stage funnel makes the audience-difference legible to every persona.
+  try {
+    const { computeSegmentFunnels } = await import("@/lib/segment-funnels");
+    const f = await computeSegmentFunnels({ lookbackDays: 90 });
+    const dim = f.dimensions.find((d) => d.dimension === "geo_binary");
+    const dom = dim?.segments.find((s) => s.segment === "Domestic (.cn)");
+    const ovs = dim?.segments.find((s) => s.segment === "Overseas");
+    if (dom && ovs && dom.delivered + ovs.delivered > 0) {
+      lines.push(`## Geo split (last 90d, domestic .cn vs overseas)`);
+      lines.push(`  Domestic .cn: delivered=${dom.delivered}, ctr=${(dom.ctr * 100).toFixed(1)}%, post-click conv=${(dom.postClickConv * 100).toFixed(1)}%`);
+      lines.push(`  Overseas    : delivered=${ovs.delivered}, ctr=${(ovs.ctr * 100).toFixed(1)}%, post-click conv=${(ovs.postClickConv * 100).toFixed(1)}%`);
+      const ctrRatio = dom.ctr > 0 ? ovs.ctr / dom.ctr : 0;
+      const convRatio = ovs.postClickConv > 0 ? dom.postClickConv / ovs.postClickConv : 0;
+      lines.push(`  Ratio: overseas clicks ${ctrRatio.toFixed(2)}× domestic, but domestic converts ${convRatio.toFixed(2)}× overseas once clicked.`);
+    }
+  } catch (err) {
+    console.error("[congress] geo split for evidence pack failed", err);
+  }
+
   lines.push(`## Week-over-week metrics (last 7d vs prior 7d)`);
   const now = Date.now(); const wk = 7 * 24 * 3600 * 1000;
   const cur7 = new Date(now - wk).toISOString();

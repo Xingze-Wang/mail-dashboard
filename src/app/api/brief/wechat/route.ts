@@ -66,6 +66,29 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  // ── Contract attribution: a wechat add is worth real points to whichever
+  //    company contract is active over (this rep, this lead's segment).
+  try {
+    const { attributeEventToContract } = await import("@/lib/contracts");
+    let segment: string | null = null;
+    const recipientEmail = String(query || "").toLowerCase();
+    const m = recipientEmail.match(/[\w.+-]+@[\w.-]+/);
+    if (m) {
+      const domain = m[0].split("@")[1] ?? "";
+      segment = domain.endsWith(".cn") ? "Domestic (.cn)" : "Overseas";
+    }
+    await attributeEventToContract({
+      rep_id: session.repId,
+      segment,
+      event_kind: "wechat",
+      occurred_at: new Date().toISOString(),
+      source_kind: "brief_lookup",
+      source_id: (data as { id?: string } | null)?.id ?? null,
+    });
+  } catch (err) {
+    console.error("[wechat] contract attribution failed", err);
+  }
+
   // Do NOT touch pipeline_leads.status here. "Added on WeChat" is a
   // separate conversion event tracked entirely in brief_lookups. We used to
   // set status='replied' which inflated the per-rep "Replies" stat — Chenyu

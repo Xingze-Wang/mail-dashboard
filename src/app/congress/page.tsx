@@ -1,50 +1,20 @@
-// /congress weekly tactical congress index — current proposals + past decisions.
-// Data: GET /api/congress/index (live tactical_proposals + jitr stats).
-// Design: drop-in from advisor 2026-05-03. Server component reads via fetch
-// at request time so SSR has data.
+// /congress — control-room view in standard app vocabulary.
+// Uses page-title / section-card / dx-stat-strip patterns to match
+// Overview, Pipeline, Emails, etc.
 
 import Link from "next/link";
 import { headers, cookies } from "next/headers";
-import { CATEGORY_LABEL, SCOPE_LABEL, type Proposal, type DecisionStatus } from "@/lib/congress/types";
-import { dbToProposal } from "@/lib/congress/adapter";
-import { StatusPill } from "@/components/congress/StatusPill";
-import DecisionForm from "./DecisionForm";
+import type { ControlRoomPayload } from "@/app/api/congress/control-room/route";
 
 export const dynamic = "force-dynamic";
 
-interface DbProposalRow {
-  id: string;
-  title: string;
-  proposed_at: string;
-  ship_decision: string;
-  shipped_at: string | null;
-  decided_at: string | null;
-  evaluation_due_at: string | null;
-  weeks_to_evaluate: number;
-  expected_lift: { metric?: string; delta_pp?: number; rationale?: string } | null;
-  actual_lift: { sent?: number; open_rate?: number; click_rate?: number } | null;
-  grade: string | null;
-  change_spec: { kind?: string; details?: Record<string, unknown> } | null;
-  deliberation: { personas?: Record<string, string>; evidence_pack_excerpt?: string } | null;
-}
-
-interface IndexResponse {
-  pending: DbProposalRow[];
-  recent: DbProposalRow[];
-  directives: { id: string; body: string; effective_from: string }[];
-  jitr_offers_pending: number;
-  jitr_offers_accepted_30d: number;
-  unbound_reps: string[];
-}
-
-async function getIndex(): Promise<IndexResponse | null> {
+async function getControlRoom(): Promise<ControlRoomPayload | null> {
   const h = await headers();
   const c = await cookies();
   const host = h.get("host") ?? "qiji-pipeline.vercel.app";
   const proto = host.startsWith("localhost") ? "http" : "https";
-  // Forward cookies for auth
   const cookieStr = c.getAll().map((x) => `${x.name}=${x.value}`).join("; ");
-  const res = await fetch(`${proto}://${host}/api/congress/index`, {
+  const res = await fetch(`${proto}://${host}/api/congress/control-room`, {
     headers: { cookie: cookieStr },
     cache: "no-store",
   });
@@ -53,191 +23,326 @@ async function getIndex(): Promise<IndexResponse | null> {
 }
 
 export default async function CongressWeeklyPage() {
-  const data = await getIndex();
+  const data = await getControlRoom();
   if (!data) {
     return (
-      <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-6 text-[13px] text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
-        Unable to load congress data — sign in as admin.
+      <div className="section-card" style={{ padding: 16 }}>
+        <p style={{ fontSize: 13, color: "var(--text-tertiary)", margin: 0 }}>
+          Unable to load control room — sign in as admin.
+        </p>
       </div>
     );
   }
 
-  const pending = data.pending.map(dbToProposal);
-  const recent = data.recent.map(dbToProposal);
-
-  // Header summary stats
-  const shippedCount = recent.filter((p) => p.decision === "approved" || p.decision === "measuring").length;
-  const revertedCount = recent.filter((p) => p.decision === "reverted").length;
-  const measuringCount = recent.filter((p) => p.decision === "measuring").length;
-  const currentWeek = pending[0]?.week ?? recent[0]?.week ?? "—";
+  const today = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+  const pendingCount = data.pending_proposals.filter((p) => p.state === "admin_review").length;
 
   return (
-    <>
-      <header className="mb-6 flex items-end justify-between border-b border-zinc-200 pb-4 dark:border-zinc-800">
+    <div>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 24 }}>
         <div>
-          <div className="mb-1 text-xs text-zinc-500 dark:text-zinc-500">Congress · Weekly</div>
-          <h1 className="text-lg font-medium">Tactical congress · week {currentWeek}</h1>
-          <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400">
-            {pending.length === 0 ? "No new proposals this week" : `${pending.length} proposal${pending.length === 1 ? "" : "s"} pending decision`}
+          <h1 className="page-title">Weekly congress</h1>
+          <p style={{ fontSize: 13, color: "var(--text-tertiary)", marginTop: 4 }}>
+            {today} · {pendingCount === 0 ? "no decisions waiting" : `${pendingCount} decision${pendingCount === 1 ? "" : "s"} need your call`}
           </p>
         </div>
-        <div className="text-right text-xs">
-          <div className="text-zinc-500 dark:text-zinc-500">Last 4 weeks</div>
-          <div>
-            <span className="font-medium text-emerald-700 dark:text-emerald-400">{shippedCount} shipped</span>{" "}
-            ·{" "}
-            <span className="font-medium text-red-700 dark:text-red-400">{revertedCount} reverted</span>{" "}
-            ·{" "}
-            <span className="font-medium text-zinc-600 dark:text-zinc-400">{measuringCount} measuring</span>
-          </div>
-        </div>
-      </header>
+      </div>
 
-      {pending.length === 0 ? (
-        <div className="mb-8 rounded-xl border border-zinc-200 bg-zinc-50 p-6 text-center text-[13px] text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
-          Nothing pending. Loop 2 runs Monday 1am UTC.
-        </div>
-      ) : (
-        pending.map((p) => <ProposalCard key={p.id} proposal={p} />)
+      {/* Vital signs strip */}
+      <Vitals data={data} />
+
+      {/* Pending decisions */}
+      <Section title="Pending your decision" count={pendingCount}>
+        {pendingCount === 0 ? (
+          <Empty text="The desk is clear." />
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {data.pending_proposals.filter((p) => p.state === "admin_review").map((p) => (
+              <ProposalRow key={p.id} p={p} />
+            ))}
+          </div>
+        )}
+      </Section>
+
+      {/* Recent contracts */}
+      <Section title="Recent contracts" count={data.recent_contracts.length}>
+        {data.recent_contracts.length === 0 ? (
+          <Empty text="No contracts on record yet." />
+        ) : (
+          <ContractsTable rows={data.recent_contracts} />
+        )}
+      </Section>
+
+      {/* Conviction shifts */}
+      {data.top_movers.length > 0 && (
+        <Section title="Conviction shifts this week" count={data.top_movers.length}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 8 }}>
+            {data.top_movers.map((m, i) => <MoverRow key={i} m={m} />)}
+          </div>
+        </Section>
       )}
 
-      <section className="mt-8">
-        <h2 className="text-base font-medium">Past decisions</h2>
-        <div className="mt-2 text-[13px]">
-          {recent.length === 0 ? (
-            <div className="py-6 text-center text-zinc-500 dark:text-zinc-400">No decisions yet.</div>
-          ) : (
-            recent.map((d, i) => (
-              <Link
-                key={d.id}
-                href={`/congress/proposals/${d.id}`}
-                className={`flex items-center gap-3 py-2.5 hover:bg-zinc-50 dark:hover:bg-zinc-900 ${
-                  i < recent.length - 1 ? "border-b border-zinc-200 dark:border-zinc-800" : ""
-                }`}
-              >
-                <span className="min-w-[44px] text-xs text-zinc-500 dark:text-zinc-500">W{d.week}</span>
-                <StatusPill status={d.decision} />
-                <span className="flex-1 truncate">{d.title}</span>
-                <span
-                  className={
-                    d.outcome_lift?.startsWith("+")
-                      ? "font-medium text-emerald-700 dark:text-emerald-400"
-                      : d.outcome_lift?.startsWith("−") || d.outcome_lift?.startsWith("-")
-                        ? "font-medium text-red-700 dark:text-red-400"
-                        : "text-zinc-500 dark:text-zinc-400"
-                  }
-                >
-                  {d.outcome_lift ?? d.outcome_status ?? "—"}
-                </span>
-              </Link>
-            ))
-          )}
-        </div>
-      </section>
-
-      {/* Active strategic directives — what currently constrains Loop 2 */}
-      {data.directives.length > 0 && (
-        <section className="mt-8">
-          <h2 className="text-base font-medium">Active strategic directives</h2>
-          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-            Loop 2 reads these as constraints every week.
-          </p>
-          <div className="mt-2 text-[13px]">
-            {data.directives.map((d) => (
-              <div key={d.id} className="rounded-md bg-zinc-50 p-3 px-3.5 dark:bg-zinc-900 mb-2">
-                <p className="m-0">{d.body}</p>
-                <div className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+      {/* Standing directives */}
+      {data.active_directives.length > 0 && (
+        <Section title="Standing directives" count={data.active_directives.length}>
+          <div className="section-card" style={{ padding: 0, overflow: "hidden" }}>
+            {data.active_directives.map((d, i) => (
+              <div key={d.id} style={{
+                padding: "12px 16px",
+                fontSize: 13,
+                lineHeight: 1.6,
+                color: "var(--text-secondary)",
+                borderBottom: i === data.active_directives.length - 1 ? "none" : "1px solid var(--border-light)",
+              }}>
+                {d.body}
+                <div style={{ marginTop: 4, fontSize: 11, color: "var(--text-tertiary)" }}>
                   Effective {new Date(d.effective_from).toLocaleDateString()}
                 </div>
               </div>
             ))}
           </div>
-        </section>
+        </Section>
       )}
 
-      {/* JITR daily — the apprentice's pulse */}
-      <section className="mt-8">
-        <h2 className="text-base font-medium">Daily JITR (Loop 1)</h2>
-        <div className="mt-2 grid grid-cols-3 gap-3 text-[13px]">
-          <Stat label="Offers pending" value={data.jitr_offers_pending} />
-          <Stat label="Accepts (30d)" value={data.jitr_offers_accepted_30d} />
-          <Stat label="Unbound reps" value={data.unbound_reps.length} />
-        </div>
-        {data.unbound_reps.length > 0 && (
-          <div className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
-            Unbound: {data.unbound_reps.join(", ")} — they need to DM the bot once.
-          </div>
-        )}
-      </section>
-    </>
+      {/* Footer */}
+      <Footer data={data} />
+    </div>
   );
 }
 
-function ProposalCard({ proposal }: { proposal: Proposal }) {
-  const firstPos = proposal.positions[0];
-  const adv = proposal.attacks[0];
+// ─────────────────────────────────────────────────────────────
+
+function Vitals({ data }: { data: ControlRoomPayload }) {
   return (
-    <article className="mb-4 rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
-      <div className="mb-2.5 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="rounded bg-sky-100 px-2 py-0.5 text-[11px] font-medium text-sky-800 dark:bg-sky-950 dark:text-sky-200">
-            {CATEGORY_LABEL[proposal.category] ?? proposal.category}
-          </span>
-          <span className="text-xs text-zinc-500 dark:text-zinc-500">
-            Scope: {SCOPE_LABEL[proposal.scope]}
+    <div style={{
+      display: "grid",
+      gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+      gap: 12,
+      marginBottom: 28,
+    }}>
+      {data.vitals.map((v, i) => <VitalCell key={i} v={v} />)}
+    </div>
+  );
+}
+
+function VitalCell({ v }: { v: ControlRoomPayload["vitals"][number] }) {
+  const tone = v.tone ?? "neutral";
+  const valueColor =
+    tone === "warn" ? "var(--gold)" :
+    tone === "bad"  ? "var(--coral)" :
+    tone === "good" ? "var(--green)" :
+    "var(--text)";
+
+  const inner = (
+    <div className="section-card" style={{ padding: "14px 16px" }}>
+      <div style={{
+        fontSize: 11,
+        fontWeight: 600,
+        color: "var(--text-tertiary)",
+        textTransform: "uppercase",
+        letterSpacing: "0.04em",
+      }}>
+        {v.label}
+      </div>
+      <div style={{
+        marginTop: 6,
+        fontSize: 22,
+        fontWeight: 700,
+        color: valueColor,
+        lineHeight: 1.1,
+        fontVariantNumeric: "tabular-nums",
+      }}>
+        {v.value}
+      </div>
+      {v.delta && (
+        <div style={{ marginTop: 4, fontSize: 11, color: "var(--text-tertiary)" }}>{v.delta}</div>
+      )}
+    </div>
+  );
+  if (v.href) {
+    return <Link href={v.href} style={{ display: "block", textDecoration: "none", color: "inherit" }}>{inner}</Link>;
+  }
+  return inner;
+}
+
+function Section({ title, count, children }: { title: string; count: number; children: React.ReactNode }) {
+  return (
+    <section style={{ marginBottom: 28 }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 10 }}>
+        <h3 style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>{title}</h3>
+        <span className="lead-count">{count}</span>
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function Empty({ text }: { text: string }) {
+  return (
+    <div className="section-card" style={{
+      padding: "20px 16px",
+      textAlign: "center",
+      fontSize: 13,
+      color: "var(--text-tertiary)",
+    }}>
+      {text}
+    </div>
+  );
+}
+
+function ProposalRow({ p }: { p: ControlRoomPayload["pending_proposals"][number] }) {
+  const verdictColor =
+    p.editor_verdict === "pass"   ? "var(--green)" :
+    p.editor_verdict === "revise" ? "var(--gold)" :
+    p.editor_verdict === "block"  ? "var(--coral)" :
+    "var(--text-tertiary)";
+  return (
+    <Link href="/congress/editor" style={{ textDecoration: "none", color: "inherit" }}>
+      <div className="section-card" style={{
+        padding: "14px 16px",
+        borderLeft: `3px solid ${p.company_color}`,
+        transition: "border-color 0.15s ease",
+      }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 6, fontSize: 12 }}>
+          <span style={{ fontWeight: 600, color: "var(--text)" }}>{p.company_name}</span>
+          <span style={{ color: "var(--text-tertiary)" }}>·</span>
+          <code style={{
+            fontSize: 11,
+            fontFamily: "ui-monospace, monospace",
+            color: "var(--text-secondary)",
+            textTransform: "uppercase",
+            letterSpacing: "0.04em",
+          }}>
+            {p.kind.replace(/_/g, " ")}
+          </code>
+          {p.editor_verdict && (
+            <>
+              <span style={{ color: "var(--text-tertiary)" }}>·</span>
+              <span style={{
+                fontSize: 11,
+                fontWeight: 600,
+                color: verdictColor,
+                textTransform: "uppercase",
+                letterSpacing: "0.04em",
+              }}>
+                editor: {p.editor_verdict}
+              </span>
+            </>
+          )}
+          <span style={{ marginLeft: "auto", color: "var(--text-tertiary)" }}>
+            expires {p.expires_in_days}d
           </span>
         </div>
-        <span className="text-xs text-zinc-500 dark:text-zinc-500">
-          Est. {proposal.stats.weeks_to_significance}w to verify
+        {p.prediction && (
+          <p style={{
+            margin: 0,
+            fontSize: 13,
+            lineHeight: 1.55,
+            color: "var(--text-secondary)",
+            display: "-webkit-box",
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: "vertical",
+            overflow: "hidden",
+          }}>
+            {p.prediction}
+          </p>
+        )}
+      </div>
+    </Link>
+  );
+}
+
+function ContractsTable({ rows }: { rows: ControlRoomPayload["recent_contracts"] }) {
+  return (
+    <div className="section-card" style={{ padding: 0, overflow: "hidden" }}>
+      <table className="data-table" style={{ marginBottom: 0 }}>
+        <thead>
+          <tr>
+            <th>Company</th>
+            <th>Action</th>
+            <th>Segment</th>
+            <th style={{ textAlign: "right" }}>Score</th>
+            <th style={{ textAlign: "right" }}>Outcome</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((c) => {
+            const stateColor =
+              c.state === "hit"    ? "var(--green)" :
+              c.state === "missed" ? "var(--coral)" :
+              c.state === "open"   ? "var(--gold)" :
+              "var(--text-tertiary)";
+            return (
+              <tr key={c.id}>
+                <td>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ width: 8, height: 8, borderRadius: "50%", background: c.company_color, flexShrink: 0 }} />
+                    <span style={{ fontWeight: 500 }}>{c.company_name}</span>
+                  </span>
+                </td>
+                <td style={{ color: "var(--text-secondary)" }}>{c.action_label}</td>
+                <td style={{ color: "var(--text-tertiary)", fontSize: 11.5 }}>{c.segment ?? "—"}</td>
+                <td style={{ textAlign: "right", fontWeight: 600, color: stateColor }}>
+                  {Math.round(c.running_score)}/{Math.round(c.target_score)}
+                </td>
+                <td style={{
+                  textAlign: "right",
+                  fontSize: 11,
+                  fontWeight: 600,
+                  color: stateColor,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.04em",
+                }}>
+                  {c.state}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function MoverRow({ m }: { m: ControlRoomPayload["top_movers"][number] }) {
+  const direction = m.next > m.prior ? "↑" : m.next < m.prior ? "↓" : "→";
+  const dirColor = m.next > m.prior ? "var(--green)" : m.next < m.prior ? "var(--coral)" : "var(--text-tertiary)";
+  return (
+    <div className="section-card" style={{ padding: "12px 14px", borderLeft: `3px solid ${m.company_color}` }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 4 }}>
+        <span style={{ fontSize: 13, fontWeight: 600 }}>{m.company_name}</span>
+        <span style={{ fontSize: 13, color: dirColor, fontWeight: 700 }}>{direction}</span>
+        <span style={{ fontSize: 12, color: "var(--text-secondary)", fontVariantNumeric: "tabular-nums" }}>
+          {m.prior.toFixed(2)} → {m.next.toFixed(2)}
         </span>
       </div>
-
-      <h3 className="mb-3.5 text-base font-medium">
-        <Link href={`/congress/proposals/${proposal.id}`} className="hover:underline">
-          {proposal.title}
-        </Link>
-      </h3>
-
-      <div className="mb-3.5 grid grid-cols-2 gap-3">
-        {firstPos && (
-          <QuoteCard speaker={firstPos.persona.replace("_", " ")} text={firstPos.message} />
-        )}
-        {adv ? (
-          <QuoteCard speaker="Adversary counters" text={adv.message} />
-        ) : (
-          proposal.positions[1] && (
-            <QuoteCard speaker={proposal.positions[1].persona.replace("_", " ")} text={proposal.positions[1].message} />
-          )
-        )}
+      <div style={{ fontSize: 11, color: "var(--text-tertiary)", display: "flex", justifyContent: "space-between" }}>
+        <span style={{ textTransform: "uppercase", letterSpacing: "0.04em", fontWeight: 600 }}>{m.action}</span>
+        <span>{new Date(m.occurred_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>
       </div>
-
-      <div className="mb-1 text-[11px] font-medium text-zinc-500 dark:text-zinc-400">Evidence</div>
-      <div className="mb-3.5 rounded-md bg-zinc-50 p-2 px-3 font-mono text-xs leading-relaxed dark:bg-zinc-950">
-        sample {proposal.stats.sample_size} · baseline {proposal.stats.baseline} · projected Δ {proposal.stats.projected_delta} · rollback {proposal.stats.rollback}
-      </div>
-
-      <DecisionForm proposalId={proposal.id} voteSummary={proposal.vote_summary} />
-    </article>
-  );
-}
-
-function QuoteCard({ speaker, text }: { speaker: string; text: string }) {
-  return (
-    <div className="rounded-md bg-zinc-50 p-3 dark:bg-zinc-950">
-      <div className="mb-1 text-[11px] font-medium capitalize text-zinc-500 dark:text-zinc-400">{speaker}</div>
-      <p className="text-[13px] leading-relaxed">{text}</p>
     </div>
   );
 }
 
-function Stat({ label, value }: { label: string; value: number | string }) {
+function Footer({ data }: { data: ControlRoomPayload }) {
   return (
-    <div className="rounded-md bg-zinc-50 p-3 dark:bg-zinc-900">
-      <div className="text-[22px] font-medium">{value}</div>
-      <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{label}</div>
+    <div style={{
+      marginTop: 28,
+      paddingTop: 14,
+      borderTop: "1px solid var(--border-light)",
+      display: "flex",
+      flexWrap: "wrap",
+      gap: "4px 18px",
+      fontSize: 11.5,
+      color: "var(--text-tertiary)",
+    }}>
+      <span><code style={{ fontFamily: "ui-monospace, monospace", color: "var(--text-secondary)" }}>{data.jitr_pending}</code> JITR pending</span>
+      <span><code style={{ fontFamily: "ui-monospace, monospace", color: "var(--text-secondary)" }}>{data.jitr_accepted_30d}</code> JITR accepted (30d)</span>
+      {data.unbound_reps.length > 0 && (
+        <span>Unbound reps: {data.unbound_reps.join(", ")} — DM the bot once.</span>
+      )}
+      <span style={{ marginLeft: "auto" }}>Updated {new Date(data.generated_at).toLocaleTimeString()}</span>
     </div>
   );
 }
-
-// keep DecisionStatus referenced so unused-import lint stays clean
-export type _D = DecisionStatus;

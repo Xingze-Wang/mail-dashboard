@@ -7,6 +7,7 @@ import { dbToProposal } from "@/lib/congress/adapter";
 import { PersonaAvatar } from "@/components/congress/PersonaAvatar";
 import { StatusPill } from "@/components/congress/StatusPill";
 import DecisionForm from "../../DecisionForm";
+import type { TraceEvent } from "@/app/api/tactical/[id]/trace/route";
 
 export const dynamic = "force-dynamic";
 
@@ -26,12 +27,23 @@ interface DbRow {
   deliberation: { personas?: Record<string, string>; evidence_pack_excerpt?: string } | null;
 }
 
-async function getProposal(id: string): Promise<DbRow | null> {
-  const h = await headers();
-  const c = await cookies();
-  const host = h.get("host") ?? "qiji-pipeline.vercel.app";
+async function getTrace(id: string, cookieStr: string, host: string): Promise<TraceEvent[]> {
   const proto = host.startsWith("localhost") ? "http" : "https";
-  const cookieStr = c.getAll().map((x) => `${x.name}=${x.value}`).join("; ");
+  try {
+    const res = await fetch(`${proto}://${host}/api/tactical/${id}/trace`, {
+      headers: { cookie: cookieStr },
+      cache: "no-store",
+    });
+    if (!res.ok) return [];
+    const json = await res.json();
+    return (json.events as TraceEvent[]) ?? [];
+  } catch {
+    return [];
+  }
+}
+
+async function getProposal(id: string, cookieStr: string, host: string): Promise<DbRow | null> {
+  const proto = host.startsWith("localhost") ? "http" : "https";
   const res = await fetch(`${proto}://${host}/api/tactical/${id}`, {
     headers: { cookie: cookieStr },
     cache: "no-store",
@@ -42,13 +54,21 @@ async function getProposal(id: string): Promise<DbRow | null> {
 
 export default async function ProposalDiscussionPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const db = await getProposal(id);
+  const h = await headers();
+  const c = await cookies();
+  const host = h.get("host") ?? "qiji-pipeline.vercel.app";
+  const cookieStr = c.getAll().map((x) => `${x.name}=${x.value}`).join("; ");
+
+  const [db, traceEvents] = await Promise.all([
+    getProposal(id, cookieStr, host),
+    getTrace(id, cookieStr, host),
+  ]);
   if (!db) notFound();
   const proposal = dbToProposal(db);
   const evidence = db.deliberation?.evidence_pack_excerpt;
 
   return (
-    <>
+    <div className="mx-auto max-w-3xl px-6 py-6">
       <header className="mb-6 border-b border-zinc-200 pb-4 dark:border-zinc-800">
         <div className="mb-1 text-xs text-zinc-500 dark:text-zinc-500">
           Congress · Weekly · Week {proposal.week} · Proposal {proposal.rank}
@@ -139,7 +159,9 @@ export default async function ProposalDiscussionPage({ params }: { params: Promi
           </pre>
         </details>
       )}
-    </>
+
+      {traceEvents.length > 0 && <ProposalTrace events={traceEvents} />}
+    </div>
   );
 }
 
@@ -167,6 +189,56 @@ function PositionPaper({ position }: { position: PersonaPosition }) {
         </div>
       </div>
     </div>
+  );
+}
+
+const TRACE_COLORS: Record<TraceEvent["kind"], string> = {
+  proposed:      "bg-sky-500",
+  jitr_accepted: "bg-emerald-500",
+  jitr_dismissed:"bg-zinc-400 dark:bg-zinc-600",
+  decided:       "bg-violet-500",
+  measured:      "bg-orange-500",
+};
+
+const TRACE_LABELS: Record<TraceEvent["kind"], string> = {
+  proposed:      "Proposed",
+  jitr_accepted: "JITR Accepted",
+  jitr_dismissed:"JITR Dismissed",
+  decided:       "Decided",
+  measured:      "Measured",
+};
+
+function ProposalTrace({ events }: { events: TraceEvent[] }) {
+  return (
+    <section className="mt-8">
+      <div className="mb-3 text-[11px] font-medium tracking-wider text-zinc-500 dark:text-zinc-400">
+        Lifecycle trace
+      </div>
+      <ol className="relative border-l border-zinc-200 dark:border-zinc-800">
+        {events.map((ev, i) => (
+          <li key={i} className="mb-5 ml-4">
+            <span className={`absolute -left-1.5 mt-1.5 h-3 w-3 rounded-full ${TRACE_COLORS[ev.kind]}`} />
+            <div className="flex flex-wrap items-baseline gap-2">
+              <span className="text-[11px] font-medium text-zinc-400 dark:text-zinc-500">
+                {new Date(ev.at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+              </span>
+              <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium text-white ${TRACE_COLORS[ev.kind]}`}>
+                {TRACE_LABELS[ev.kind]}
+              </span>
+            </div>
+            <p className="mt-0.5 text-[13px] text-zinc-700 dark:text-zinc-300">{ev.label}</p>
+            {ev.meta && (
+              <details className="mt-1">
+                <summary className="cursor-pointer text-[11px] text-zinc-400 dark:text-zinc-500">details</summary>
+                <pre className="mt-1 rounded-md bg-zinc-50 p-2 text-[11px] text-zinc-600 dark:bg-zinc-950 dark:text-zinc-400">
+                  {JSON.stringify(ev.meta, null, 2)}
+                </pre>
+              </details>
+            )}
+          </li>
+        ))}
+      </ol>
+    </section>
   );
 }
 

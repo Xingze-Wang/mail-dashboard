@@ -256,6 +256,48 @@ export async function POST(req: NextRequest) {
       payload: rawBody,
     });
 
+    // ── Contract attribution: every funnel event gets pointed-counted into
+    //    whichever company contract was active over (rep, segment) at this
+    //    instant. Cheap and best-effort; never blocks the webhook ack.
+    try {
+      const eventKind =
+        type === "email.delivered" ? "delivered" :
+        type === "email.opened"    ? "open" :
+        type === "email.clicked"   ? "click" : null;
+      if (eventKind && emailId) {
+        const { attributeEventToContract } = await import("@/lib/contracts");
+        const { data: emailFull } = await supabase
+          .from("emails")
+          .select("from, to")
+          .eq("id", emailId)
+          .maybeSingle();
+        let repId: number | null = null;
+        let segment: string | null = null;
+        if (emailFull) {
+          const fromAddr = String(emailFull.from ?? "").toLowerCase();
+          const toAddr = String(emailFull.to ?? "").toLowerCase();
+          const { data: rep } = await supabase
+            .from("sales_reps")
+            .select("id, sender_email")
+            .ilike("sender_email", fromAddr.split("@")[0] ? `%${fromAddr.split("@")[0]}%` : "%")
+            .limit(1);
+          repId = rep?.[0]?.id ?? null;
+          const domain = toAddr.split("@")[1] ?? "";
+          segment = domain.endsWith(".cn") ? "Domestic (.cn)" : "Overseas";
+        }
+        await attributeEventToContract({
+          rep_id: repId,
+          segment,
+          event_kind: eventKind,
+          occurred_at: new Date().toISOString(),
+          source_kind: "webhook_event",
+          source_id: emailId,
+        });
+      }
+    } catch (err) {
+      console.error("[webhook] contract attribution failed", err);
+    }
+
     // Update email status
     if (emailId) {
       const newStatus = mapResendEventToStatus(type);

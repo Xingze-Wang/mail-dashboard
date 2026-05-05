@@ -53,7 +53,8 @@ export async function verifySession(token: string | undefined): Promise<SessionP
       };
     }
     return null;
-  } catch {
+  } catch (e) {
+    console.error("[verifySession] jose error:", e instanceof Error ? e.message : String(e));
     return null;
   }
 }

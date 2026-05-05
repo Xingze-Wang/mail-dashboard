@@ -1,27 +1,18 @@
-import Link from "next/link";
 import type { ReactNode } from "react";
+import { CongressNav } from "./CongressNav";
 
 export default function CongressLayout({ children }: { children: ReactNode }) {
+  // Standard app vocabulary by default. The timeline page does its own
+  // edge-to-edge cream background; every other tab inherits app-content's
+  // mint background + padding for visual consistency with /, /pipeline,
+  // /emails, etc.
+  //
+  // The nav strip is rendered at the top of every congress tab and uses
+  // the normal page-title scale.
   return (
-    <div className="mx-auto max-w-3xl px-4 py-6 text-zinc-900 dark:text-zinc-100">
-      <nav className="mb-6 flex gap-4 text-[13px] text-zinc-500 dark:text-zinc-400">
-        <Link href="/congress" className="hover:text-zinc-900 dark:hover:text-zinc-100">
-          Weekly
-        </Link>
-        <Link href="/congress/discuss" className="hover:text-zinc-900 dark:hover:text-zinc-100">
-          Discuss
-        </Link>
-        <Link href="/congress/bench" className="hover:text-zinc-900 dark:hover:text-zinc-100">
-          Bench
-        </Link>
-        <Link href="/congress/history" className="hover:text-zinc-900 dark:hover:text-zinc-100">
-          History
-        </Link>
-        <Link href="/congress/architecture" className="hover:text-zinc-900 dark:hover:text-zinc-100">
-          Architecture
-        </Link>
-      </nav>
-      {children}
+    <div>
+      <CongressNav />
+      <div>{children}</div>
     </div>
   );
 }

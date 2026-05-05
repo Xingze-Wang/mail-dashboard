@@ -41,13 +41,17 @@ export default async function CongressHistoryPage() {
   const reverted = data.markers.filter((d) => d.status === "reverted").length;
 
   return (
-    <>
-      <header className="mb-6 border-b border-zinc-200 pb-4 dark:border-zinc-800">
-        <div className="mb-1 text-xs text-zinc-500 dark:text-zinc-500">Congress · History</div>
-        <h1 className="text-lg font-medium">Organizational history · last 18 weeks</h1>
-        <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400">
-          WeChat conversion rate by week, with congress decisions annotated.
-        </p>
+    <div style={{ maxWidth: 880, margin: "0 auto" }}>
+      <header style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 24 }}>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>
+            Congress · History
+          </div>
+          <h1 className="page-title">Organizational history</h1>
+          <p style={{ fontSize: 13, color: "var(--text-tertiary)", marginTop: 4 }}>
+            WeChat conversion rate by week, with congress decisions annotated. Last 18 weeks.
+          </p>
+        </div>
       </header>
 
       <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -105,7 +109,7 @@ export default async function CongressHistoryPage() {
       <section className="mt-6 text-[12px] text-zinc-500 dark:text-zinc-500">
         Showing {data.metrics.length} weeks. Filter by metric / slice (rep / category / tier) coming once we have ≥3 shipped decisions.
       </section>
-    </>
+    </div>
   );
 }
 
