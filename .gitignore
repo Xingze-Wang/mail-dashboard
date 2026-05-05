@@ -49,3 +49,16 @@ next-env.d.ts
 
 # claude code internal (worktrees, agent state)
 .claude/
+
+# build/runtime caches we never commit
+.open-next/
+.wrangler/
+
+# debugging helpers (Playwright MCP browser state, Lark console screenshots, etc.)
+.playwright-mcp/
+/leon-*.png
+/lark-*.png
+/lark-session-state-*.png
+/feishu-*.png
+/qiji-*.png
+
