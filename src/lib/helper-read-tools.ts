@@ -433,6 +433,60 @@ export async function runReadTool(
           },
         };
       }
+      case "dm_user": {
+        // Send a Lark text DM to a user by open_id. Side-effect tool —
+        // listed under "lookup" so the lark-agent loop can fire it
+        // immediately. The user is in DM with the bot; they see what was
+        // sent and can correct course.
+        const { sendMessage } = await import("@/lib/lark");
+        const openId = String(args.open_id ?? "").trim();
+        const text = String(args.text ?? "").trim();
+        if (!/^ou_[A-Za-z0-9]+$/.test(openId)) {
+          return { tool: call.tool, result: { error: "open_id must look like ou_xxx" } };
+        }
+        if (!text) return { tool: call.tool, result: { error: "text required" } };
+        if (text.length > 4000) return { tool: call.tool, result: { error: "text too long (>4000 chars)" } };
+        const r = await sendMessage({ receive_id: openId, receive_id_type: "open_id", text });
+        return { tool: call.tool, result: r as unknown as Record<string, unknown> };
+      }
+      case "dm_chat": {
+        // Send a Lark text message to a chat by chat_id (group OR p2p).
+        const { sendMessage } = await import("@/lib/lark");
+        const chatId = String(args.chat_id ?? "").trim();
+        const text = String(args.text ?? "").trim();
+        if (!/^oc_[A-Za-z0-9]+$/.test(chatId)) {
+          return { tool: call.tool, result: { error: "chat_id must look like oc_xxx" } };
+        }
+        if (!text) return { tool: call.tool, result: { error: "text required" } };
+        if (text.length > 4000) return { tool: call.tool, result: { error: "text too long (>4000 chars)" } };
+        const r = await sendMessage({ receive_id: chatId, receive_id_type: "chat_id", text });
+        return { tool: call.tool, result: r as unknown as Record<string, unknown> };
+      }
+      case "create_lark_doc": {
+        // Create a docx and (optionally) write a body. Returns the URL.
+        const { createLarkDoc } = await import("@/lib/lark");
+        const title = String(args.title ?? "").trim();
+        const body = typeof args.body === "string" ? args.body : "";
+        if (!title) return { tool: call.tool, result: { error: "title required" } };
+        if (title.length > 200) return { tool: call.tool, result: { error: "title too long (>200 chars)" } };
+        const r = await createLarkDoc({ title, body });
+        return { tool: call.tool, result: r as unknown as Record<string, unknown> };
+      }
+      case "add_to_lark_base": {
+        // Append a row to a Lark Base table.
+        // args: { app_token, table_id, fields: { ColumnName: value, ... } }
+        const { addToLarkBase } = await import("@/lib/lark");
+        const appToken = String(args.app_token ?? "").trim();
+        const tableId = String(args.table_id ?? "").trim();
+        const fields = (args.fields && typeof args.fields === "object")
+          ? args.fields as Record<string, unknown>
+          : null;
+        if (!appToken || !tableId || !fields) {
+          return { tool: call.tool, result: { error: "app_token, table_id, fields required" } };
+        }
+        const r = await addToLarkBase({ app_token: appToken, table_id: tableId, fields });
+        return { tool: call.tool, result: r as unknown as Record<string, unknown> };
+      }
       default:
         return { tool: call.tool, result: { error: `unknown tool: ${call.tool}` } };
     }

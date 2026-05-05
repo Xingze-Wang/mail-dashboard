@@ -52,6 +52,15 @@ export const READ_TOOL_NAMES = new Set([
   "get_rep_helper_activity",
   "diagnose_metric_drop",
   "find_similar_leads",
+  // ── Lark write actions, exposed as "lookup-style" tools so the bot
+  //    can fire them in-line during a Lark DM. The user is right there
+  //    in DM with the bot; they see the message land, can call it back
+  //    if it's wrong. Confirmation via UI card doesn't apply (the user
+  //    isn't on the web app — they're in Lark).
+  "dm_user",
+  "dm_chat",
+  "create_lark_doc",
+  "add_to_lark_base",
 ]);
 
 export interface ToolProposal {
@@ -93,6 +102,13 @@ export const TOOLS_PROMPT = `## 工具系统
 - find_similar_leads — embedding 空间里找跟 reference lead 最像的 N 个 lead. args: { reference_lead_id: string (UUID), n?: 5 }. 返回: { reference_lead_id, similar: [{lead_id, title, distance}, ...] }. **什么时候用**: 当 rep 说 "再来一打那种 lead / 给我找几个像 X 的 / 跟这个类似的还有谁" 时. 注意: pgvector 没启用 / embedding 没回填的话会返回 error 字符串 — 直接说 "embedding 还没准备好, 让 admin 在 Supabase dashboard 启用 vector + 跑 backfill 脚本", 别假装在搜.
 - diagnose_metric_drop — 拿当前 metric (click_rate 或 wechat_rate) 在 cur 7 天 vs prev 7 天的变化, 同时返回 4 个协变量 (subject_length / geo / lead_tier / school_tier) 的分布偏移. args: { metric: "click_rate"|"wechat_rate", days?: 7, repId?: number (admin 可指定) }. 返回: { metric, prevRate, curRate, ratioChange, noise, cards: [{covariate, biggestShift, hypothesis}] }. **什么时候用**: 当 admin 或 rep 问 "为什么 X 在掉 / 为什么这周不好 / 怎么回事" 时, lookup 一次. 用 cards 里的 hypothesis 给一个**带证据的猜测**, 不要拍脑袋. noise=true 表示样本不够 (各窗口 <20 sent), 那就直说 "样本太少, 不能下结论". 不要主动调 — 只有用户问才用.
 - get_rep_helper_activity — **admin only**. 查看某个 rep 最近问 helper 的原话 (跨 session). args: { repId: number, limit?: 10, days?: 14 }. 返回: { repId, windowDays, messages: [{text, createdAt}, ...] }. **什么时候用**: 当 admin 主动问 "X 最近在问什么 / 困在哪 / 你跟 Chenyu 都聊了啥" 时用. 不要主动 lookup — 这是侵入性的, 等 admin 明确说想看再用. 注意: shared_helper_questions cluster 已经聚合了多 rep 共性问题, 这个 tool 是补足那个 (只看一个人).
+
+**A2. Lark 操作工具** — 这些**有副作用** (会发出消息 / 创建文档 / 写表), 但因为用户正在 Lark 里跟你 DM, 你直接执行更自然 (用户立刻就能在 Lark 看到结果). 也用 \`\`\`lookup\`\`\` 调用. 用之前一定要确认意图 (用一句话说"我现在 X 给 Y, 内容是 Z, 对吗?" 等用户回 "go" / "可以" / "对" 再调).
+
+- dm_user — 给某个 Lark 用户 DM 发文字. args: { open_id: string ("ou_..."), text: string }. 返回: { ok, message_id?, error? }. **什么时候用**: 用户说 "告诉 Chenyu 这件事 / 提醒 Leo 看一下 / 通知 Ethan". 你**必须**先用 list_reps 拿到 rep 的 lark_open_id (列里的字段名也叫 lark_open_id). 如果某个 rep 的 lark_open_id 是 null, 不要瞎试 — 告诉用户 "Chenyu 还没绑定 Lark bot, 让她先 DM 一下 bot". 不要批量给所有 rep 群发.
+- dm_chat — 给一个 Lark chat (群聊或 P2P) 发文字. args: { chat_id: string ("oc_..."), text: string }. **什么时候用**: 用户给你具体的 chat_id 让你发, 或者你已经知道某个团队群的 chat_id. 不要主动猜 chat_id.
+- create_lark_doc — 创建一个 Lark/飞书 docx 文档. args: { title: string, body?: string (paragraphs separated by blank lines) }. 返回: { ok, document_id, url }. **什么时候用**: 用户说 "整理成一份 doc / 写一个文档 / 起个 doc 把 X 总结一下". 创建后**立即**把 url 发给用户. body 里直接写 plain text, 不要 markdown 标题 (Lark 不渲染).
+- add_to_lark_base — 在 Lark 多维表格 (Bitable / Base) 里追加一行. args: { app_token: string, table_id: string, fields: { ColumnName: value, ... } }. **什么时候用**: 用户要把数据登记到一个已有的 Base. fields 的 key 是中文/英文列名 (不是列 id). 你不知道 app_token 和 table_id 的话, 让用户提供 (从 Base URL 里看: https://...feishu.cn/base/{app_token}?table={table_id}).
 
 **B. 执行工具 (需要用户 confirm)** — 这些改变数据库. 你只是建议, UI 会弹卡让用户决定.
 

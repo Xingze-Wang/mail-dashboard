@@ -250,3 +250,195 @@ export async function resolveRepFromOpenId(openId: string): Promise<LarkRep | nu
     role: data.role === "admin" ? "admin" : data.role === "senior" ? "senior" : "sales",
   };
 }
+
+// ─── Outbound: docs + bases ──────────────────────────────────────────────
+//
+// All four functions below are thin wrappers around the public Lark
+// open-apis. They share auth (getTenantAccessToken) and base URL with
+// the IM helpers above. Each returns { ok, ... } so the helper-tools
+// layer can format error messages consistently.
+
+async function callLarkApi<T>(opts: {
+  method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
+  path: string;                // e.g. "/docx/v1/documents"
+  body?: Record<string, unknown>;
+  query?: Record<string, string | number | undefined>;
+  timeoutMs?: number;
+}): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
+  const token = await getTenantAccessToken();
+  if (!token) return { ok: false, error: "no access token" };
+  const qs = opts.query
+    ? "?" + new URLSearchParams(
+        Object.entries(opts.query)
+          .filter(([, v]) => v !== undefined)
+          .map(([k, v]) => [k, String(v)])
+      ).toString()
+    : "";
+  const url = `${pickBase()}${opts.path}${qs}`;
+  const init: RequestInit = {
+    method: opts.method,
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      Authorization: `Bearer ${token}`,
+    },
+    signal: AbortSignal.timeout(opts.timeoutMs ?? 15_000),
+  };
+  if (opts.body) init.body = JSON.stringify(opts.body);
+  const res = await fetch(url, init);
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok || j.code !== 0) {
+    const code = j.code ?? res.status;
+    const msg = j.msg ?? "(no msg)";
+    return { ok: false, error: `lark ${opts.method} ${opts.path} failed: code=${code} msg="${msg}"` };
+  }
+  return { ok: true, data: j.data as T };
+}
+
+/**
+ * Create a new docx document and (optionally) write a body of plain text
+ * paragraphs into it. The body string is split on blank lines; each
+ * paragraph becomes one block. The returned `url` opens the doc in
+ * Lark (or Feishu in CN region).
+ */
+export async function createLarkDoc(args: {
+  title: string;
+  body?: string;
+}): Promise<{ ok: boolean; document_id?: string; url?: string; error?: string }> {
+  // 1. Create the doc.
+  const created = await callLarkApi<{ document: { document_id: string } }>({
+    method: "POST",
+    path: "/docx/v1/documents",
+    body: { title: args.title },
+  });
+  if (!created.ok) return { ok: false, error: created.error };
+  const documentId = created.data.document.document_id;
+
+  // 2. If body given, append paragraph blocks. Lark requires a parent block id;
+  //    the document's own id is the root block. Fetch its block id implicit:
+  //    docx api uses document_id as the root parent for "block_id=document_id"
+  //    on creation.
+  if (args.body && args.body.trim().length > 0) {
+    const paragraphs = args.body.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
+    const children = paragraphs.map((p) => ({
+      block_type: 2, // text block (paragraph)
+      text: {
+        elements: [{ text_run: { content: p } }],
+      },
+    }));
+    const append = await callLarkApi<unknown>({
+      method: "POST",
+      path: `/docx/v1/documents/${documentId}/blocks/${documentId}/children`,
+      body: { children, index: 0 },
+    });
+    if (!append.ok) {
+      // Doc was created; body insertion failed. Return success on the doc but
+      // surface the body error so the caller can re-try the body write.
+      return { ok: true, document_id: documentId, url: docxUrl(documentId), error: append.error };
+    }
+  }
+
+  return { ok: true, document_id: documentId, url: docxUrl(documentId) };
+}
+
+function docxUrl(documentId: string): string {
+  // CN region uses feishu.cn, global uses larksuite.com — pick by env.
+  const region = process.env.LARK_REGION ?? "cn";
+  const host = region === "cn" ? "feishu.cn" : "larksuite.com";
+  return `https://${host}/docx/${documentId}`;
+}
+
+/**
+ * Read a docx document's plain-text content given either the document_id
+ * or a Feishu/Lark URL. We pull the raw content blob (not the structured
+ * blocks) — this is enough for "summarize this doc" workflows.
+ */
+export async function getLarkDoc(args: {
+  document_id?: string;
+  url?: string;
+}): Promise<{ ok: boolean; document_id?: string; title?: string; content?: string; error?: string }> {
+  let docId = args.document_id ?? null;
+  if (!docId && args.url) {
+    // Match /docx/{id} or /docs/{id} from the URL.
+    const m = args.url.match(/\/(?:docx|docs)\/([A-Za-z0-9_-]+)/);
+    if (m) docId = m[1];
+  }
+  if (!docId) return { ok: false, error: "either document_id or url required" };
+
+  const raw = await callLarkApi<{ content: string }>({
+    method: "GET",
+    path: `/docx/v1/documents/${docId}/raw_content`,
+    query: { lang: 0 },
+  });
+  if (!raw.ok) return { ok: false, error: raw.error };
+
+  // Title comes from /docx/v1/documents/{id} → document.title
+  const meta = await callLarkApi<{ document: { title: string } }>({
+    method: "GET",
+    path: `/docx/v1/documents/${docId}`,
+  });
+  const title = meta.ok ? meta.data.document.title : undefined;
+
+  return { ok: true, document_id: docId, title, content: raw.data.content };
+}
+
+/**
+ * List Bases the bot has access to. Lark/Feishu doesn't expose a direct
+ * "list every Base in the tenant" endpoint to apps — the app sees only
+ * Bases that have been explicitly shared with it OR that the bot itself
+ * created. We surface those via /drive/v1/files (filter type=bitable).
+ */
+export async function listLarkBases(args: {
+  limit?: number;
+} = {}): Promise<{ ok: boolean; bases?: Array<{ app_token: string; name: string; url: string }>; error?: string }> {
+  const limit = Math.min(50, Math.max(1, args.limit ?? 20));
+  const res = await callLarkApi<{
+    files: Array<{ token: string; name: string; type: string; url: string }>;
+  }>({
+    method: "GET",
+    path: "/drive/v1/files",
+    query: { page_size: limit, order_by: "EditedTime", direction: "DESC" },
+  });
+  if (!res.ok) return { ok: false, error: res.error };
+  const bases = (res.data.files ?? [])
+    .filter((f) => f.type === "bitable")
+    .map((f) => ({ app_token: f.token, name: f.name, url: f.url }));
+  return { ok: true, bases };
+}
+
+/**
+ * Append a row to a Lark Base table. `fields` is a key→value object
+ * keyed by column name (not column id). Most field types accept the
+ * obvious primitive: text→string, number→number, single-select→string,
+ * date→ms timestamp, multi-select→array.
+ */
+export async function addToLarkBase(args: {
+  app_token: string;
+  table_id: string;
+  fields: Record<string, unknown>;
+}): Promise<{ ok: boolean; record_id?: string; error?: string }> {
+  const res = await callLarkApi<{ record: { record_id: string } }>({
+    method: "POST",
+    path: `/bitable/v1/apps/${args.app_token}/tables/${args.table_id}/records`,
+    body: { fields: args.fields },
+  });
+  if (!res.ok) return { ok: false, error: res.error };
+  return { ok: true, record_id: res.data.record.record_id };
+}
+
+/**
+ * Look up a Lark user by email. Returns their open_id so the bot can
+ * DM them. Useful when a sales rep tells the bot "tell Chenyu about X"
+ * and Chenyu's open_id isn't bound yet — we resolve via her email.
+ */
+export async function findLarkUserByEmail(email: string): Promise<{ ok: boolean; open_id?: string; name?: string; error?: string }> {
+  const res = await callLarkApi<{ user_list: Array<{ user_id: string; name: string; user: { open_id: string; name: string } }> }>({
+    method: "POST",
+    path: "/contact/v3/users/batch_get_id",
+    query: { user_id_type: "open_id" },
+    body: { emails: [email] },
+  });
+  if (!res.ok) return { ok: false, error: res.error };
+  const first = res.data.user_list?.[0];
+  if (!first?.user_id) return { ok: false, error: "user not found" };
+  return { ok: true, open_id: first.user_id, name: first.name };
+}

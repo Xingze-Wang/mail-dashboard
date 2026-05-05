@@ -57,13 +57,13 @@ interface LarkSession {
 async function callLLM(system: string, user: string): Promise<{ text: string; model: string }> {
   try {
     const r = await llmChat({
-      model: "gemini-3-flash",
+      model: "claude-opus-4.7",
       system,
       user,
       temperature: 0.4,
-      max_tokens: 4000,
+      max_tokens: 20000,
     });
-    return { text: r.text ?? "(empty)", model: r.meta?.model ?? "gemini-3-flash" };
+    return { text: r.text ?? "(empty)", model: r.meta?.model ?? "claude-opus-4.7" };
   } catch (err) {
     console.error("[lark-agent] llm error", err);
     return { text: "(LLM error — try again)", model: "error" };
