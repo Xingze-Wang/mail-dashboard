@@ -61,7 +61,7 @@ async function callLLM(system: string, user: string): Promise<{ text: string; mo
       system,
       user,
       temperature: 0.4,
-      max_tokens: 1500,
+      max_tokens: 4000,
     });
     return { text: r.text ?? "(empty)", model: r.meta?.model ?? "gemini-3-flash" };
   } catch (err) {

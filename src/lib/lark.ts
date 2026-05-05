@@ -79,12 +79,15 @@ export async function getTenantAccessToken(): Promise<string | null> {
 
 /**
  * Lark v2 events arrive with X-Lark-Signature and X-Lark-Request-Timestamp
- * headers. The signature is sha256(timestamp + nonce + verification_token + body).
- * If LARK_ENCRYPT_KEY is set the body is the still-encrypted blob — we'd
- * need to decrypt before parsing. We don't support that yet.
+ * headers ONLY when an Encrypt Key is configured in the Lark Open Platform
+ * console. With Encrypt Key unactivated (our current state), Lark sends
+ * plaintext events with no signature header at all — confirmed against
+ * the official larksuite/node-sdk implementation, where checkIsEventValidated
+ * returns true unconditionally when encryptKey is unset.
  *
- * If neither LARK_VERIFICATION_TOKEN nor LARK_ENCRYPT_KEY is set, we accept
- * the request without verification — fine for local dev, NOT prod.
+ * The HMAC secret is the Encrypt Key, NOT the Verification Token. The
+ * Verification Token is only checked as a plaintext `token` field on
+ * url_verification challenges (which we already skip-verify in the route).
  */
 export function verifyLarkEvent(args: {
   rawBody: string;
@@ -92,19 +95,15 @@ export function verifyLarkEvent(args: {
   nonce: string | null;
   signature: string | null;
 }): { ok: boolean; reason?: string } {
-  const token = process.env.LARK_VERIFICATION_TOKEN;
-  if (!token) {
-    if (process.env.NODE_ENV === "production") {
-      return { ok: false, reason: "LARK_VERIFICATION_TOKEN not set in prod" };
-    }
+  const encryptKey = process.env.LARK_ENCRYPT_KEY;
+  if (!encryptKey) {
     return { ok: true };
   }
   if (!args.timestamp || !args.nonce || !args.signature) {
     return { ok: false, reason: "missing signature headers" };
   }
-  // Lark's v2 webhook sig: sha256(timestamp + nonce + token + body)
   const h = createHash("sha256");
-  h.update(args.timestamp + args.nonce + token + args.rawBody);
+  h.update(args.timestamp + args.nonce + encryptKey + args.rawBody);
   const expected = h.digest("hex");
   if (expected !== args.signature) {
     return { ok: false, reason: `signature mismatch (got ${args.signature.slice(0, 8)}..., expected ${expected.slice(0, 8)}...)` };
