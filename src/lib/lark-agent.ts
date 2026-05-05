@@ -387,7 +387,7 @@ export async function processInboundLarkMessage(
   // sendMessage fails. No await, no error handling — if it fails the
   // reply will arrive eventually and that's the real signal.
   if (messageId) {
-    reactToMessage({ message_id: messageId, emoji_type: "EYES" }).catch((e) => {
+    reactToMessage({ message_id: messageId, emoji_type: "OK" }).catch((e) => {
       console.error(`[lark-agent/${transport}] react failed (non-blocking):`, e);
     });
   }
