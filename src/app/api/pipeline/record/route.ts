@@ -24,12 +24,19 @@ import { getSchoolInfo } from "@/lib/email-generator";
  */
 export async function POST(req: NextRequest) {
   try {
-    // Machine-to-machine endpoint — must be gated by CRON_SECRET.
-    // Previously unauthenticated, so anyone could POST and insert
-    // attacker-chosen leads / emails / arxiv rows into the DB.
+    // Machine-to-machine endpoint. Accepts EITHER PIPELINE_IMPORT_KEY
+    // (used by the Python scraper, which already hits /api/pipeline/import
+    // with this token — middleware allowlists this token for both routes)
+    // OR CRON_SECRET (used by internal cron callers). Previously CRON_SECRET
+    // only — but middleware lets PIPELINE_IMPORT_KEY through, so a CRON_SECRET
+    // request was rejected at the route layer even when middleware passed it.
     const auth = req.headers.get("authorization") || "";
-    const expected = process.env.CRON_SECRET;
-    if (!expected || auth !== `Bearer ${expected}`) {
+    const importKey = process.env.PIPELINE_IMPORT_KEY;
+    const cronSecret = process.env.CRON_SECRET;
+    const ok =
+      (importKey && auth === `Bearer ${importKey}`) ||
+      (cronSecret && auth === `Bearer ${cronSecret}`);
+    if (!ok) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
