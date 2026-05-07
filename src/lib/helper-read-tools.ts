@@ -320,6 +320,17 @@ export async function runReadTool(
         return { tool: call.tool, result: await getMyWeeklyRecap(session) };
       case "get_my_memory":
         return { tool: call.tool, result: await getMyMemory(session, args) };
+      case "get_my_trust_level": {
+        // Returns the rep's training-wheels capabilities. Used when rep
+        // asks "why am I limited / when does bulk unlock / why can't I
+        // batch send". Read-only; admin escalation handled separately.
+        const { getCapabilities } = await import("@/lib/trust-level");
+        const caps = await getCapabilities(session.repId);
+        // Spread to plain object so it satisfies the dispatcher's
+        // Record<string, unknown> result type (RepCapabilities is a
+        // typed interface, not an index signature).
+        return { tool: call.tool, result: { ...caps } };
+      }
       case "get_admin_alerts":
         if (session.role !== "admin") {
           return { tool: call.tool, result: { error: "admin only" } };

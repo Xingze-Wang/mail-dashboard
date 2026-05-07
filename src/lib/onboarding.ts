@@ -589,6 +589,11 @@ async function provisionRep(
       active: true,
       lark_open_id: pending.lark_open_id,
       lark_email: pending.lark_email ?? null,
+      // Explicitly stamp onboarded_at — even though migration 057 set
+      // a column default, depending on default semantics across clients
+      // (Supabase JS, drizzle, raw SQL) is fragile. This is the rep's
+      // tenure anchor for trust-level computation; it must not be NULL.
+      onboarded_at: new Date().toISOString(),
     })
     .select("id, sender_email")
     .single();

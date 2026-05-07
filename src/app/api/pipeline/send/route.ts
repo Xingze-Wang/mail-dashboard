@@ -8,6 +8,7 @@ import { MIN_AGE_DAYS, leadAgeDays } from "@/lib/policy";
 import { canonicalizeEmail } from "@/lib/email-id";
 import { checkBlocked } from "@/lib/blocklist";
 import { requireSession } from "@/lib/auth-helpers";
+import { checkSingleSendAllowed } from "@/lib/trust-level";
 import { loadEffectiveTemplate } from "@/lib/template-assembler";
 import { buildQuotaCheck, countOverridesTodayByRep } from "@/lib/override-quota";
 
@@ -67,6 +68,21 @@ export async function POST(req: NextRequest) {
     }
 
     const actingRepId = session.repId;
+
+    // Training-wheels daily-send-cap. Admin/senior are uncapped (returns
+    // ok). New reps get blocked here BEFORE any Resend round-trip so we
+    // don't burn rate-limit budget on rejected sends.
+    const tw = await checkSingleSendAllowed(actingRepId);
+    if (!tw.ok) {
+      return NextResponse.json(
+        {
+          error: tw.reason,
+          tier: tw.capabilities.tier,
+          capabilities: tw.capabilities,
+        },
+        { status: 403 },
+      );
+    }
 
     // `override` at this point is just the intent from the client. We only
     // count it as a real override (and consume quota) if the lead actually

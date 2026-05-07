@@ -9,6 +9,7 @@ import { canonicalizeEmail } from "@/lib/email-id";
 import { requireSession } from "@/lib/auth-helpers";
 import { DAILY_OVERRIDE_CAP, countOverridesTodayByRep } from "@/lib/override-quota";
 import { loadEffectiveTemplate } from "@/lib/template-assembler";
+import { checkBulkSendAllowed, sendsTodayByRep } from "@/lib/trust-level";
 
 // Vercel Pro allows up to 300s per function. At ~1.2s per send (Resend
 // round-trip + 100ms inter-send throttle + DB writes) this comfortably
@@ -59,6 +60,25 @@ export async function POST(req: NextRequest) {
 
     const isPrivileged = session.role === "admin";
     const actingRepId = session.repId;
+
+    // Training wheels: gate bulk sends per-rep based on trust_level +
+    // total sends. Admins / seniors are always allowed (their tier is
+    // 'admin' which has no caps). New reps get blocked here, before any
+    // Resend traffic happens.
+    const bulkCheck = await checkBulkSendAllowed(actingRepId, ids.length);
+    if (!bulkCheck.ok) {
+      return NextResponse.json(
+        {
+          error: bulkCheck.reason,
+          tier: bulkCheck.capabilities.tier,
+          capabilities: bulkCheck.capabilities,
+        },
+        { status: 403 },
+      );
+    }
+    // Cache dailySendCap from the upfront check; the per-iteration
+    // race-mitigation re-check below uses the same threshold.
+    const dailySendCap = bulkCheck.capabilities.dailySendCap;
 
     const overrideSet = new Set(Array.isArray(overrides) ? overrides : []);
 
@@ -156,6 +176,22 @@ export async function POST(req: NextRequest) {
         skipped++;
         blocks[guard.code] = (blocks[guard.code] || 0) + 1;
         continue;
+      }
+
+      // Race-mitigation re-check on the daily-send cap. The upfront
+      // checkBulkSendAllowed only saw a snapshot of "sentToday" at
+      // request start; concurrent batches from the same rep could each
+      // pass that check and then race past the cap together. Re-querying
+      // before each lead narrows the window to one lead per parallel
+      // call (same pattern the override-quota code uses on line 142).
+      // Skip when admin/senior (dailySendCap === null).
+      if (dailySendCap !== null) {
+        const liveSent = await sendsTodayByRep(actingRepId);
+        if (liveSent + sent >= dailySendCap) {
+          skipped++;
+          blocks["daily_send_cap"] = (blocks["daily_send_cap"] || 0) + 1;
+          continue;
+        }
       }
 
       // Optimistic claim: ready → sending. Skip if someone else already took it.
