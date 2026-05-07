@@ -11,7 +11,7 @@
 //     1. Strong → strong rep (Leo)
 //     2. Normal + matched category has a configured rep → that rep
 //     3. Normal + overseas (email NOT .cn) → overseas rep (Ethan)
-//     4. Normal + domestic (email .cn) → domestic rep (Chenyu)
+//     4. Normal + domestic (email .cn) → domestic rep (Yujie, rep_id=2)
 
 import { supabase } from "@/lib/db";
 import { SUPPORTED_DIRECTIONS } from "@/lib/scanner-config";
@@ -44,7 +44,7 @@ export interface SalesRep {
 
 const DEFAULT_REP_IDS = {
   leo: 1,
-  chenyu: 2,
+  yujie: 2,
   ethan: 3,
 } as const;
 
@@ -102,7 +102,7 @@ export function defaultConfig(): AssignmentConfig {
     assignment: {
       strong: { rep_id: DEFAULT_REP_IDS.leo },
       overseas: { rep_id: DEFAULT_REP_IDS.ethan },
-      domestic: { rep_id: DEFAULT_REP_IDS.chenyu },
+      domestic: { rep_id: DEFAULT_REP_IDS.yujie },
       by_direction: defaultLeoDirections(),
     },
   };

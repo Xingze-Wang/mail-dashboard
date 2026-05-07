@@ -29,9 +29,9 @@ const OWNERSHIP_RULES: Array<{
     detail: "email domain does NOT end with .cn",
   },
   {
-    match: (n) => n.toLowerCase() === "chenyu",
+    match: (n) => n.toLowerCase() === "yujie",
     icon: MapPin,
-    label: "Chenyu",
+    label: "Yujie",
     scope: "Normal · domestic",
     detail: "email domain ends with .cn",
   },

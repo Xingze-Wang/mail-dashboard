@@ -309,7 +309,7 @@ function PatternsView(props: {
           <option value="all">All reps</option>
           <option value="global">Global only</option>
           <option value="1">Leo (1)</option>
-          <option value="2">Chenyu (2)</option>
+          <option value="2">Yujie (2)</option>
           <option value="3">Ethan (3)</option>
         </select>
       </div>

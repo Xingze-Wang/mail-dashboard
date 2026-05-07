@@ -427,8 +427,8 @@ export async function addToLarkBase(args: {
 
 /**
  * Look up a Lark user by email. Returns their open_id so the bot can
- * DM them. Useful when a sales rep tells the bot "tell Chenyu about X"
- * and Chenyu's open_id isn't bound yet — we resolve via her email.
+ * DM them. Useful when a sales rep tells the bot "tell Yujie about X"
+ * and Yujie's open_id isn't bound yet — we resolve via her email.
  */
 export async function findLarkUserByEmail(email: string): Promise<{ ok: boolean; open_id?: string; name?: string; error?: string }> {
   const res = await callLarkApi<{ user_list: Array<{ user_id: string; name: string; user: { open_id: string; name: string } }> }>({

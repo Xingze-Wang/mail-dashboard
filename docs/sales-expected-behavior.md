@@ -3,14 +3,14 @@
 Every smoke-test agent checks the actual code against THIS spec. If the
 code doesn't match, it's a defect.
 
-Assume user = Chenyu, `role='sales'`, `repId=2`, `sender_email='chenyu@compute.miracleplus.com'`, `active=true`.
+Assume user = Yujie, `role='sales'`, `repId=2`, `sender_email='yujie@compute.miracleplus.com'`, `active=true`.
 
 ## 1. Authentication
 
 - [ ] Unauthenticated request to ANY sales-facing API returns 401, not partial data.
 - [ ] Session cookie missing/expired → UI redirects to login or 401.
 - [ ] Login with valid credentials sets `qiji_session` cookie with repId/role/email/name in JWT.
-- [ ] `/api/auth/me` returns `{authenticated:true, repId:2, role:"sales"}` for Chenyu.
+- [ ] `/api/auth/me` returns `{authenticated:true, repId:2, role:"sales"}` for Yujie.
 - [ ] Logout clears the active cookie and doesn't silently promote a stale admin pool token.
 
 ## 2. Pipeline data visibility
@@ -24,7 +24,7 @@ Assume user = Chenyu, `role='sales'`, `repId=2`, `sender_email='chenyu@compute.m
 
 ## 3. Email + Inbox visibility
 
-- [ ] `GET /api/emails` returns ONLY emails where `from` ilike `%chenyu@compute.miracleplus.com%`.
+- [ ] `GET /api/emails` returns ONLY emails where `from` ilike `%yujie@compute.miracleplus.com%` (or `%chenyu@compute.miracleplus.com%` for historical rows sent before the rename).
 - [ ] `GET /api/emails/[id]` 404s if the row's `from` doesn't match her sender.
 - [ ] `GET /api/inbound` returns ONLY inbounds whose `thread_id` matches a thread she originated.
 - [ ] `GET /api/inbox/unread-count` same scope.

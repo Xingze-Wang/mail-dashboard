@@ -6,7 +6,7 @@
 
 ### 目标用户与工作流
 - **目标用户**：从 arXiv、GitHub、HuggingFace 等渠道发现的 AI 研究者（国内外学生、博士后、青年教授）
-- **销售团队**：3 名 sales reps（Leo、Chenyu、Ethan）通过该平台管理 lead 和外联过程
+- **销售团队**：3 名 sales reps（Leo、Yujie、Ethan）通过该平台管理 lead 和外联过程
 - **日常工作流**：
   1. **发现** — 每个工作日自动从 arXiv 扫描新论文、识别作者
   2. **富化** — 从 Semantic Scholar 抓取 h-index、引用数、验证学校 tier
@@ -75,7 +75,7 @@ Normal: 其他所有情况
 1. **Strong** → Leo（ID=1）
 2. **Normal** + 论文方向有配置 → 对应方向 rep（如 4D 重建、具身智能等方向都指向 Leo）
 3. **Normal** + 海外（邮箱非 .cn）→ Ethan（ID=3）
-4. **Normal** + 国内（邮箱 .cn）→ Chenyu（ID=2）
+4. **Normal** + 国内（邮箱 .cn）→ Yujie（ID=2）
 
 **实现**：
 - 配置存储在 `system_config` 表，key = "lead_assignment"
@@ -139,8 +139,8 @@ brief_lookups:
 
 **例子**：
 - Lead A 分配给 Leo（assigned_rep_id=1）
-- Chenyu 在 /emails 页面看到这条邮件、发现对方已加微信、点击"Added on WeChat"
-- 统计：Chenyu 获得 1 个 WeChat 转化（不是 Leo）
+- Yujie 在 /emails 页面看到这条邮件、发现对方已加微信、点击"Added on WeChat"
+- 统计：Yujie 获得 1 个 WeChat 转化（不是 Leo）
 
 **实现**（`/src/app/api/metrics/me/route.ts`）：
 ```typescript
@@ -254,7 +254,7 @@ Bot 自动根据场景判断走哪条路线，无需用户多说：
 [2-4] school_tier_1, school_tier_2, school_tier_3 — One-hot 学校层级
 [5] is_overseas — 1 if email not .cn, else 0
 [6] is_strong_tier — 1 if lead_tier='strong', else 0
-[7-9] rep_leo, rep_chenyu, rep_ethan — One-hot rep 分配
+[7-9] rep_leo, rep_yujie (历史名 rep_chenyu, scorer 特征键未变), rep_ethan — One-hot rep 分配
 ```
 
 **训练数据**（双目标，样本加权）：
@@ -504,7 +504,7 @@ emitRetrainSignals() + buildProposal()
 ### Rep 在 /pipeline 页面 Review lead
 ```
 GET /api/pipeline?page=1&limit=50&status=ready&rep_id=2
-  → 返回 Chenyu 待发的 lead 列表
+  → 返回 Yujie 待发的 lead 列表
   → Rep 选择一条，UI 加载 /emails/[id] 展示详情
 ```
 

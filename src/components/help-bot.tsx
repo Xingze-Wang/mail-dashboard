@@ -42,12 +42,15 @@ import {
  * indigo→pink gradient — robot is white with subtle shading.
  */
 /**
- * ChenyuRobot — friendlier-than-CuteRobot variant. Round head instead
+ * FriendlyRobot — friendlier-than-CuteRobot variant for rep_id=2
+ * (currently Yujie, was previously Chenyu — internal SVG IDs still say
+ * "chenyu-*", which is fine since they're scoped to the SVG and
+ * globals.css). Round head instead
  * of a rounded rect, heart-tipped antenna, larger cheeks, blush
- * gradient, sparkle glints. Reserved for Chenyu's session per product
+ * gradient, sparkle glints. Reserved for rep_id=2's session per product
  * call on 2026-04-24.
  */
-function ChenyuRobot({ mood }: { mood: "idle" | "wave" | "peek" | "alert" }) {
+function FriendlyRobot({ mood }: { mood: "idle" | "wave" | "peek" | "alert" }) {
   return (
     <svg
       data-mood={mood}
@@ -264,10 +267,11 @@ export function HelpBot() {
   const pathname = usePathname() || "";
   const [pos, setPos] = useState<Pos>({ x: 24, y: 24 });
   const [open, setOpen] = useState(false);
-  // Chenyu-only: cuter robot avatar. Everyone else sees the plain
-  // Sparkles icon (reverted from the previous session-wide robot
-  // rollout). We check once on mount via /api/auth/me.
-  const [isChenyu, setIsChenyu] = useState(false);
+  // Yujie-only (rep_id=2): cuter robot avatar. Everyone else sees the
+  // plain Sparkles icon. We match on rep_id rather than name so the
+  // visual treatment survives future renames. (This row was previously
+  // Chenyu, who used the same custom robot.)
+  const [isCuteRobotRep, setIsCuteRobotRep] = useState(false);
   useEffect(() => {
     if (pathname.startsWith("/login")) return;
     let cancelled = false;
@@ -275,8 +279,8 @@ export function HelpBot() {
       try {
         const r = await fetch("/api/auth/me");
         const d = await r.json().catch(() => ({}));
-        if (!cancelled && typeof d?.repName === "string" && d.repName.toLowerCase() === "chenyu") {
-          setIsChenyu(true);
+        if (!cancelled && typeof d?.repId === "number" && d.repId === 2) {
+          setIsCuteRobotRep(true);
         }
       } catch { /* non-fatal */ }
     })();
@@ -515,8 +519,8 @@ export function HelpBot() {
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         title="Sales Helper — drag me anywhere, click to ask"
-        data-robot-mood={isChenyu ? robotMood : undefined}
-        className={isChenyu ? "help-bot-button" : undefined}
+        data-robot-mood={isCuteRobotRep ? robotMood : undefined}
+        className={isCuteRobotRep ? "help-bot-button" : undefined}
         style={{
           position: "fixed",
           bottom: pos.y,
@@ -535,19 +539,19 @@ export function HelpBot() {
           justifyContent: "center",
           zIndex: 60,
           userSelect: "none",
-          // Chenyu's robot "peek" translates up past the button's
+          // The cute-robot "peek" translates up past the button's
           // top edge; everyone else keeps clipping on to prevent
           // weird overflow if any animation accidentally runs.
-          overflow: isChenyu ? "visible" : "hidden",
+          overflow: isCuteRobotRep ? "visible" : "hidden",
         }}
       >
-        {/* Chenyu's session gets the cuter robot avatar; everyone
+        {/* rep_id=2 gets the cuter robot avatar; everyone
             else sees the plain Sparkles icon. The CuteRobot /
-            ChenyuRobot components + robot-* keyframes in globals.css
+            FriendlyRobot components + robot-* keyframes in globals.css
             stay in the repo so we can re-enable more broadly later
             by flipping the gate. */}
-        {isChenyu
-          ? <ChenyuRobot mood={robotMood} />
+        {isCuteRobotRep
+          ? <FriendlyRobot mood={robotMood} />
           : <Sparkles style={{ width: 22, height: 22 }} />}
       </button>
 

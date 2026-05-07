@@ -1,6 +1,6 @@
 # Qiji Pipeline 销售上手手册
 
-> 给 Leo / Chenyu / Ethan 以及未来新人。读完 15 分钟，就能发出今天第一批邮件。
+> 给 Leo / Yujie / Ethan 以及未来新人。读完 15 分钟，就能发出今天第一批邮件。
 > 网址：<https://qiji-pipeline.vercel.app>
 
 ---

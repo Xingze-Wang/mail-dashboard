@@ -248,7 +248,7 @@ function getRepInfo(session: Session) {
 
 async function listReps() {
   // List of all sales reps so the helper can translate a rep name
-  // ("Chenyu") to a rep_id (2). Used primarily when admin wants to
+  // ("Yujie") to a rep_id (2). Used primarily when admin wants to
   // re-assign a lead but speaks the rep's name. Doesn't expose
   // anything sensitive — name + role are already in the sidebar UI
   // for everyone in the org.
@@ -402,7 +402,7 @@ export async function runReadTool(
         // about lately? Returns up to N recent user messages from a
         // single rep. Cluster detection (shared_helper_questions) is
         // statistical; this is qualitative — useful when admin wants
-        // to know "what's Chenyu stuck on?" before the cluster floor
+        // to know "what's Yujie stuck on?" before the cluster floor
         // (≥2 reps) is met.
         const target = scopeRepId(session, args);
         if (target == null) {

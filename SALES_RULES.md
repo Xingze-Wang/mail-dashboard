@@ -18,12 +18,12 @@ This means `classifyLead()` in `src/lib/assignment.ts` should be:
 
 - **Strong** → Leo (rep_id 1)
 - **Normal + overseas** (email domain does NOT end with `.cn`) → Ethan
-- **Normal + domestic** (email domain ends with `.cn`) → Chenyu
+- **Normal + domestic** (email domain ends with `.cn`) → Yujie
 
 This means:
 - No more round-robin
 - No more category-based routing — drop `category_routing` entirely from the default config
-- `assignRep()` becomes a flat 3-way decision: strong → Leo, normal+overseas → Ethan, normal+domestic → Chenyu
+- `assignRep()` becomes a flat 3-way decision: strong → Leo, normal+overseas → Ethan, normal+domestic → Yujie
 
 ## What this means for your work
 
@@ -34,7 +34,7 @@ This means:
      assignment: {
        strong: { rep_id: <Leo's id> },
        overseas: { rep_id: <Ethan's id> },
-       domestic: { rep_id: <Chenyu's id> },
+       domestic: { rep_id: <Yujie's id> },
      },
    }
    ```
@@ -66,12 +66,12 @@ This means:
 7. **Sales tab "category coverage" section** — REMOVE that requirement from the original prompt. Instead show a simpler 3-rep ownership card:
    - Leo: Strong leads (citation > 2000 OR tier ≤ 2)
    - Ethan: Normal leads, overseas (.com / .edu / etc)
-   - Chenyu: Normal leads, domestic (.cn)
+   - Yujie: Normal leads, domestic (.cn)
 
 8. **Settings page rep CRUD** — keep, but the "category routing" UI (if you added any) should be removed since routing is now strictly tier+geo.
 
-9. **Migration** — confirm the seed inserts in `migrations/003-add-ethan.sql` covers ALL THREE reps if any are missing. Check current sales_reps table content; if Chenyu doesn't exist, add a seed too. Use these defaults:
-   - Chenyu: name='Chenyu', sender_email='chenyu@compute.miracleplus.com', sender_name='Chenyu', wechat_id='chenyu_wechat_TBD' (call out for user to fill)
+9. **Migration** — confirm the seed inserts in `migrations/003-add-ethan.sql` covers ALL THREE reps if any are missing. Check current sales_reps table content; if Yujie doesn't exist, add a seed too. Use these defaults:
+   - Yujie: name='Yujie', sender_email='yujie@compute.miracleplus.com', sender_name='Yujie', wechat_id='yujie_wechat_TBD' (call out for user to fill)
    - Ethan: name='Ethan', sender_email='ethan@compute.miracleplus.com', sender_name='Ethan', wechat_id='hnyhc5'
 
 10. **Re-run `/api/config/assignment` POST after applying the migration** to re-classify and re-assign every existing lead with the new rules.
@@ -82,4 +82,4 @@ After your changes, write a tiny test/sanity check (could be a one-shot route or
 - A lead with citation_count=3000, .edu email, hIndex=null → strong → Leo
 - A lead with school_tier=1, .cn email → strong → Leo
 - A lead with citation_count=500, school_tier=4, .stanford.edu email → normal+overseas → Ethan
-- A lead with citation_count=500, school_tier=4, .tsinghua.edu.cn email → normal+domestic → Chenyu
+- A lead with citation_count=500, school_tier=4, .tsinghua.edu.cn email → normal+domestic → Yujie

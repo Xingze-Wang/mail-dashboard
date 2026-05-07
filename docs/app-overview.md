@@ -141,7 +141,7 @@ Roughly grouped:
    `generateDraft()` and inserts a row into `pipeline_leads` with
    `status='ready'` (or `'new'` if drafting failed).
 4. `assignment.ts` assigns the lead to a rep based on tier + direction +
-   geography (overseas → Ethan, domestic → Chenyu, strong → Leo).
+   geography (overseas → Ethan, domestic → Yujie, strong → Leo).
 5. Parallel path: non-arXiv sources (Hugging Face, Product Hunt, GitHub,
    Jike, Xiaohongshu, V2EX, Weibo) write into `discovery_leads` via the
    Python scrapers under `vc-lead-scout` skill; sales promotes them into

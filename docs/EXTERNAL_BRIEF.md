@@ -6,7 +6,7 @@ A single-file digest of this codebase, current state, and open design question. 
 
 ## The product, in one paragraph
 
-Qiji Pipeline is an internal sales tool for **奇绩算力 (Qiji Compute)**, a free GPU grant program for Chinese AI researchers. It scans arXiv nightly (via a Python sibling repo at `~/Desktop/Email/resend0412.py`), enriches each paper's authors with Semantic Scholar data, classifies leads as "strong" or "normal," routes them to one of three sales reps (Leo / Chenyu / Ethan) by tier + email-domain geography, generates personalized outreach emails through Resend, and tracks WeChat conversions. Stack: Next.js 16 + React 19 on Vercel, Supabase Postgres, Anthropic + Google for LLM, Lark (Feishu) bot interface for sales reps. ~5 sales reps, ~887 leads in DB, ~1000 emails sent, ~4286 person rows. Deployed at `qiji-pipeline.vercel.app`.
+Qiji Pipeline is an internal sales tool for **奇绩算力 (Qiji Compute)**, a free GPU grant program for Chinese AI researchers. It scans arXiv nightly (via a Python sibling repo at `~/Desktop/Email/resend0412.py`), enriches each paper's authors with Semantic Scholar data, classifies leads as "strong" or "normal," routes them to one of three sales reps (Leo / Yujie / Ethan) by tier + email-domain geography, generates personalized outreach emails through Resend, and tracks WeChat conversions. Stack: Next.js 16 + React 19 on Vercel, Supabase Postgres, Anthropic + Google for LLM, Lark (Feishu) bot interface for sales reps. ~5 sales reps, ~887 leads in DB, ~1000 emails sent, ~4286 person rows. Deployed at `qiji-pipeline.vercel.app`.
 
 ---
 
@@ -15,7 +15,7 @@ Qiji Pipeline is an internal sales tool for **奇绩算力 (Qiji Compute)**, a f
 1. **6 AM UTC, daily**: `GET /api/cron` (Bearer-auth via `CRON_SECRET`) runs:
    - Sync from Resend webhooks (catches up `webhook_events`, updates `emails.status`)
    - Scan arXiv (300 papers max, 40s budget) — categories `cs.LG, cs.AI, cs.CV, cs.CL, cs.RO, stat.ML`
-   - For each paper: Chinese-surname pre-filter → PDF download → email extraction → Gemini classifier (compute-need + research direction) → S2 enrichment (h-index, citations) → tier (`strong` if citation > 2000 OR school_tier ≤ 2, else `normal`) → assignment (strong→Leo, normal+overseas→Ethan, normal+domestic→Chenyu)
+   - For each paper: Chinese-surname pre-filter → PDF download → email extraction → Gemini classifier (compute-need + research direction) → S2 enrichment (h-index, citations) → tier (`strong` if citation > 2000 OR school_tier ≤ 2, else `normal`) → assignment (strong→Leo, normal+overseas→Ethan, normal+domestic→Yujie)
    - Write to `pipeline_leads` table with `status='ready'` and a draft email pre-generated
    - **Drift mining** — analyze last 30 days of `pipeline_leads` where `draft_edit_distance > 0` (rep edited the AI draft), extract recurring patterns via LLM, write to `prompt_drift_patterns` with `status='pending'`
    - **Emit retrain signals** — count new conversions; if ≥ threshold, create a `retrain_proposals` row

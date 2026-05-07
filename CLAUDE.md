@@ -11,7 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-**Qiji Pipeline (奇绩算力)** — a Next.js 16 sales-pipeline dashboard for outreach to Chinese AI researchers. Daily cron scans arXiv, enriches authors via Semantic Scholar, routes to one of three sales reps (Leo / Chenyu / Ethan) by tier + geography, generates personalized emails through Resend, and tracks WeChat conversions.
+**Qiji Pipeline (奇绩算力)** — a Next.js 16 sales-pipeline dashboard for outreach to Chinese AI researchers. Daily cron scans arXiv, enriches authors via Semantic Scholar, routes to one of three sales reps (Leo / Yujie / Ethan) by tier + geography, generates personalized emails through Resend, and tracks WeChat conversions.
 
 For the full product picture, read **`docs/APP_OVERVIEW_EN.md`** before touching anything substantial. Don't re-derive it from code.
 

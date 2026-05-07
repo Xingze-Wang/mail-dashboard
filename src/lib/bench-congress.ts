@@ -43,7 +43,7 @@ Evidence pack:
 - Leo's total wechat conversions this month: 12 (4 from Tier 3, 8 from Tier 1/2).
 - Proposed change: cap Leo's Tier 3 assignments at 20% of his weekly batch; redirect excess to Ethan.
 - Ethan's Tier 3 wechat rate: 2.1%. Ethan is at 90% capacity (28/31 assigned leads responded to).
-- Chenyu has headroom: 18/30 assigned leads responded to. Tier 3 rate unknown (only 6 assigned).
+- Yujie has headroom: 18/30 assigned leads responded to. Tier 3 rate unknown (only 6 assigned).
 `.trim(),
   },
   {

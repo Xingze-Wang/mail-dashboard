@@ -24,7 +24,7 @@ Qiji Compute offers a free GPU grant to Chinese AI researchers building cutting-
 
 ### 1.2 Key Users
 
-**Sales Representatives** (Leo, Chenyu, Ethan):
+**Sales Representatives** (Leo, Yujie, Ethan):
 - Browse incoming leads on the Pipeline page (`/pipeline`)
 - Review drafts, customize and send via `/emails` page
 - Record WeChat conversions using the "Brief" panel (right sidebar on `/emails`)
@@ -42,7 +42,7 @@ Qiji Compute offers a free GPU grant to Chinese AI researchers building cutting-
    - Scans arXiv for new papers in target categories (cs.LG, cs.AI, cs.CV, cs.CL, cs.RO, stat.ML)
    - Enriches authors with Semantic Scholar h-index/citation data
    - Classifies leads as "strong" or "normal" based on citations and school tier
-   - Assigns to Leo, Chenyu, or Ethan
+   - Assigns to Leo, Yujie, or Ethan
    - Generates draft emails with rep identity
    - Mines prompt patterns from yesterday's sales edits
 
@@ -132,7 +132,7 @@ Once a researcher is found (from any source), the system enriches their profile:
    - Leo is the senior rep handling high-impact researchers
 2. **Normal tier + overseas** (email domain ≠ .cn) → **Ethan** (rep_id = 3)
    - International researchers (MIT, Stanford, etc.)
-3. **Normal tier + domestic** (email domain = .cn) → **Chenyu** (rep_id = 2)
+3. **Normal tier + domestic** (email domain = .cn) → **Yujie** (rep_id = 2)
    - China-based researchers
 
 **Config**: Stored in `system_config` table, key = `"lead_assignment"`. Can be updated via `/api/config/assignment` endpoint.
@@ -220,10 +220,10 @@ When rep clicks "Added on WeChat":
 - **Conversion ownership**: determined at WeChat interaction time (`marked_by_rep_id` in `brief_lookups`)
 
 Example:
-- arXiv paper published → cron assigns to Chenyu (lead_tier = normal, email = @qq.com)
-- Chenyu sends draft, but gets busy
+- arXiv paper published → cron assigns to Yujie (lead_tier = normal, email = @qq.com)
+- Yujie sends draft, but gets busy
 - Leo later replies to researcher's WeChat DM
-- Leo clicks "Added on WeChat" → conversion credited to Leo, not Chenyu
+- Leo clicks "Added on WeChat" → conversion credited to Leo, not Yujie
 
 **Why this design**:
 - Sales is fluid; team members help each other
@@ -604,7 +604,7 @@ Machine-to-Machine:
 
 **`sales_reps`** (team):
 - `id`: SERIAL PK
-- `name`: display name (Leo, Chenyu, Ethan)
+- `name`: display name (Leo, Yujie, Ethan)
 - `sender_email`: email address for sending (leo@compute.miracleplus.com)
 - `sender_name`: name shown in From: header
 - `wechat_id`: rep's WeChat account for sharing
@@ -744,7 +744,7 @@ npm run db:push      # Sync Prisma to DB (if using Prisma)
 - 85 new arXiv papers scanned
 - 32 matched Qiji directions (4D, robotics, world models)
 - Enriched with h-index (Semantic Scholar)
-- Classified: 8 strong (Leo), 12 normal domestic (Chenyu), 12 normal overseas (Ethan)
+- Classified: 8 strong (Leo), 12 normal domestic (Yujie), 12 normal overseas (Ethan)
 - Drafts generated; status = "ready"
 
 **Monday 9:30 AM** (Leo logs in):
