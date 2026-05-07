@@ -23,7 +23,7 @@
  */
 import bcrypt from "bcryptjs";
 import { supabase } from "@/lib/db";
-import { sendMessage } from "@/lib/lark";
+import { sendMessage, getLarkUserInfo } from "@/lib/lark";
 
 const ADMIN_REP_ID = 5; // Xingze. Same constant as JITR card flow.
 
@@ -65,12 +65,25 @@ const CONFIG_KEY_ORDER: ConfigKey[] = [
 /**
  * Called from lark-agent.ts BEFORE the rep / client-agent dispatch.
  * Returns { handled: true } if the message belonged to an onboarding
- * flow (either admin-config or rep-candidate), false otherwise.
+ * flow (either admin-config or rep-candidate or triage), false
+ * otherwise.
+ *
+ * Flow priority for an unknown Lark user:
+ *   1. Mid-onboarding? → continue the candidate state machine.
+ *   2. Already triaged "not_qiji" / "qiji_other_team"? → don't ask
+ *      again, let client-agent handle.
+ *   3. Brand new + DM (chat_type='p2p')? → ask the triage question
+ *      first ("are you 算力组 sales?"). Onboarding only starts after
+ *      they say yes.
+ *   4. Brand new + group chat? → don't start onboarding (we never
+ *      collect passwords in a group). Let client-agent handle if it
+ *      wants to.
  */
 export async function tryHandleOnboardingMessage(
   senderOpenId: string,
   senderName: string | null,
   text: string,
+  chatType: "p2p" | "group" | null,
 ): Promise<{ handled: boolean; reason?: string }> {
   const trimmed = text.trim();
 
@@ -95,18 +108,34 @@ export async function tryHandleOnboardingMessage(
     return { handled: true, reason: `candidate-step:${pending.step}` };
   }
 
-  // 3. Brand-new Lark user — should we start onboarding?
-  //    Only start if the message clearly signals "I'm a new rep".
-  //    Otherwise let the client-agent path handle (current behavior).
+  // Existing reps never onboard.
   const rep = await findRepByOpenId(senderOpenId);
-  if (rep) return { handled: false }; // existing rep, never onboard
+  if (rep) return { handled: false };
 
-  if (looksLikeOnboardingIntent(trimmed)) {
-    await startCandidateFlow(senderOpenId, senderName);
-    return { handled: true, reason: "started-candidate-flow" };
+  // 3. Have we already triaged this Lark user?
+  const { data: triage } = await supabase
+    .from("lark_triage_decisions")
+    .select("decision")
+    .eq("lark_open_id", senderOpenId)
+    .maybeSingle();
+  if (triage?.decision === "not_qiji" || triage?.decision === "qiji_other_team") {
+    // Already decided not-our-rep. Let client-agent handle as customer.
+    return { handled: false, reason: `prior-triage:${triage.decision}` };
+  }
+  // (decision === 'is_sales' but no pending row means they triaged YES
+  // but the row was deleted somehow. Fall through to startTriage which
+  // will re-ask, since the candidate flow data is gone.)
+
+  // 4. Group chats never start onboarding (passwords + private info
+  //    cannot be collected there). Silently no-op so client-agent or
+  //    other handlers can decide what to do.
+  if (chatType !== "p2p") {
+    return { handled: false, reason: "non-p2p-chat" };
   }
 
-  return { handled: false };
+  // 5. Brand new Lark user in a 1:1 DM. Ask the triage question.
+  await startTriage(senderOpenId, senderName);
+  return { handled: true, reason: "started-triage" };
 }
 
 /**
@@ -202,46 +231,154 @@ export async function processOnboardingCardAction(rawEvent: unknown): Promise<{
   return { ok: true, reason: "approved" };
 }
 
-// ─── candidate flow ────────────────────────────────────────────────────
+// ─── triage flow ───────────────────────────────────────────────────────
 
-function looksLikeOnboardingIntent(text: string): boolean {
-  const t = text.toLowerCase();
-  return (
-    /\b(onboard|sign[- ]?up|join)\b/.test(t) ||
-    /我是新来的|入职|加入|新销售|new rep|新员工|onboarding|帮我注册/i.test(text)
-  );
-}
+/** First contact with an unknown Lark user. Resolve their actual Lark
+ *  identity (name + email) and ask the triage question. */
+async function startTriage(openId: string, fallbackName: string | null): Promise<void> {
+  // Look up the real Lark name + email so we have something better than
+  // the open_id when this person eventually shows up on the admin card.
+  const info = await getLarkUserInfo(openId);
+  const larkName = info.ok ? info.name ?? fallbackName : fallbackName;
+  const larkEmail = info.ok ? info.email ?? null : null;
 
-async function startCandidateFlow(openId: string, name: string | null): Promise<void> {
   await supabase.from("pending_onboarding").upsert(
     {
       lark_open_id: openId,
-      lark_name: name,
-      step: "ask_name",
+      lark_name: larkName,
+      lark_email: larkEmail,
+      step: "triage",
       status: "in_progress",
     },
     { onConflict: "lark_open_id" },
   );
+
+  await sendMessage({
+    receive_id: openId,
+    receive_id_type: "open_id",
+    text:
+      `你好${larkName ? ` ${larkName}` : ""}! 我是 Leon, 奇绩算力的销售助手 🤖\n\n` +
+      "我们可能没正式认识过, 我先确认一下身份再聊后续:\n\n" +
+      "**你是奇绩 算力组 的销售吗?** 直接回:\n" +
+      "  • `是` (或 `yes`) — 算力组销售, 我帮你接入系统\n" +
+      "  • `奇绩其他组` — 不是算力组销售, 但是奇绩同事\n" +
+      "  • `不是` (或 `no`) — 都不是 (那我大概是把你当客户/申请者来对话了)",
+  });
+}
+
+async function handleTriageStep(pending: PendingRow, text: string): Promise<void> {
+  const t = text.toLowerCase().trim();
+
+  // Affirmative — they're 算力组 sales. Proceed to the role question.
+  const isYes =
+    /^(是|对|yes|y|ok|嗯|是的|算力组|是算力组|算力)$/i.test(t) ||
+    /(算力组|算力 组).*(销售|sales)/i.test(text) ||
+    /^(?:i'?m|我是)\s+(?:a\s+)?(?:sales|销售|new\s+sales)/i.test(text);
+
+  // Other-team Qiji — log + ping admin.
+  const isOtherTeam =
+    /(奇绩.*(?:其他|别的)|other\s+(?:team|qiji))/i.test(text) ||
+    /^奇绩其他组$/.test(text.trim());
+
+  // Negative — let client-agent handle going forward.
+  const isNo = /^(不是|否|no|n|不|nope|not\s+(?:qiji|sales))$/i.test(t);
+
+  if (isOtherTeam) {
+    await supabase.from("lark_triage_decisions").upsert(
+      { lark_open_id: pending.lark_open_id, decision: "qiji_other_team" },
+      { onConflict: "lark_open_id" },
+    );
+    await supabase.from("pending_onboarding").delete().eq("id", pending.id);
+    await sendMessage({
+      receive_id: pending.lark_open_id,
+      receive_id_type: "open_id",
+      text:
+        "了解 — 我目前只负责算力组的事 (邮件外联 / lead 管理). " +
+        "如果你需要算力组的人帮忙, 我可以转告 admin (Xingze).",
+    });
+    // Notify admin so they know someone from another Qiji team is poking around.
+    const adminOpenId = await getAdminOpenId();
+    if (adminOpenId) {
+      await sendMessage({
+        receive_id: adminOpenId,
+        receive_id_type: "open_id",
+        text:
+          `📨 ${pending.lark_name ?? "(unknown Lark user)"} (${pending.lark_open_id}) ` +
+          `说自己是奇绩其他组的人在跟我对话. 没自动 onboard. ` +
+          `如要联系: ${pending.lark_email ?? "(no email)"}`,
+      });
+    }
+    return;
+  }
+
+  if (isNo) {
+    await supabase.from("lark_triage_decisions").upsert(
+      { lark_open_id: pending.lark_open_id, decision: "not_qiji" },
+      { onConflict: "lark_open_id" },
+    );
+    await supabase.from("pending_onboarding").delete().eq("id", pending.id);
+    await sendMessage({
+      receive_id: pending.lark_open_id,
+      receive_id_type: "open_id",
+      text:
+        "好, 那我作为客户对话助手陪你聊. 如果之前问的问题还没回, 直接发就行.",
+    });
+    return;
+  }
+
+  if (!isYes) {
+    // Couldn't classify — re-ask once.
+    await sendMessage({
+      receive_id: pending.lark_open_id,
+      receive_id_type: "open_id",
+      text:
+        "没看懂, 再确认一下:\n\n" +
+        "  • `是` — 算力组销售\n" +
+        "  • `奇绩其他组` — 奇绩别的组\n" +
+        "  • `不是` — 不是奇绩",
+    });
+    return;
+  }
+
+  // YES — they're 算力组 sales. Now ask role.
+  await supabase
+    .from("pending_onboarding")
+    .update({ step: "ask_role" })
+    .eq("id", pending.id);
+  await sendMessage({
+    receive_id: pending.lark_open_id,
+    receive_id_type: "open_id",
+    text:
+      "好的 ✅ 那我帮你接入系统.\n\n" +
+      "**你的 role 是?** 直接回数字:\n" +
+      "  `1` — sales (绝大多数新人是这个)\n" +
+      "  `2` — senior (能审批别的 sales 的草稿, 看全局指标)\n" +
+      "  `3` — admin (可以改路由规则 / 加 rep / 改模板)\n\n" +
+      "(admin 那条会被审批的人质疑 ── 除非你和 Xingze 提前对齐过, 选 1 准没错.)",
+  });
+}
+
+// ─── candidate flow ────────────────────────────────────────────────────
+
+async function maybeStartCandidateAfterRole(pending: PendingRow): Promise<void> {
   // Before talking to the candidate, make sure admin config is filled.
   // If not, kick off the admin flow in parallel and tell the rep to wait.
   const cfgComplete = await isAdminConfigComplete();
   if (!cfgComplete) {
     await sendMessage({
-      receive_id: openId,
+      receive_id: pending.lark_open_id,
       receive_id_type: "open_id",
       text:
-        "你好! 我是 Leon, 奇绩算力的销售助手. 你是新来的吧.\n\n" +
-        "稍等几分钟, 我先跟 admin 把入职资料对齐一下, 完事我就回来接你.",
+        "稍等几分钟, 我先跟 admin 把入职资料对齐一下, 完事我接着问你.",
     });
-    await startAdminConfigFlow(null); // null = autonomous trigger, not a /command
+    await startAdminConfigFlow(null); // null = autonomous trigger
     return;
   }
   await sendMessage({
-    receive_id: openId,
+    receive_id: pending.lark_open_id,
     receive_id_type: "open_id",
     text:
-      "你好! 我是 Leon, 奇绩算力的销售助手. 你是新来的吧?\n\n" +
-      "我帮你接入系统. 先问几个问题:\n\n" +
+      "OK, 开始正式问几个问题:\n\n" +
       "**你叫什么名字?** (中英文都行, 比如 'Yujie' 或 '余杰')",
   });
 }
@@ -251,6 +388,46 @@ async function handleCandidateStep(
   text: string,
 ): Promise<void> {
   switch (pending.step) {
+    case "triage": {
+      await handleTriageStep(pending, text);
+      return;
+    }
+    case "ask_role": {
+      const t = text.trim();
+      let role: "sales" | "senior" | "admin" | null = null;
+      if (/^1$|^sales$/i.test(t)) role = "sales";
+      else if (/^2$|^senior$/i.test(t)) role = "senior";
+      else if (/^3$|^admin$/i.test(t)) role = "admin";
+      if (!role) {
+        await sendMessage({
+          receive_id: pending.lark_open_id,
+          receive_id_type: "open_id",
+          text: "没看懂, 直接回 `1` (sales) / `2` (senior) / `3` (admin):",
+        });
+        return;
+      }
+      await supabase.from("lark_triage_decisions").upsert(
+        {
+          lark_open_id: pending.lark_open_id,
+          decision: "is_sales",
+          claimed_role: role,
+        },
+        { onConflict: "lark_open_id" },
+      );
+      await supabase
+        .from("pending_onboarding")
+        .update({ claimed_role: role, step: "ask_name" })
+        .eq("id", pending.id);
+      await sendMessage({
+        receive_id: pending.lark_open_id,
+        receive_id_type: "open_id",
+        text: `收到, role=${role}. (admin 会再确认一次再正式给你权限.)`,
+      });
+      // Pull the freshly-updated pending row so subsequent flow has claimed_role
+      const refreshed = await getPendingByOpenId(pending.lark_open_id);
+      if (refreshed) await maybeStartCandidateAfterRole(refreshed);
+      return;
+    }
     case "ask_name": {
       const name = text.slice(0, 80).trim();
       if (!name) {
@@ -622,6 +799,8 @@ interface PendingRow {
   claimed_email: string | null;
   claimed_wechat: string | null;
   password_hash: string | null;
+  claimed_role: string | null;
+  lark_chat_id: string | null;
 }
 
 async function getPendingByOpenId(openId: string): Promise<PendingRow | null> {
@@ -706,12 +885,15 @@ async function sendOnboardingCard(pending: PendingRow): Promise<void> {
         text: {
           tag: "lark_md",
           content:
-            `**Lark user**: ${pending.lark_name ?? "(unknown)"}\n` +
-            `**open_id**: \`${pending.lark_open_id}\`\n\n` +
-            `**Self-claimed**:\n` +
+            `**Lark identity** (from Lark, can't be spoofed):\n` +
+            `- Name: ${pending.lark_name ?? "(no name)"}\n` +
+            `- Email: ${pending.lark_email ?? "(no email)"}\n` +
+            `- open_id: \`${pending.lark_open_id}\`\n\n` +
+            `**Self-claimed** (from chat, verify these match the person):\n` +
             `- Name: ${pending.claimed_name}\n` +
             `- Email: \`${pending.claimed_email}\`\n` +
-            `- WeChat: ${pending.claimed_wechat}`,
+            `- WeChat: ${pending.claimed_wechat}\n` +
+            `- Role: ${pending.claimed_role ?? "(not claimed)"}`,
         },
       },
       {

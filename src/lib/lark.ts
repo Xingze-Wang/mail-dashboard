@@ -221,6 +221,51 @@ export function extractSenderOpenId(event: unknown): string | null {
   return sender?.sender_id?.open_id ?? null;
 }
 
+/** "p2p" for 1:1 DMs, "group" for group chats. Used to gate flows that
+ *  must only fire in DMs (e.g., onboarding — passwords cannot be
+ *  collected in a group). */
+export function extractChatType(event: unknown): "p2p" | "group" | null {
+  if (!event || typeof event !== "object") return null;
+  const t = (event as { message?: { chat_type?: string } }).message?.chat_type;
+  if (t === "p2p" || t === "group") return t;
+  return null;
+}
+
+/** Resolve a Lark user's display name + bound email by open_id.
+ *  Used by onboarding so the admin's approval card shows the actual
+ *  human name and Lark-side email, not just the cryptographic open_id. */
+export async function getLarkUserInfo(openId: string): Promise<{
+  ok: boolean;
+  name?: string;
+  email?: string;
+  error?: string;
+}> {
+  // Lark v3: GET /contact/v3/users/:user_id?user_id_type=open_id
+  // Requires `contact:user.base:readonly` or `contact:user.email:readonly` scope.
+  const token = await getTenantAccessToken();
+  if (!token) return { ok: false, error: "no access token" };
+  const url = `${pickBase()}/contact/v3/users/${encodeURIComponent(openId)}?user_id_type=open_id`;
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+    const j = (await res.json().catch(() => ({}))) as {
+      code?: number;
+      msg?: string;
+      data?: { user?: { name?: string; email?: string; en_name?: string } };
+    };
+    if (!res.ok || j.code !== 0) {
+      return { ok: false, error: `${res.status} ${j.msg ?? JSON.stringify(j).slice(0, 200)}` };
+    }
+    const u = j.data?.user;
+    return { ok: true, name: u?.name ?? u?.en_name, email: u?.email };
+  } catch (e) {
+    return { ok: false, error: String(e).slice(0, 200) };
+  }
+}
+
 // ─── Auth: open_id → sales_reps row ─────────────────────────────────────
 
 export interface LarkRep {

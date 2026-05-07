@@ -22,6 +22,7 @@ import { SALES_GUIDE } from "@/lib/sales-guide-corpus";
 import {
   extractText,
   extractChatId,
+  extractChatType,
   extractMessageId,
   extractSenderOpenId,
   resolveRepFromOpenId,
@@ -337,6 +338,7 @@ export async function processInboundLarkMessage(
   const chatId = extractChatId(event);
   const messageId = extractMessageId(event);
   const senderOpenId = extractSenderOpenId(event);
+  const chatType = extractChatType(event);
 
   if (!text || !chatId || !senderOpenId) {
     return { ok: true, reason: "incomplete event" };
@@ -369,6 +371,7 @@ export async function processInboundLarkMessage(
       senderOpenId,
       null,
       text,
+      chatType,
     );
     if (onboardResult.handled) {
       // Persist for audit, redacting password steps.
