@@ -522,6 +522,59 @@ export async function runReadTool(
         }
         return { tool: call.tool, result: r as unknown as Record<string, unknown> };
       }
+      case "send_lead_email": {
+        // "Send the X one" — Leon dispatches the existing send route on
+        // behalf of the current rep. We deliberately go through the
+        // HTTP route (not via a direct lib call) so EVERY gate fires
+        // exactly as it would for a dashboard click: trust-wheels cap,
+        // ownership, age gate, override quota, contact firewall, claim
+        // race, blocklist. The chat-side surface is intentionally
+        // smaller than the dashboard's — no draft editing here, the
+        // existing draft_html / draft_subject goes out as-is.
+        const leadId = String(args.lead_id ?? "").trim();
+        if (!leadId) {
+          return { tool: call.tool, result: { error: "lead_id required" } };
+        }
+        const override = Boolean(args.override === true);
+        // Mint an internal session cookie for THIS rep so the route's
+        // requireSession() recognizes us. This works because we're
+        // signing with the same AUTH_SECRET the route verifies against.
+        const { signSession, AUTH_COOKIE } = await import("@/lib/auth");
+        const token = await signSession({
+          repId: session.repId,
+          repName: session.repName ?? "",
+          email: session.email ?? "",
+          role: (session.role === "admin" || session.role === "senior" || session.role === "sales")
+            ? session.role
+            : "sales",
+        });
+        // Resolve the production origin. Vercel auto-injects VERCEL_URL
+        // for runtime; falls back to the canonical custom domain so a
+        // misconfigured env doesn't break sends.
+        const origin = process.env.VERCEL_URL
+          ? `https://${process.env.VERCEL_URL}`
+          : "https://calistamind.com";
+        try {
+          const res = await fetch(`${origin}/api/pipeline/send`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              cookie: `${AUTH_COOKIE}=${token}`,
+            },
+            body: JSON.stringify({ id: leadId, override }),
+            signal: AbortSignal.timeout(30_000),
+          });
+          const j = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+          if (!res.ok) {
+            // Pass route's own error code/message through — those are
+            // already formatted for sales-facing context.
+            return { tool: call.tool, result: { error: j.error ?? `HTTP ${res.status}`, status: res.status, code: j.code, ...j } };
+          }
+          return { tool: call.tool, result: { ok: true, ...j } };
+        } catch (e) {
+          return { tool: call.tool, result: { error: String(e).slice(0, 200) } };
+        }
+      }
       case "read_lark_chat_history": {
         // Admin-only. Reads recent messages from a chat the bot is in.
         // Used for "what did Leo say in 销售群?" — admin pulls context

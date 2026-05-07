@@ -32,8 +32,8 @@ const ADMIN_REP_ID = 5; // Xingze. Same constant as JITR card flow.
 const CONFIG_KEYS = {
   sales_group_chat_id: {
     question:
-      "1️⃣ 销售群 (Lark group) 的 chat_id 是什么? 我会自动把新 rep 拉进去.\n直接发我 chat_id (oc_... 开头), 或者把我加进群我自己抓.",
-    label: "销售群 chat_id",
+      "1️⃣ 算力组群 (Lark group) 的 chat_id 是什么? 我会自动把新同学拉进去.\n直接发我 chat_id (oc_... 开头), 或者把我加进群我自己抓.",
+    label: "算力组群 chat_id",
   },
   welcome_doc_url: {
     question:
@@ -257,11 +257,11 @@ async function startTriage(openId: string, fallbackName: string | null): Promise
     receive_id: openId,
     receive_id_type: "open_id",
     text:
-      `你好${larkName ? ` ${larkName}` : ""}! 我是 Leon, 奇绩算力的销售助手 🤖\n\n` +
+      `你好${larkName ? ` ${larkName}` : ""}! 我是 Leon, 奇绩算力的助手 🤖\n\n` +
       "我们可能没正式认识过, 我先确认一下身份再聊后续:\n\n" +
-      "**你是奇绩 算力组 的销售吗?** 直接回:\n" +
-      "  • `是` (或 `yes`) — 算力组销售, 我帮你接入系统\n" +
-      "  • `奇绩其他组` — 不是算力组销售, 但是奇绩同事\n" +
+      "**你是奇绩 算力组 的同学吗?** 直接回:\n" +
+      "  • `是` (或 `yes`) — 算力组同学, 我帮你接入系统\n" +
+      "  • `奇绩其他组` — 不是算力组, 但是奇绩同事\n" +
       "  • `不是` (或 `no`) — 都不是 (那我大概是把你当客户/申请者来对话了)",
   });
 }
@@ -333,29 +333,34 @@ async function handleTriageStep(pending: PendingRow, text: string): Promise<void
       receive_id_type: "open_id",
       text:
         "没看懂, 再确认一下:\n\n" +
-        "  • `是` — 算力组销售\n" +
+        "  • `是` — 算力组同学\n" +
         "  • `奇绩其他组` — 奇绩别的组\n" +
         "  • `不是` — 不是奇绩",
     });
     return;
   }
 
-  // YES — they're 算力组 sales. Now ask role.
+  // YES — they're 算力组. Skip the role question (they're all "growth"
+  // by default; admin can promote to senior/admin manually after) and
+  // jump straight to the candidate name step. Record the triage
+  // decision so we don't re-ask if they DM later.
+  await supabase.from("lark_triage_decisions").upsert(
+    {
+      lark_open_id: pending.lark_open_id,
+      decision: "is_sales",
+      claimed_role: "growth",
+    },
+    { onConflict: "lark_open_id" },
+  );
   await supabase
     .from("pending_onboarding")
-    .update({ step: "ask_role" })
+    .update({ claimed_role: "growth", step: "ask_name" })
     .eq("id", pending.id);
-  await sendMessage({
-    receive_id: pending.lark_open_id,
-    receive_id_type: "open_id",
-    text:
-      "好的 ✅ 那我帮你接入系统.\n\n" +
-      "**你的 role 是?** 直接回数字:\n" +
-      "  `1` — sales (绝大多数新人是这个)\n" +
-      "  `2` — senior (能审批别的 sales 的草稿, 看全局指标)\n" +
-      "  `3` — admin (可以改路由规则 / 加 rep / 改模板)\n\n" +
-      "(admin 那条会被审批的人质疑 ── 除非你和 Xingze 提前对齐过, 选 1 准没错.)",
-  });
+  // Admin config gating + the actual ask_name prompt live in
+  // maybeStartCandidateAfterRole so we share that path with any
+  // future flow that lands at ask_name.
+  const refreshed = await getPendingByOpenId(pending.lark_open_id);
+  if (refreshed) await maybeStartCandidateAfterRole(refreshed);
 }
 
 // ─── candidate flow ────────────────────────────────────────────────────
@@ -378,7 +383,7 @@ async function maybeStartCandidateAfterRole(pending: PendingRow): Promise<void> 
     receive_id: pending.lark_open_id,
     receive_id_type: "open_id",
     text:
-      "OK, 开始正式问几个问题:\n\n" +
+      "好的 ✅ 那我帮你接入. 几个简单的问题:\n\n" +
       "**你叫什么名字?** (中英文都行, 比如 'Yujie' 或 '余杰')",
   });
 }
@@ -603,54 +608,92 @@ async function provisionRep(
   return { ok: true, repId: inserted.id, senderEmail: inserted.sender_email };
 }
 
+// Hardcoded intro to 奇绩算力 itself. Always shown to new joiners
+// regardless of admin config — this is the first thing they should
+// learn about the team. Admin can layer extra context via
+// onboarding_config.team_intro (e.g., who's who).
+const QIJI_INTRO_TEXT =
+  "**奇绩算力 (Qiji Compute) 在做什么:**\n\n" +
+  "我们给做 AI 研究的研究员提供**免费 GPU 算力**, 帮他们的研究跑出来.\n\n" +
+  "工作流大概是:\n" +
+  "  • 每天 cron 扫 arXiv 上发的新论文 (cs.LG / cs.AI / cs.CL / cs.CV / cs.RO 等方向)\n" +
+  "  • AI 自动判断哪些论文需要算力 + 作者是不是中国研究员\n" +
+  "  • 路由到对应同学 (按 lead 强度 + 国内/海外邮箱)\n" +
+  "  • AI 拟好邮件草稿, 你确认后发出去\n" +
+  "  • 客户回信加微信 → 你跟客户聊 → 客户申请 → 拿到算力\n\n" +
+  "你这边的工作是**判断这条 lead 值不值得发** + **跟回信的人接上**. " +
+  "重复劳动 (拟稿 / 跟踪 / 提醒 / 统计) 我帮你做.";
+
 async function sendWalkthrough(
   pending: PendingRow,
   repId: number,
   senderEmail: string,
 ): Promise<void> {
   const cfg = await loadAdminConfig();
-  const lines: string[] = [
+
+  // Message 1: welcome + what 算力组 is + dashboard login.
+  // We split into two messages so the new rep has time to breathe and
+  // open the dashboard link before the system tour arrives.
+  const msg1Lines: string[] = [
     `🎉 你已通过审核, 欢迎加入团队!`,
     ``,
-    `让我带你看一眼系统:`,
+    QIJI_INTRO_TEXT,
     ``,
-    `**1. Dashboard**: https://calistamind.com`,
-    `   登录: \`${senderEmail}\` + 你刚才设的密码. 改密码可以在 settings.`,
+    `**Dashboard**: https://calistamind.com`,
+    `登录: \`${senderEmail}\` + 你刚才设的密码. (改密码在右上角 settings.)`,
     ``,
-    `**2. /pipeline**: 你的 lead 在这. 每天早上 cron 塞新 lead 进来, AI 已经帮你拟好邮件了, 你看一眼觉得 OK 就点 Send.`,
-    `   分配规则: normal + 国内邮箱 (.cn) 的 lead 会到你这.`,
-    ``,
-    `**3. /emails**: 邮件追踪 — 谁打开了 / 谁回了 / 谁退订, 都在这里.`,
-    ``,
-    `**4. 加微信**: 客户回邮件后跟他要微信, 加上之后回 dashboard 点 "Added on WeChat" 标记一下, 我们就知道这条 lead 转化了.`,
-    ``,
-    `**5. 我 (Leon) 怎么用**: 我能帮你查 lead, 改 owner, 看你的统计. 直接 DM 我就行, 比如 "我今天还有几条 lead?" "把张三的 lead 给 Leo".`,
+    `**重要**: 我 (Leon) 不只在 Lark 里. 你登进 dashboard 也会看到我 — 右下角有个 ✨ helper 按钮, 那是同一个我, 上下文也是通的. 你在这里跟我聊的, 那边也记得.`,
   ];
-  if (cfg.welcome_doc_url) {
-    lines.push(``, `📚 **新人手册**: ${cfg.welcome_doc_url}`);
-  }
   if (cfg.team_intro) {
-    lines.push(``, `👥 **团队介绍**:\n${cfg.team_intro}`);
+    msg1Lines.push(``, `👥 **团队介绍**:`, cfg.team_intro);
+  }
+  if (cfg.welcome_doc_url) {
+    msg1Lines.push(``, `📚 **新人手册**: ${cfg.welcome_doc_url}`);
   }
   if (cfg.day_one_notes) {
-    lines.push(``, `📝 **第一天提醒**:\n${cfg.day_one_notes}`);
+    msg1Lines.push(``, `📝 **第一天提醒**:`, cfg.day_one_notes);
   }
-  if (cfg.sales_group_chat_id) {
-    // Best-effort: try to add the rep to the sales group. If it fails
-    // (token / scope issue), just mention the group instead.
-    const added = await addToSalesGroup(cfg.sales_group_chat_id, pending.lark_open_id);
-    if (added) {
-      lines.push(``, `已经把你拉进销售群, 大家会欢迎你 👋`);
-    } else {
-      lines.push(``, `(销售群拉人没成功, admin 待会手动加你. chat_id: ${cfg.sales_group_chat_id})`);
-    }
-  }
-  lines.push(``, `有问题随时 DM 我. 第一封邮件慢慢看, 不急.`);
-  void repId; // currently unused but available for future per-rep nudges
   await sendMessage({
     receive_id: pending.lark_open_id,
     receive_id_type: "open_id",
-    text: lines.join("\n"),
+    text: msg1Lines.join("\n"),
+  });
+
+  // Message 2: short system tour + how to use Leon.
+  // Sent right after msg1 (no artificial delay — Lark will display them
+  // in order). Keeps each message scrollable rather than a wall.
+  const msg2Lines: string[] = [
+    `登进去之后看这几个页面就够了:`,
+    ``,
+    `**/pipeline** — 你的 lead 在这. 每天早上 cron 塞新 lead 进来, AI 已经帮你拟好邮件了, 看一眼觉得 OK 就点 Send.`,
+    ``,
+    `**/emails** — 邮件追踪. 谁打开了 / 谁回了 / 谁退订, 全在这.`,
+    ``,
+    `**/inbox** — 客户回信都在这. (我也会在收到新回复时主动 DM 你提醒.)`,
+    ``,
+    `**加微信流程**: 客户回邮件之后, 你跟他要微信. 加上之后回 dashboard 点 "Added on WeChat" 标记一下 — **或者直接 Lark 里跟我说一句 "加了 X 微信" 我帮你标**. 这是算转化的关键一步, 别忘.`,
+    ``,
+    `**怎么使唤我**: 直接 DM. 例子:`,
+    `  • "我今天还有几条 ready?"`,
+    `  • "把张三的 lead 给 Leo"`,
+    `  • "刚加了 wang@xxx 的微信"`,
+    `  • "有新回复吗?"`,
+    `  • "发了那条 Yujie 的"  → 我会真的把那封发出去`,
+  ];
+  if (cfg.sales_group_chat_id) {
+    const added = await addToSalesGroup(cfg.sales_group_chat_id, pending.lark_open_id);
+    if (added) {
+      msg2Lines.push(``, `已经把你拉进算力组群了 👋`);
+    } else {
+      msg2Lines.push(``, `(算力组群我没拉成功, admin 待会手动加你.)`);
+    }
+  }
+  msg2Lines.push(``, `第一封邮件慢慢看, 不急. 有问题随时 DM 我.`);
+  void repId;
+  await sendMessage({
+    receive_id: pending.lark_open_id,
+    receive_id_type: "open_id",
+    text: msg2Lines.join("\n"),
   });
 }
 
