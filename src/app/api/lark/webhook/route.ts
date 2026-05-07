@@ -71,7 +71,17 @@ export async function POST(req: Request) {
     try {
       const agent = await import("@/lib/lark-agent");
       if (isCardAction) {
-        await agent.processJitrCardAction(parsed, "webhook");
+        // Card-action discriminator: the inner event.action.value carries
+        // the card type. Onboarding cards stamp `onboarding_action`,
+        // JITR cards stamp `jitr_action`. Route accordingly.
+        const ev = (parsed as { event?: { action?: { value?: Record<string, unknown> } } }).event;
+        const value = ev?.action?.value ?? {};
+        if ("onboarding_action" in value) {
+          const onboarding = await import("@/lib/onboarding");
+          await onboarding.processOnboardingCardAction(parsed);
+        } else {
+          await agent.processJitrCardAction(parsed, "webhook");
+        }
       } else {
         await agent.processInboundLarkMessage(parsed, "webhook");
       }

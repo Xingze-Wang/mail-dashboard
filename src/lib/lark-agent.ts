@@ -355,6 +355,39 @@ export async function processInboundLarkMessage(
     }
   }
 
+  // Onboarding has the highest priority: a candidate mid-onboarding,
+  // or an admin mid-config-setup, or a brand-new Lark user signaling
+  // "I'm a new rep". If onboarding handles the message, we don't fall
+  // through to the rep / client-agent paths.
+  //
+  // We log the message AFTER the onboarding handler decides, so we can
+  // redact passwords (the ask_password step writes plaintext to the
+  // user's reply otherwise).
+  try {
+    const onboarding = await import("@/lib/onboarding");
+    const onboardResult = await onboarding.tryHandleOnboardingMessage(
+      senderOpenId,
+      null,
+      text,
+    );
+    if (onboardResult.handled) {
+      // Persist for audit, redacting password steps.
+      const isPasswordStep = onboardResult.reason === "candidate-step:ask_password";
+      await supabase.from("lark_messages").insert({
+        chat_id: chatId,
+        message_id: messageId,
+        rep_id: null,
+        role: "user",
+        text: isPasswordStep ? "[REDACTED PASSWORD]" : text,
+        raw: isPasswordStep ? { redacted: true, onboarding: true } : rawEvent,
+      });
+      return { ok: true, reason: onboardResult.reason ?? "onboarding-handled" };
+    }
+  } catch (err) {
+    console.error(`[lark-agent/${transport}] onboarding handler failed`, err);
+    // Fall through — better to reply via client-agent than crash.
+  }
+
   const rep = await resolveRepFromOpenId(senderOpenId);
   if (!rep) {
     // Unbound sender → treat as a client/applicant. Route through the

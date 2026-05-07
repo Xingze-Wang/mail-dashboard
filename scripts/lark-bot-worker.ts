@@ -144,16 +144,25 @@ const dispatcher = new Lark.EventDispatcher({}).register({
     }
     return "";
   },
-  // JITR card-action callback. Fires when a rep clicks a button on a
-  // JITR offer card. We dispatch to processJitrCardAction which updates
-  // jitr_offers, patches the per-rep template (on accept), and DMs admin.
+  // Card-action callback. Two card types share this trigger:
+  //   - JITR offer cards (jitr_action in payload) → processJitrCardAction
+  //   - Onboarding admin cards (onboarding_action) → processOnboardingCardAction
+  // Discriminate by which key sits in event.action.value.
   "card.action.trigger": async (data: unknown) => {
     const t0 = Date.now();
     try {
-      const result = await processJitrCardAction({ event: data }, "ws");
-      console.log(`[worker] card action in ${Date.now() - t0}ms ok=${result.ok} reason=${result.reason ?? ""}`);
+      const value =
+        ((data as { action?: { value?: Record<string, unknown> } })?.action?.value) ?? {};
+      if ("onboarding_action" in value) {
+        const onboarding = await import("../src/lib/onboarding.ts");
+        const result = await onboarding.processOnboardingCardAction({ event: data });
+        console.log(`[worker] onboarding card action in ${Date.now() - t0}ms ok=${result.ok} reason=${result.reason ?? ""}`);
+      } else {
+        const result = await processJitrCardAction({ event: data }, "ws");
+        console.log(`[worker] jitr card action in ${Date.now() - t0}ms ok=${result.ok} reason=${result.reason ?? ""}`);
+      }
     } catch (err) {
-      console.error(`[worker] processJitrCardAction threw:`, err);
+      console.error(`[worker] card action threw:`, err);
     }
     return "";
   },
