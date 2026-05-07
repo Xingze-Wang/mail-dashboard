@@ -266,6 +266,80 @@ export async function getLarkUserInfo(openId: string): Promise<{
   }
 }
 
+/** Read recent messages from a Lark chat the bot is in. Used by the
+ *  read_lark_chat_history helper-tool so admin can ask "what did Leo
+ *  say in 销售群?" and Leon summarizes without the admin having to
+ *  scroll back manually.
+ *
+ *  The bot must be a member of the chat. Lark returns a 'permission
+ *  denied' error otherwise (we surface that as { ok: false, error }).
+ *
+ *  Pagination via page_token; we only ever fetch one page (last N
+ *  messages) — for deeper history use the Lark UI directly. */
+export async function readChatHistory(args: {
+  chat_id: string;
+  page_size?: number;
+}): Promise<{
+  ok: boolean;
+  messages?: Array<{ message_id: string; sender_open_id?: string; created_at?: string; text: string; msg_type: string }>;
+  error?: string;
+}> {
+  const token = await getTenantAccessToken();
+  if (!token) return { ok: false, error: "no access token" };
+  const pageSize = Math.max(1, Math.min(50, args.page_size ?? 20));
+  const url = `${pickBase()}/im/v1/messages?container_id_type=chat&container_id=${encodeURIComponent(args.chat_id)}&sort_type=ByCreateTimeDesc&page_size=${pageSize}`;
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(15_000),
+    });
+    const j = (await res.json().catch(() => ({}))) as {
+      code?: number;
+      msg?: string;
+      data?: {
+        items?: Array<{
+          message_id?: string;
+          create_time?: string;
+          msg_type?: string;
+          body?: { content?: string };
+          sender?: { id?: string; sender_type?: string; id_type?: string };
+        }>;
+      };
+    };
+    if (!res.ok || j.code !== 0) {
+      return { ok: false, error: `${res.status} ${j.msg ?? JSON.stringify(j).slice(0, 200)}` };
+    }
+    const items = j.data?.items ?? [];
+    const messages = items.map((it) => {
+      let text = "";
+      if (it.msg_type === "text" && typeof it.body?.content === "string") {
+        try {
+          const parsed = JSON.parse(it.body.content) as { text?: string };
+          text = (parsed.text ?? "").replace(/@_user_\d+/g, "").trim();
+        } catch {
+          text = "";
+        }
+      } else if (typeof it.body?.content === "string") {
+        // For non-text msg types (image, post, file, etc.), surface a
+        // placeholder so the LLM knows something happened without
+        // having to render the binary blob.
+        text = `[${it.msg_type ?? "non-text"} message]`;
+      }
+      return {
+        message_id: it.message_id ?? "",
+        sender_open_id: it.sender?.id_type === "open_id" ? it.sender?.id : undefined,
+        created_at: it.create_time,
+        text,
+        msg_type: it.msg_type ?? "unknown",
+      };
+    });
+    return { ok: true, messages };
+  } catch (e) {
+    return { ok: false, error: String(e).slice(0, 200) };
+  }
+}
+
 // ─── Auth: open_id → sales_reps row ─────────────────────────────────────
 
 export interface LarkRep {

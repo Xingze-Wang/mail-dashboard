@@ -25,7 +25,7 @@ import { runIntegrity } from "@/lib/integrity";
 import { diagnoseMetricDrop, type DiagnoseMetric } from "@/lib/diagnose-metric";
 import type { ToolCall } from "@/lib/helper-tools";
 
-type Session = { repId: number; role: string; repName?: string; email?: string };
+type Session = { repId: number; role: string; repName?: string; email?: string; messageId?: string | null };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -521,6 +521,246 @@ export async function runReadTool(
           });
         }
         return { tool: call.tool, result: r as unknown as Record<string, unknown> };
+      }
+      case "read_lark_chat_history": {
+        // Admin-only. Reads recent messages from a chat the bot is in.
+        // Used for "what did Leo say in 销售群?" — admin pulls context
+        // without manually scrolling. Sales reps can't call this — it
+        // would be too easy to misuse for "spy on what others said".
+        if (session.role !== "admin") {
+          return { tool: call.tool, result: { error: "admin only" } };
+        }
+        const chatId = String(args.chat_id ?? "").trim();
+        if (!/^oc_[A-Za-z0-9]+$/.test(chatId)) {
+          return { tool: call.tool, result: { error: "chat_id must look like oc_xxx" } };
+        }
+        const pageSize = Math.max(1, Math.min(50, Number(args.page_size) || 20));
+        const { readChatHistory } = await import("@/lib/lark");
+        const r = await readChatHistory({ chat_id: chatId, page_size: pageSize });
+        return { tool: call.tool, result: r as unknown as Record<string, unknown> };
+      }
+      case "record_admin_request": {
+        // Leon writes a structured note for the admin queue (admin_inbox).
+        // Idempotent via dedup_hash: same kind + headline + source_rep_id
+        // → update the existing row instead of inserting a duplicate.
+        const kind = String(args.kind ?? "observation").toLowerCase();
+        if (kind !== "request" && kind !== "observation" && kind !== "idea") {
+          return { tool: call.tool, result: { error: "kind must be one of: request, observation, idea" } };
+        }
+        const headline = String(args.headline ?? "").trim().slice(0, 200);
+        const body = typeof args.body === "string" ? args.body.slice(0, 4000) : null;
+        const evidence = args.evidence && typeof args.evidence === "object" ? args.evidence : null;
+        if (!headline) {
+          return { tool: call.tool, result: { error: "headline required" } };
+        }
+        // The current rep IS the source unless explicitly overridden.
+        // If admin is using Leon, source_rep_id stays admin's id (which
+        // is fine — it just means "Leon noticed this while talking to admin").
+        const sourceRepId = typeof args.source_rep_id === "number"
+          ? args.source_rep_id
+          : session.repId;
+        // dedup hash via Web Crypto (no external dep). Hashes stable
+        // identity components so the same observation collapses.
+        const enc = new TextEncoder();
+        const key = `${kind}|${headline.toLowerCase()}|${sourceRepId ?? ""}`;
+        const buf = await crypto.subtle.digest("SHA-256", enc.encode(key));
+        const dedupHash = Array.from(new Uint8Array(buf))
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join("");
+        const { data: existing } = await supabase
+          .from("admin_inbox")
+          .select("id, status")
+          .eq("dedup_hash", dedupHash)
+          .maybeSingle();
+        if (existing) {
+          // Update body/evidence (refresh context) but DON'T flip status
+          // back to 'new' if admin already acknowledged/dismissed it —
+          // that would re-spam the inbox.
+          await supabase
+            .from("admin_inbox")
+            .update({ body, evidence, updated_at: new Date().toISOString() })
+            .eq("id", existing.id);
+          return {
+            tool: call.tool,
+            result: { ok: true, id: existing.id, deduped: true, existing_status: existing.status },
+          };
+        }
+        const { data, error } = await supabase
+          .from("admin_inbox")
+          .insert({
+            kind,
+            headline,
+            body,
+            source_rep_id: sourceRepId ?? null,
+            evidence,
+            dedup_hash: dedupHash,
+          })
+          .select("id, status")
+          .single();
+        if (error) return { tool: call.tool, result: { error: error.message } };
+        return { tool: call.tool, result: { ok: true, id: data.id, deduped: false } };
+      }
+      case "list_admin_inbox": {
+        // Admin asks Leon "what have you been noticing?" — read pending
+        // entries. Defaults to status='new'. Sales reps can't read this
+        // (it's admin's queue).
+        if (session.role !== "admin") {
+          return { tool: call.tool, result: { error: "admin only" } };
+        }
+        const status = typeof args.status === "string" ? args.status : "new";
+        const limit = Math.max(1, Math.min(50, Number(args.limit) || 20));
+        const { data, error } = await supabase
+          .from("admin_inbox")
+          .select("id, kind, headline, body, source_rep_id, evidence, status, created_at, updated_at")
+          .eq("status", status)
+          .order("created_at", { ascending: false })
+          .limit(limit);
+        if (error) return { tool: call.tool, result: { error: error.message } };
+        return {
+          tool: call.tool,
+          result: {
+            status,
+            count: (data ?? []).length,
+            items: data ?? [],
+          },
+        };
+      }
+      case "mark_admin_inbox": {
+        // Admin updates the status of an admin_inbox entry. 'acknowledged'
+        // = "I saw this", 'done' = "I acted on it", 'dismissed' = "ignore".
+        if (session.role !== "admin") {
+          return { tool: call.tool, result: { error: "admin only" } };
+        }
+        const id = String(args.id ?? "").trim();
+        const newStatus = String(args.status ?? "").toLowerCase();
+        if (!id) return { tool: call.tool, result: { error: "id required" } };
+        if (!["acknowledged", "dismissed", "done"].includes(newStatus)) {
+          return { tool: call.tool, result: { error: "status must be one of: acknowledged, dismissed, done" } };
+        }
+        const { error } = await supabase
+          .from("admin_inbox")
+          .update({ status: newStatus, acted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+          .eq("id", id);
+        if (error) return { tool: call.tool, result: { error: error.message } };
+        return { tool: call.tool, result: { ok: true, id, status: newStatus } };
+      }
+      case "react_to_message": {
+        // Drop a Lark emoji reaction on a message instead of replying
+        // with text. Defaults to the message Leon is currently
+        // responding to (session.messageId, threaded in via lark-agent).
+        // Use cases: rep says "just sent the X one" → ✅, "thanks" → 👍.
+        // The "no reply" behavior must be enforced by the LLM via the
+        // catalog instructions; this tool only fires the reaction.
+        const { reactToMessage } = await import("@/lib/lark");
+        const explicitId = typeof args.message_id === "string" ? args.message_id.trim() : "";
+        const messageId = explicitId || session.messageId || "";
+        if (!messageId) {
+          return { tool: call.tool, result: { error: "no message_id available (session has none and none provided)" } };
+        }
+        const emoji = String(args.emoji ?? "OK").toUpperCase();
+        const allowed = ["EYES", "OK", "THUMBSUP", "DONE", "HEART"] as const;
+        if (!(allowed as readonly string[]).includes(emoji)) {
+          return { tool: call.tool, result: { error: `emoji must be one of ${allowed.join(", ")}` } };
+        }
+        const r = await reactToMessage({
+          message_id: messageId,
+          emoji_type: emoji as (typeof allowed)[number],
+        });
+        return { tool: call.tool, result: r as unknown as Record<string, unknown> };
+      }
+      case "get_recent_inbound": {
+        // "Any new replies?" — list inbound emails to this rep's threads.
+        // Scoped via inbound_emails.rep_id (set by migration 014). Admin
+        // can pass repId in args to inspect a rep; sales sees only own.
+        // We synthesize a snippet from `text` since the column itself
+        // doesn't carry one. Schema: id, from, to, subject, html, text,
+        // thread_id, is_read, rep_id, created_at.
+        const target = scopeRepId(session, args);
+        const days = Math.max(1, Math.min(30, Number(args.days) || 7));
+        const limit = Math.max(1, Math.min(20, Number(args.limit) || 10));
+        const since = new Date(Date.now() - days * 86_400_000).toISOString();
+        let q = supabase
+          .from("inbound_emails")
+          .select("id, from, subject, text, thread_id, is_read, created_at")
+          .gte("created_at", since)
+          .order("created_at", { ascending: false })
+          .limit(limit);
+        if (target !== null) q = q.eq("rep_id", target);
+        const { data, error } = await q;
+        if (error) return { tool: call.tool, result: { error: error.message } };
+        return {
+          tool: call.tool,
+          result: {
+            windowDays: days,
+            count: (data ?? []).length,
+            replies: (data ?? []).map((m) => ({
+              id: m.id,
+              from: m.from,
+              subject: m.subject,
+              snippet:
+                typeof m.text === "string"
+                  ? m.text.replace(/\s+/g, " ").trim().slice(0, 200)
+                  : null,
+              thread_id: m.thread_id,
+              unread: !m.is_read,
+              received_at: m.created_at,
+            })),
+          },
+        };
+      }
+      case "mark_wechat_added": {
+        // Rep tells Leon "I added X on WeChat". Same effect as clicking
+        // "Added on WeChat" in /emails — flips brief_lookups.wechat_at,
+        // sets marked_by_rep_id to the ACTING rep (NOT necessarily the
+        // lead owner) per CLAUDE.md actor-vs-owner rule: "the closer
+        // gets credit". Idempotent — calling twice doesn't double-count
+        // (relies on ux_brief_lookups_wechat_per_lead unique index).
+        const leadId = String(args.lead_id ?? "").trim();
+        const notes = typeof args.notes === "string" ? args.notes.slice(0, 500) : null;
+        if (!leadId) {
+          return { tool: call.tool, result: { error: "lead_id required" } };
+        }
+        // Look up the lead so we can fill query (= recipient email),
+        // arxiv_id, and confirm the row exists. Sales/admin can mark
+        // any active lead; we don't enforce ownership (per CLAUDE.md
+        // "records over people" — wechat marking is the closer's act).
+        const { data: lead } = await supabase
+          .from("pipeline_leads")
+          .select("id, author_email, arxiv_id, author_name, title")
+          .eq("id", leadId)
+          .maybeSingle();
+        if (!lead) {
+          return { tool: call.tool, result: { error: `lead ${leadId} not found` } };
+        }
+        const payload = {
+          query: lead.author_email ?? lead.author_name ?? leadId,
+          arxiv_id: lead.arxiv_id ?? null,
+          lead_id: leadId,
+          added_wechat: true,
+          wechat_at: new Date().toISOString(),
+          notes,
+          marked_by_rep_id: session.repId,
+          marked_by_email: session.email,
+        };
+        const { data, error } = await supabase
+          .from("brief_lookups")
+          .upsert(payload, { onConflict: "lead_id", ignoreDuplicates: false })
+          .select("id, wechat_at, marked_by_rep_id")
+          .single();
+        if (error) {
+          return { tool: call.tool, result: { error: error.message } };
+        }
+        return {
+          tool: call.tool,
+          result: {
+            ok: true,
+            lead_id: leadId,
+            recipient: lead.author_email ?? lead.author_name,
+            paper_title: lead.title,
+            marked_at: data?.wechat_at,
+            marked_by_rep_id: data?.marked_by_rep_id,
+          },
+        };
       }
       case "get_my_artifacts": {
         const kind = args.kind ? String(args.kind) : null;

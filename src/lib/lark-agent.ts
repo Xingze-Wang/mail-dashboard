@@ -53,6 +53,10 @@ interface LarkSession {
   role: "admin" | "senior" | "sales";
   repName?: string;
   email?: string;
+  // Lark message_id of the inbound message Leon is currently replying to.
+  // Threaded through so the react_to_message tool can ✅ the rep's
+  // message instead of replying with a wall of text.
+  messageId?: string | null;
 }
 
 async function callLLM(system: string, user: string): Promise<{ text: string; model: string }> {
@@ -483,6 +487,7 @@ export async function processInboundLarkMessage(
     role: rep.role,
     repName: rep.name,
     email: rep.email,
+    messageId,
   };
 
   const reply = await runAgent(session, text, history);
@@ -497,7 +502,13 @@ export async function processInboundLarkMessage(
       suffix = "\n\n— 这步要在网页 /pipeline 里点 confirm 才会执行, Lark 里只能讨论.";
     }
   }
-  const finalReply = (cleaned + suffix).trim() || "(空)";
+  const trimmed = (cleaned + suffix).trim();
+  // Empty reply is intentional when Leon used react_to_message — the
+  // emoji reaction IS the response, sending text on top would be noise.
+  // We still log the empty turn for audit but skip the outbound Lark
+  // sendMessage. (Old behavior: defaulted to "(空)" which got sent
+  // literally and looked broken.)
+  const finalReply = trimmed || "";
 
   // Persist BEFORE sendMessage so we have proof the agent worked even
   // if the outbound Lark call fails (network blip, expired token,
@@ -506,13 +517,15 @@ export async function processInboundLarkMessage(
     chat_id: chatId,
     rep_id: rep.id,
     role: "assistant",
-    text: finalReply,
+    text: finalReply || "(empty — likely emoji-reacted)",
   });
-  await sendMessage({
-    receive_id: chatId,
-    receive_id_type: "chat_id",
-    text: finalReply,
-  }).catch((e) => console.error(`[lark-agent/${transport}] reply sendMessage failed`, e));
+  if (finalReply) {
+    await sendMessage({
+      receive_id: chatId,
+      receive_id_type: "chat_id",
+      text: finalReply,
+    }).catch((e) => console.error(`[lark-agent/${transport}] reply sendMessage failed`, e));
+  }
 
   return { ok: true };
 }
