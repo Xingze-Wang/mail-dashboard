@@ -26,8 +26,34 @@
  */
 
 import { useCallback, useState } from "react";
-import { Loader2, Play, AlertCircle, Mail, BadgeCheck, Tag, Brain } from "lucide-react";
+import {
+  Loader2, Play, AlertCircle, Mail, BadgeCheck, Tag, Brain, CheckCircle2,
+  GitFork, X,
+} from "lucide-react";
 import { sanitizeHtml } from "@/lib/sanitize";
+
+const FORKABLE_SLOTS = [
+  { key: "subject_format", label: "Subject line" },
+  { key: "intro_prompt", label: "Intro (LLM prompt)" },
+  { key: "greeting_format", label: "Greeting" },
+  { key: "rep_intro_format", label: "Rep intro paragraph" },
+  { key: "school_pitch_format", label: "School + compute pitch" },
+  { key: "cta_signoff_format", label: "CTA + signoff" },
+] as const;
+type SlotKey = typeof FORKABLE_SLOTS[number]["key"];
+
+interface SlotsResponse {
+  id: string;
+  name: string;
+  status: string;
+  segment_default: string | null;
+  subject_format: string;
+  intro_prompt: string;
+  greeting_format: string;
+  rep_intro_format: string;
+  school_pitch_format: string;
+  cta_signoff_format: string;
+}
 
 interface Lead {
   id: number;
@@ -45,6 +71,10 @@ interface Template {
   rep_id: number | null;
   status: "active" | "proposal" | "archived";
   segment_default: string | null;
+  // Historical performance over last 90 days. Empty (sent=0) for new
+  // templates / proposals — UI hides the metric block when sent<10
+  // because rates on tiny n are misleading.
+  perf90d: { sent: number; clicked: number; wechat: number };
 }
 
 interface Cell {
@@ -82,27 +112,17 @@ export default function TemplatesBenchPage() {
   // they want to know WHY a cell reads the way it does.
   const [critiques, setCritiques] = useState<Record<string, { state: "loading" | "ready" | "error"; text: string }>>({});
 
-  const requestCritique = useCallback(async (leadId: number, templateId: string) => {
-    const key = `${leadId}|${templateId}`;
-    setCritiques((prev) => ({ ...prev, [key]: { state: "loading", text: "" } }));
-    try {
-      const res = await fetch("/api/templates/critique", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ lead_id: leadId, template_id: templateId }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        setCritiques((prev) => ({ ...prev, [key]: { state: "error", text: err.error ?? `HTTP ${res.status}` } }));
-        return;
-      }
-      const data = (await res.json()) as { critique: string };
-      setCritiques((prev) => ({ ...prev, [key]: { state: "ready", text: data.critique } }));
-    } catch (e) {
-      setCritiques((prev) => ({ ...prev, [key]: { state: "error", text: (e as Error).message } }));
-    }
-  }, []);
+  // Fork modal state. When non-null, the modal is open editing a fork
+  // of `parent`. The user picks ONE slot to vary (typically — multi-slot
+  // forks are allowed but discouraged because they confound future A/B
+  // signal). On Save, POST /api/templates/fork creates a status='proposal'
+  // row that shows up as a new column on the next bench Run.
+  const [forkParent, setForkParent] = useState<SlotsResponse | null>(null);
+  const [forkLoading, setForkLoading] = useState(false);
+  const [forkName, setForkName] = useState("");
+  const [forkSlot, setForkSlot] = useState<SlotKey>("school_pitch_format");
+  const [forkValue, setForkValue] = useState("");
+  const [forkSegment, setForkSegment] = useState<string>("");
 
   const run = useCallback(async () => {
     setLoading(true);
@@ -125,6 +145,137 @@ export default function TemplatesBenchPage() {
       setLoading(false);
     }
   }, [segment, n]);
+
+  const openForkModal = useCallback(async (templateId: string) => {
+    setForkLoading(true);
+    try {
+      const res = await fetch(`/api/templates/${templateId}/slots`, { credentials: "include" });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(`Couldn't load template: ${err.error ?? res.status}`);
+        return;
+      }
+      const data = (await res.json()) as SlotsResponse;
+      setForkParent(data);
+      // Suggest a name like "fork_<parent>_<dateY-M-D>"
+      setForkName(`fork_${data.name}_${new Date().toISOString().slice(2, 10).replace(/-/g, "")}`);
+      // Default to varying school_pitch (the highest-leverage paragraph
+      // per design doc § 1) but pre-fill with the parent's value.
+      setForkSlot("school_pitch_format");
+      setForkValue(data.school_pitch_format);
+      setForkSegment(data.segment_default ?? "");
+    } finally {
+      setForkLoading(false);
+    }
+  }, []);
+
+  const closeForkModal = useCallback(() => {
+    setForkParent(null);
+    setForkName("");
+    setForkValue("");
+    setForkSegment("");
+  }, []);
+
+  const submitFork = useCallback(async () => {
+    if (!forkParent) return;
+    if (!forkName.trim()) {
+      alert("Name is required");
+      return;
+    }
+    // Refuse no-op forks: if the chosen slot's value matches the parent,
+    // there's nothing to test. (Multi-slot forks could still be useful
+    // here, but v1 only edits one — tighten later if needed.)
+    const parentValue = (forkParent as unknown as Record<string, string>)[forkSlot];
+    if (parentValue === forkValue) {
+      alert(`The ${forkSlot} content is identical to the parent — nothing to fork.`);
+      return;
+    }
+    try {
+      const res = await fetch("/api/templates/fork", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          parent_id: forkParent.id,
+          name: forkName.trim(),
+          overrides: { [forkSlot]: forkValue },
+          segment_default: forkSegment.trim() || null,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(`Fork failed: ${err.error ?? res.status}`);
+        return;
+      }
+      closeForkModal();
+      // Re-run so the new proposal column appears in the grid.
+      void run();
+    } catch (e) {
+      alert(`Fork failed: ${(e as Error).message}`);
+    }
+  }, [forkParent, forkName, forkSlot, forkValue, forkSegment, closeForkModal, run]);
+
+  const promoteProposal = useCallback(
+    async (templateId: string, name: string) => {
+      // Confirm — this changes prod behavior (loadEffectiveTemplate
+      // will start picking this row up). Safer to require an explicit
+      // click than to do it silently on the bench.
+      const ok = window.confirm(
+        `Activate "${name}"? It will become a candidate for production sends. Existing 'global' / per-rep templates are NOT auto-archived — you'll need to demote those separately if needed.`,
+      );
+      if (!ok) return;
+      try {
+        const res = await fetch(`/api/templates/${templateId}/promote`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          alert(`Promote failed: ${err.error ?? res.status}`);
+          return;
+        }
+        // Optimistic: flip the local copy. A full re-run would re-render
+        // every Gemini call, which is wasteful and slow.
+        setResult((prev) =>
+          prev
+            ? {
+                ...prev,
+                templates: prev.templates.map((t) =>
+                  t.id === templateId ? { ...t, status: "active" } : t,
+                ),
+              }
+            : prev,
+        );
+      } catch (e) {
+        alert(`Promote failed: ${(e as Error).message}`);
+      }
+    },
+    [],
+  );
+
+  const requestCritique = useCallback(async (leadId: number, templateId: string) => {
+    const key = `${leadId}|${templateId}`;
+    setCritiques((prev) => ({ ...prev, [key]: { state: "loading", text: "" } }));
+    try {
+      const res = await fetch("/api/templates/critique", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lead_id: leadId, template_id: templateId }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setCritiques((prev) => ({ ...prev, [key]: { state: "error", text: err.error ?? `HTTP ${res.status}` } }));
+        return;
+      }
+      const data = (await res.json()) as { critique: string };
+      setCritiques((prev) => ({ ...prev, [key]: { state: "ready", text: data.critique } }));
+    } catch (e) {
+      setCritiques((prev) => ({ ...prev, [key]: { state: "error", text: (e as Error).message } }));
+    }
+  }, []);
 
   if (authError) {
     return (
@@ -213,6 +364,107 @@ export default function TemplatesBenchPage() {
         </div>
       )}
 
+      {forkParent && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-4 border-b border-slate-200">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">
+                  Fork "{forkParent.name}"
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Pick one paragraph slot to vary. Saves as a new template with status=proposal — preview it on the bench, then promote when you like it.
+                </p>
+              </div>
+              <button
+                onClick={closeForkModal}
+                className="text-slate-400 hover:text-slate-600 p-1"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  New template name
+                </label>
+                <input
+                  type="text"
+                  value={forkName}
+                  onChange={(e) => setForkName(e.target.value)}
+                  className="w-full text-sm border border-slate-300 rounded px-2 py-1.5 font-mono"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Default segment (optional)
+                </label>
+                <select
+                  value={forkSegment}
+                  onChange={(e) => setForkSegment(e.target.value)}
+                  className="w-full text-sm border border-slate-300 rounded px-2 py-1.5"
+                >
+                  <option value="">(none)</option>
+                  <option value="cn">cn</option>
+                  <option value="overseas">overseas</option>
+                  <option value="edu">edu</option>
+                  <option value="fallback">fallback</option>
+                </select>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  When set + status=active, future loads will route this segment to this template by default.
+                </p>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Vary which paragraph?
+                </label>
+                <select
+                  value={forkSlot}
+                  onChange={(e) => {
+                    const newSlot = e.target.value as SlotKey;
+                    setForkSlot(newSlot);
+                    setForkValue((forkParent as unknown as Record<string, string>)[newSlot]);
+                  }}
+                  className="w-full text-sm border border-slate-300 rounded px-2 py-1.5"
+                >
+                  {FORKABLE_SLOTS.map((s) => (
+                    <option key={s.key} value={s.key}>{s.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  New content (parent value pre-filled — edit it)
+                </label>
+                <textarea
+                  value={forkValue}
+                  onChange={(e) => setForkValue(e.target.value)}
+                  rows={12}
+                  className="w-full text-xs border border-slate-300 rounded px-2 py-1.5 font-mono leading-relaxed"
+                />
+                <p className="text-[11px] text-slate-500 mt-1">
+                  All other paragraphs will be inherited unchanged from "{forkParent.name}".
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 p-4 border-t border-slate-200 bg-slate-50">
+              <button
+                onClick={closeForkModal}
+                className="px-3 py-1.5 text-sm border border-slate-300 rounded hover:bg-slate-100"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void submitFork()}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 text-white rounded text-sm hover:bg-slate-800"
+              >
+                <GitFork className="w-3.5 h-3.5" /> Save as proposal
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {result && result.leads.length > 0 && (
         <div className="overflow-x-auto">
           <table className="w-full border-separate border-spacing-2">
@@ -221,31 +473,77 @@ export default function TemplatesBenchPage() {
                 <th className="text-left text-sm font-medium text-slate-700 align-bottom min-w-[280px]">
                   Lead ↓ / Template →
                 </th>
-                {result.templates.map((tpl) => (
-                  <th
-                    key={tpl.id}
-                    className="text-left text-sm font-medium text-slate-700 min-w-[420px] align-bottom px-2 pb-2"
-                  >
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="font-mono text-xs">{tpl.name}</span>
-                      {tpl.status === "proposal" && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 border border-amber-200">
-                          PROPOSAL
-                        </span>
-                      )}
-                      {tpl.segment_default && (
-                        <span className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
-                          <Tag className="w-2.5 h-2.5" /> {tpl.segment_default}
-                        </span>
-                      )}
-                      {tpl.rep_id != null && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">
-                          rep {tpl.rep_id}
-                        </span>
-                      )}
-                    </div>
-                  </th>
-                ))}
+                {result.templates.map((tpl) => {
+                  const p = tpl.perf90d;
+                  const enoughData = p.sent >= 10;
+                  const clickRate = p.sent > 0 ? (p.clicked / p.sent) * 100 : 0;
+                  const wechatRate = p.sent > 0 ? (p.wechat / p.sent) * 100 : 0;
+                  return (
+                    <th
+                      key={tpl.id}
+                      className="text-left text-sm font-medium text-slate-700 min-w-[420px] align-bottom px-2 pb-2"
+                    >
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-mono text-xs">{tpl.name}</span>
+                        {tpl.status === "proposal" && (
+                          <>
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 border border-amber-200">
+                              PROPOSAL
+                            </span>
+                            <button
+                              onClick={() => void promoteProposal(tpl.id, tpl.name)}
+                              className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100"
+                              title="Promote this proposal to status='active' — it'll become a candidate for production sends"
+                            >
+                              <CheckCircle2 className="w-2.5 h-2.5" /> Activate
+                            </button>
+                          </>
+                        )}
+                        {tpl.segment_default && (
+                          <span className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
+                            <Tag className="w-2.5 h-2.5" /> {tpl.segment_default}
+                          </span>
+                        )}
+                        {tpl.rep_id != null && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">
+                            rep {tpl.rep_id}
+                          </span>
+                        )}
+                        <button
+                          onClick={() => void openForkModal(tpl.id)}
+                          className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100 ml-auto"
+                          title="Fork this template — vary one paragraph and save as a new proposal"
+                          disabled={forkLoading}
+                        >
+                          <GitFork className="w-2.5 h-2.5" /> Fork
+                        </button>
+                      </div>
+                      {/*
+                        Historical metrics row. Only shows when there's
+                        statistical weight (≥10 sends in 90 days). Tiny
+                        n produces noisy rates — better to hide than to
+                        mislead the admin into thinking 1/1 = 100%.
+                      */}
+                      <div className="text-[11px] text-slate-500 mt-1 font-normal">
+                        {enoughData ? (
+                          <span className="inline-flex items-center gap-2">
+                            <span className="font-mono">n={p.sent}</span>
+                            <span title="Click rate (90d)">
+                              click <span className="text-slate-700 font-medium">{clickRate.toFixed(1)}%</span>
+                            </span>
+                            <span title="WeChat conversion rate (90d)">
+                              wechat <span className="text-slate-700 font-medium">{wechatRate.toFixed(1)}%</span>
+                            </span>
+                          </span>
+                        ) : p.sent > 0 ? (
+                          <span className="text-slate-400">n={p.sent} (need ≥10 for rates)</span>
+                        ) : (
+                          <span className="text-slate-400">no sends yet</span>
+                        )}
+                      </div>
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody>

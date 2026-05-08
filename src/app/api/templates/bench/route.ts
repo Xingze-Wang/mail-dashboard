@@ -172,6 +172,71 @@ export async function GET(req: NextRequest) {
     ),
   );
 
+  // ── Per-template historical performance (last 90 days) ─────────────
+  // Inline aggregation rather than calling /api/templates/performance
+  // because (1) we need the exact same template_id set, (2) avoiding
+  // the internal-fetch round trip + auth re-check is materially faster,
+  // (3) the math is the same shape but only over our visible templates.
+  // Same data sources as the existing performance route: emails (sent),
+  // email_history.was_clicked (engagement), brief_lookups.added_wechat
+  // (conversion). 90 days is a balance: long enough to have statistical
+  // weight for templates with low daily volume, short enough that the
+  // numbers reflect current behavior.
+  const tplIds = tpls.map((t) => t.id);
+  const perf: Record<string, { sent: number; clicked: number; wechat: number }> = {};
+  for (const id of tplIds) perf[id] = { sent: 0, clicked: 0, wechat: 0 };
+
+  if (tplIds.length > 0) {
+    const since90 = new Date(Date.now() - 90 * 86_400_000).toISOString();
+    const { data: pastEmails } = await supabase
+      .from("emails")
+      .select("id, template_id, to")
+      .gte("created_at", since90)
+      .in("template_id", tplIds);
+
+    const emailIds = (pastEmails ?? []).map((e) => e.id as string);
+    const clickedSet = new Set<string>();
+    const CHUNK = 150;
+    for (let i = 0; i < emailIds.length; i += CHUNK) {
+      const chunk = emailIds.slice(i, i + CHUNK);
+      const { data: clicks } = await supabase
+        .from("email_history")
+        .select("email_id")
+        .in("email_id", chunk)
+        .eq("was_clicked", true);
+      for (const r of clicks ?? []) clickedSet.add(r.email_id as string);
+    }
+
+    const recipientToTpl = new Map<string, string>();
+    for (const e of pastEmails ?? []) {
+      const k = String(e.to ?? "").toLowerCase().trim();
+      if (k) recipientToTpl.set(k, e.template_id as string);
+    }
+    let wechatHits: Set<string> = new Set();
+    if (recipientToTpl.size > 0) {
+      const { data: wechats } = await supabase
+        .from("brief_lookups")
+        .select("query, wechat_at")
+        .eq("added_wechat", true)
+        .gte("wechat_at", since90);
+      wechatHits = new Set(
+        (wechats ?? [])
+          .map((r) => String(r.query ?? "").toLowerCase().trim())
+          .filter((q) => recipientToTpl.has(q)),
+      );
+    }
+
+    for (const e of pastEmails ?? []) {
+      const tid = e.template_id as string;
+      const b = perf[tid] ?? { sent: 0, clicked: 0, wechat: 0 };
+      b.sent++;
+      if (clickedSet.has(e.id as string)) b.clicked++;
+      const k = String(e.to ?? "").toLowerCase().trim();
+      if (k && wechatHits.has(k)) b.wechat++;
+      perf[tid] = b;
+    }
+  }
+
   return NextResponse.json({
     leads: leads.map((l) => ({
       id: l.id,
@@ -188,6 +253,7 @@ export async function GET(req: NextRequest) {
       rep_id: t.rep_id,
       status: t.status,
       segment_default: t.segment_default,
+      perf90d: perf[t.id] ?? { sent: 0, clicked: 0, wechat: 0 },
     })),
     cells,
   });

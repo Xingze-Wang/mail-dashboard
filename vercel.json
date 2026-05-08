@@ -4,6 +4,7 @@
     { "path": "/api/cron/standup",            "schedule": "0 1 * * 1-5" },
     { "path": "/api/cron/wechat-followup",    "schedule": "0 2 * * 1-5" },
     { "path": "/api/cron/onboarding-followup","schedule": "30 1 * * *" },
+    { "path": "/api/cron/template-proposals", "schedule": "45 1 * * 1" },
     { "path": "/api/congress/jitr-tick",      "schedule": "0 7 * * 1-5" },
     { "path": "/api/congress/weekly",         "schedule": "0 1 * * 1" },
     { "path": "/api/congress/monthly",        "schedule": "0 2 1 * *" },
