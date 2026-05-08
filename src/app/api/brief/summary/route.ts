@@ -162,7 +162,7 @@ function buildPrompt(info: Record<string, unknown>): string {
   "approach": "2-3 句话，销售怎么开场。基于问题 1 自然切入，最后过渡到算力合作。不要直接说'我们有算力'，要先让对方觉得你懂他研究。",
   "persuasionAngle": "ethos | logos | pathos —— 选最适合打动这个研究者的角度。判断标准：
     - ethos（权威/背书）：资深 PI、知名实验室、有 industry 经验的人。强调奇绩 portfolio、谁在用我们。
-    - logos（理性/数据）：industry researcher、追求 ROI 的人、reviewer 风格的论文。强调具体数字（100万额度、1.5%通过率、免费、不占股）。
+    - logos（理性/数据）：industry researcher、追求 ROI 的人、reviewer 风格的论文。强调具体数字（**单项目最高 100 万等值算力**、1.5%通过率、免费、不占股）。**注意**：永远写"等值算力"或"等值 GPU-hours"，不要写"100万额度"——那个词容易被听成现金。
     - pathos（共情/赋能）：年轻 PhD、做创新性强但资源紧的工作、第一作者新人。强调'你的工作很重要，我们想 enable'。",
   "angleHint": "一句话告诉销售用什么策略和这个人聊。例：'资深 PI，重点提奇绩支持过的同领域 portfolio'，或'年轻 PhD，先认可 idea 的独特性再谈算力'。≤30 字。"
 }
@@ -220,6 +220,6 @@ function fallbackBrief(info: Record<string, unknown>): StructuredBrief {
     ],
     approach: "先针对论文里某个具体发现问一个问题，让对方知道你读过，再引到「如果有更多算力你会做什么」，自然过渡到算力申请。",
     persuasionAngle: "logos",
-    angleHint: "默认走 logos：先讲数字（100万、免费、不占股），再过渡到算力支持。",
+    angleHint: "默认走 logos：先讲数字（最高 100 万等值算力、免费、不占股），再过渡到算力支持。",
   };
 }
