@@ -10,6 +10,7 @@ import { checkBlocked } from "@/lib/blocklist";
 import { requireSession } from "@/lib/auth-helpers";
 import { checkSingleSendAllowed } from "@/lib/trust-level";
 import { loadEffectiveTemplate } from "@/lib/template-assembler";
+import { freshenDraftForRep } from "@/lib/draft-freshen";
 import { buildQuotaCheck, countOverridesTodayByRep } from "@/lib/override-quota";
 
 export async function POST(req: NextRequest) {
@@ -241,8 +242,38 @@ export async function POST(req: NextRequest) {
     // Use the edited content if the client supplied it (Review-mode textarea).
     // Falls back to whatever's in the DB (Browse-mode quick send). We
     // already verified both values are non-empty strings above.
-    const finalSubject: string = hasEditedSubject ? (editedSubject as string) : (lead.draft_subject as string);
-    const finalHtml: string = hasEditedHtml ? (editedHtml as string) : (lead.draft_html as string);
+    let finalSubject: string = hasEditedSubject ? (editedSubject as string) : (lead.draft_subject as string);
+    let finalHtml: string = hasEditedHtml ? (editedHtml as string) : (lead.draft_html as string);
+
+    // Draft staleness check: if the draft was rendered with an
+    // out-of-date rep name (e.g. pre-rename "Chenyu" still baked in),
+    // swap to the current sender_name. Cheap string-replace; no LLM.
+    // Persist the freshened version back to pipeline_leads so future
+    // reads see it. Only run when the user didn't edit — otherwise we'd
+    // be overwriting their explicit input.
+    if (!hasEditedHtml && !hasEditedSubject) {
+      const senderNameOnly = (() => {
+        const m = senderFrom.match(/^(.*?)\s*<.*>$/);
+        return (m?.[1] ?? senderFrom).trim();
+      })();
+      const fresh = await freshenDraftForRep({
+        draftHtml: finalHtml,
+        draftSubject: finalSubject,
+        currentSenderName: senderNameOnly,
+      });
+      if (fresh.swapped) {
+        console.log(
+          `[send] freshened stale draft for lead=${id}: swapped "${fresh.swappedFrom}" → "${senderNameOnly}"`,
+        );
+        finalHtml = fresh.html;
+        finalSubject = fresh.subject;
+        // Persist so subsequent reads (analytics, retries, audit) line up.
+        await supabase
+          .from("pipeline_leads")
+          .update({ draft_html: finalHtml, draft_subject: finalSubject })
+          .eq("id", id);
+      }
+    }
     // Wrap Resend in try/catch — on a thrown error (network reset, DNS,
     // lib exception), the old code fell through to the outer catch and
     // left the lead stuck at status='sending' forever. Roll back

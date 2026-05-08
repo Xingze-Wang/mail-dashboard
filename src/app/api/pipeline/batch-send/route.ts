@@ -10,6 +10,7 @@ import { requireSession } from "@/lib/auth-helpers";
 import { DAILY_OVERRIDE_CAP, countOverridesTodayByRep } from "@/lib/override-quota";
 import { loadEffectiveTemplate } from "@/lib/template-assembler";
 import { checkBulkSendAllowed, sendsTodayByRep } from "@/lib/trust-level";
+import { freshenDraftForRep } from "@/lib/draft-freshen";
 
 // Vercel Pro allows up to 300s per function. At ~1.2s per send (Resend
 // round-trip + 100ms inter-send throttle + DB writes) this comfortably
@@ -225,14 +226,48 @@ export async function POST(req: NextRequest) {
       // remaining lead in the batch at whatever status they were in —
       // sales would see "1 sent, 2 skipped" with the remaining 100
       // silently dropped.
+      // Draft staleness check (same as in /api/pipeline/send): swap
+      // out-of-date rep names baked into older drafts. Cheap; no LLM.
+      // We skip if there's no draft (caught above) or if the user
+      // already short-circuited with edited content. Batch-send doesn't
+      // have edit capability — every draft here is from the DB — so we
+      // always run it.
+      let freshSubject: string = lead.draft_subject as string;
+      let freshHtml: string = lead.draft_html as string;
+      try {
+        const senderNameOnly = (() => {
+          const m = senderFrom.match(/^(.*?)\s*<.*>$/);
+          return (m?.[1] ?? senderFrom).trim();
+        })();
+        const fresh = await freshenDraftForRep({
+          draftHtml: freshHtml,
+          draftSubject: freshSubject,
+          currentSenderName: senderNameOnly,
+        });
+        if (fresh.swapped) {
+          console.log(
+            `[batch-send] freshened lead=${id}: "${fresh.swappedFrom}" → "${senderNameOnly}"`,
+          );
+          freshHtml = fresh.html;
+          freshSubject = fresh.subject;
+          await supabase
+            .from("pipeline_leads")
+            .update({ draft_html: freshHtml, draft_subject: freshSubject })
+            .eq("id", id);
+        }
+      } catch (e) {
+        // Best-effort: a freshness failure shouldn't block the send.
+        console.error(`[batch-send] freshen threw on lead=${id}:`, e);
+      }
+
       let result;
       try {
         result = await resend.emails.send({
           from: senderFrom,
           to: [toEmail],
           cc: ["williamxwang03@gmail.com"],
-          subject: lead.draft_subject,
-          html: lead.draft_html,
+          subject: freshSubject,
+          html: freshHtml,
         });
       } catch (e) {
         await supabase.from("pipeline_leads").update({ status: "ready" }).eq("id", id);
@@ -296,8 +331,8 @@ export async function POST(req: NextRequest) {
         from: senderFrom,
         to: toEmail,
         cc: "williamxwang03@gmail.com",
-        subject: lead.draft_subject,
-        html: lead.draft_html,
+        subject: freshSubject,
+        html: freshHtml,
         resend_id: result.data?.id || null,
         status: "sent",
         thread_id: threadId,
