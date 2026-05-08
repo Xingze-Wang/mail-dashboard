@@ -190,12 +190,18 @@ ${prompt}`;
  * hardcoded generator).
  */
 export async function loadEffectiveTemplate(repId: number | null): Promise<EmailTemplate | null> {
+  // status='active' filter (migration 061) excludes proposal + archived
+  // rows. Without this guard, a congress-generated proposal that hadn't
+  // been reviewed yet could leak into production sends. The constraint
+  // in migration 061 + this filter together guarantee a 'proposal' row
+  // is never the effective template, regardless of how the row got there.
   if (repId !== null) {
     const { data: perRep } = await supabase
       .from("email_templates")
       .select("*")
       .eq("rep_id", repId)
       .eq("active", true)
+      .eq("status", "active")
       .maybeSingle();
     if (perRep) return perRep as EmailTemplate;
   }
@@ -204,6 +210,7 @@ export async function loadEffectiveTemplate(repId: number | null): Promise<Email
     .select("*")
     .eq("name", "global")
     .eq("active", true)
+    .eq("status", "active")
     .maybeSingle();
   return (global as EmailTemplate | null) ?? null;
 }
