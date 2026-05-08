@@ -574,7 +574,19 @@ async function provisionRep(
   if (!pending.claimed_name || !pending.claimed_email || !pending.password_hash) {
     return { ok: false, error: "pending row missing required fields" };
   }
-  // First-name as username (lowercase, alpha-num only).
+
+  // Lark-resolved name wins over the typed claim. lark_name was captured
+  // at triage time from /contact/v3/users — that's what their colleagues
+  // see in Lark, so it's the canonical display name. claimed_name is a
+  // fallback for the rare case where the Lark API failed during triage.
+  // Without this preference we get drift: someone types "Yujie" in DM
+  // but Lark knows them as "杜雨洁", and then every email signature
+  // and AI prompt uses the pinyin variant they don't actually go by.
+  const canonicalName = (pending.lark_name?.trim() || pending.claimed_name).trim();
+
+  // First-name as username (lowercase, alpha-num only). We derive this
+  // from the typed claim, not the Lark name — Chinese chars don't survive
+  // the [^a-z0-9] filter, and login usernames need to be ASCII anyway.
   const username = pending.claimed_name
     .toLowerCase()
     .split(/\s+/)[0]
@@ -583,8 +595,8 @@ async function provisionRep(
   const { data: inserted, error } = await supabase
     .from("sales_reps")
     .insert({
-      name: pending.claimed_name,
-      sender_name: pending.claimed_name,
+      name: canonicalName,
+      sender_name: canonicalName,
       sender_email: pending.claimed_email,
       login_email: pending.claimed_email,
       username: username || null,
@@ -640,7 +652,8 @@ async function sendWalkthrough(
     QIJI_INTRO_TEXT,
     ``,
     `**Dashboard**: https://calistamind.com`,
-    `登录: \`${senderEmail}\` + 你刚才设的密码. (改密码在右上角 settings.)`,
+    `登录: \`${senderEmail}\` + 你刚才设的密码.`,
+    `(想换密码就跟我说一句, 我让 admin 帮你重置 — 暂时还没有 self-serve 改密码的页面.)`,
     ``,
     `**重要**: 我 (Leon) 不只在 Lark 里. 你登进 dashboard 也会看到我 — 右下角有个 ✨ helper 按钮, 那是同一个我, 上下文也是通的. 你在这里跟我聊的, 那边也记得.`,
   ];
