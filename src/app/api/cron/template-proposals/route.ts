@@ -159,8 +159,24 @@ export async function GET(req: NextRequest) {
       (tpls ?? []).find((t) => t.segment_default === seg)?.id ?? null;
     const currentDefaultId = currentDefault as string | null;
 
-    // No-op: current default is already the top performer.
+    // No-op #1: current default is already the top performer.
     if (currentDefaultId === winner.templateId) continue;
+
+    // No-op #2: only ONE template exists in this segment's data. The
+    // ranking is technically valid but the proposal would just be
+    // "switch to the only template you have", which is never useful
+    // — it'd just create a clone of `global` tagged with a segment.
+    // Wait until there's at least one alternative to propose against.
+    if (stats.length < 2) continue;
+
+    // No-op #3: top performer is essentially identical to the second
+    // place. We require a meaningful click-rate gap before proposing
+    // a switch. Without this guard, tiny n + tiny rate diff produces
+    // proposals that are statistical noise. Threshold: winner's rate
+    // must be at least 1.3x the runner-up's rate.
+    const runnerUp = stats[1];
+    const lift = runnerUp.clickRate > 0 ? winner.clickRate / runnerUp.clickRate : Infinity;
+    if (lift < 1.3) continue;
 
     proposals.push({
       segment: seg,
