@@ -29,6 +29,11 @@ const ADMIN_REP_ID = 5; // Xingze. Same constant as JITR card flow.
 
 // Keys used in onboarding_config. Adding a new key here is the only
 // place to extend what Leon asks the admin during config setup.
+//
+// Order matters — Leon asks them in CONFIG_KEY_ORDER. Required ones
+// (anything used in isAdminConfigComplete) are first; optional ones
+// (skippable) trail. Any key with a value is shown to the new rep
+// during the doc-bundle message in sendWalkthrough.
 const CONFIG_KEYS = {
   sales_group_chat_id: {
     question:
@@ -37,17 +42,37 @@ const CONFIG_KEYS = {
   },
   welcome_doc_url: {
     question:
-      "2️⃣ 新人手册 / SOP 文档放哪? (飞书 wiki / 云文档链接都行)",
+      "2️⃣ 新人手册 (overview / 公司基本介绍) 放哪? (飞书 wiki / 云文档链接都行)",
     label: "新人手册 URL",
+  },
+  sop_doc_url: {
+    question:
+      "3️⃣ Sales SOP / playbook 放哪? — 怎么处理回信、什么时候要微信、客户消失怎么办之类的. 链接发我就行, 没有回 'skip'.",
+    label: "Sales SOP URL",
+  },
+  faq_doc_url: {
+    question:
+      "4️⃣ FAQ / 常见反对意见文档? (定价 / 资格 / GPU 规格 / 申请流程) 链接发我, 没有回 'skip'.",
+    label: "FAQ URL",
+  },
+  first_week_checklist: {
+    question:
+      "5️⃣ 第一周 checklist — 周一到周五具体该做什么. 直接发我一段, 或者贴文档链接. 没有回 'skip'.",
+    label: "第一周 checklist",
+  },
+  who_does_what: {
+    question:
+      "6️⃣ 谁负责什么 (cheat sheet) — '算法问题问 Leo / billing 问 admin / infra 问 Ethan' 这种. 直接发一段或贴链接, 没有回 'skip'.",
+    label: "Who-does-what",
   },
   team_intro: {
     question:
-      "3️⃣ 团队介绍 — 谁是谁, 怎么联系, 工时什么的. 直接发我一段, 或者贴文档链接.",
+      "7️⃣ 团队介绍 — 谁是谁, 怎么联系, 工时什么的. 直接发我一段, 或者贴文档链接.",
     label: "团队介绍",
   },
   day_one_notes: {
     question:
-      "4️⃣ 新 rep 第一天必须知道的事? (随便写, 我会原话转给他. 没有就回 'skip'.)",
+      "8️⃣ 新 rep 第一天必须知道的事? (随便写, 我会原话转给他. 没有就回 'skip'.)",
     label: "Day-one notes",
   },
 } as const;
@@ -56,6 +81,10 @@ type ConfigKey = keyof typeof CONFIG_KEYS;
 const CONFIG_KEY_ORDER: ConfigKey[] = [
   "sales_group_chat_id",
   "welcome_doc_url",
+  "sop_doc_url",
+  "faq_doc_url",
+  "first_week_checklist",
+  "who_does_what",
   "team_intro",
   "day_one_notes",
 ];
@@ -98,6 +127,16 @@ export async function tryHandleOnboardingMessage(
     if (/^\/onboarding\s+setup\b/i.test(trimmed)) {
       await startAdminConfigFlow(senderOpenId);
       return { handled: true, reason: "admin-config-reset" };
+    }
+
+    // Admin command: `bind <rep_id>` — executes the open_id binding
+    // proposed by escalateToAdmin during an existing-rep collision.
+    // This is the ONLY path that auto-mutates lark_open_id on an
+    // existing sales_reps row from a DM, kept narrow on purpose.
+    const bindMatch = trimmed.match(/^bind\s+(\d+)$/i);
+    if (bindMatch) {
+      const handled = await handleAdminBindCommand(senderOpenId, Number(bindMatch[1]));
+      if (handled) return { handled: true, reason: "admin-bind" };
     }
   }
 
@@ -154,11 +193,17 @@ export async function processOnboardingCardAction(rawEvent: unknown): Promise<{
         onboarding_action?: "approve_sales" | "approve_senior" | "deny";
         pending_id?: string;
       };
+      // Lark form submission: button click bundles the form's input
+      // values here, keyed by each input's `name`. The wrapping form
+      // is `approval_form` and the input is `admin_note` (see the
+      // card schema in sendOnboardingCard).
+      form_value?: { admin_note?: string };
     };
   };
   const operatorOpenId = event.operator?.open_id;
   const action = event.action?.value?.onboarding_action;
   const pendingId = event.action?.value?.pending_id;
+  const adminNote = event.action?.form_value?.admin_note?.trim() ?? "";
   if (!operatorOpenId || !action || !pendingId) {
     return { ok: true, reason: "incomplete card action" };
   }
@@ -218,6 +263,17 @@ export async function processOnboardingCardAction(rawEvent: unknown): Promise<{
       decided_at: new Date().toISOString(),
     })
     .eq("id", pending.id);
+
+  // Persist the admin's free-text note onto the new rep's row BEFORE
+  // sending the walkthrough — sendWalkthrough re-reads trust_notes
+  // to fold the note into the closing message. Order matters: if the
+  // walkthrough fires first, we'd send the welcome WITHOUT the note.
+  if (adminNote) {
+    await supabase
+      .from("sales_reps")
+      .update({ trust_notes: adminNote })
+      .eq("id", result.repId);
+  }
 
   // Walkthrough DM to the new rep
   await sendWalkthrough(pending, result.repId, result.senderEmail);
@@ -404,11 +460,10 @@ async function handleCandidateStep(
       else if (/^2$|^senior$/i.test(t)) role = "senior";
       else if (/^3$|^admin$/i.test(t)) role = "admin";
       if (!role) {
-        await sendMessage({
-          receive_id: pending.lark_open_id,
-          receive_id_type: "open_id",
-          text: "没看懂, 直接回 `1` (sales) / `2` (senior) / `3` (admin):",
-        });
+        await noteValidationFailure(
+          pending,
+          "没看懂, 直接回 `1` (sales) / `2` (senior) / `3` (admin):",
+        );
         return;
       }
       await supabase.from("lark_triage_decisions").upsert(
@@ -421,7 +476,7 @@ async function handleCandidateStep(
       );
       await supabase
         .from("pending_onboarding")
-        .update({ claimed_role: role, step: "ask_name" })
+        .update({ claimed_role: role, step: "ask_name", ...clearFailures() })
         .eq("id", pending.id);
       await sendMessage({
         receive_id: pending.lark_open_id,
@@ -436,16 +491,12 @@ async function handleCandidateStep(
     case "ask_name": {
       const name = text.slice(0, 80).trim();
       if (!name) {
-        await sendMessage({
-          receive_id: pending.lark_open_id,
-          receive_id_type: "open_id",
-          text: "名字是空的 — 再发一遍?",
-        });
+        await noteValidationFailure(pending, "名字是空的 — 再发一遍?");
         return;
       }
       await supabase
         .from("pending_onboarding")
-        .update({ claimed_name: name, step: "ask_email" })
+        .update({ claimed_name: name, step: "ask_email", ...clearFailures() })
         .eq("id", pending.id);
       await sendMessage({
         receive_id: pending.lark_open_id,
@@ -460,33 +511,66 @@ async function handleCandidateStep(
     case "ask_email": {
       const prefix = text.toLowerCase().replace(/[^a-z0-9._-]/g, "").slice(0, 40);
       if (!prefix) {
-        await sendMessage({
-          receive_id: pending.lark_open_id,
-          receive_id_type: "open_id",
-          text:
-            "邮箱前缀只能是字母 / 数字 / `.`-`_`. 再发一遍, 比如 `yujie`:",
-        });
+        await noteValidationFailure(
+          pending,
+          "邮箱前缀只能是字母 / 数字 / `.`-`_`. 再发一遍, 比如 `yujie`:",
+        );
         return;
       }
       const email = `${prefix}@compute.miracleplus.com`;
-      // Uniqueness check against sales_reps
+      // Uniqueness check against sales_reps. Pull lark_open_id too —
+      // we use it to detect "the candidate IS that existing rep, they
+      // just never bound their Lark account." (Yujie hit this exact
+      // case: her row existed from a manual SQL migration with
+      // lark_open_id=NULL, then she DMed Leon and got told her own
+      // email was 'taken by Yujie' — a deadlock.)
       const { data: clash } = await supabase
         .from("sales_reps")
-        .select("id, name")
+        .select("id, name, lark_open_id")
         .ilike("sender_email", email)
         .maybeSingle();
       if (clash) {
-        await sendMessage({
-          receive_id: pending.lark_open_id,
-          receive_id_type: "open_id",
-          text:
-            `${email} 已经被 ${clash.name} 用了. 换一个前缀:`,
-        });
+        const existingHasNoOpenId = !clash.lark_open_id;
+        const candidateName = pending.lark_name?.trim() || pending.claimed_name?.trim() || "";
+        const namesLookLikeSamePerson =
+          existingHasNoOpenId && namesProbablyMatch(candidateName, clash.name);
+
+        if (namesLookLikeSamePerson) {
+          // High-likelihood case: this is the same person, their row
+          // just predates Lark binding. Don't auto-bind — that's a
+          // foot-gun if names happen to collide. Escalate to admin
+          // and pause this candidate's flow.
+          await escalateToAdmin(pending, {
+            kind: "existing_rep_match",
+            summary:
+              `候选 ${candidateName} 想用 ${email}, 但这邮箱已经是 rep_id=${clash.id} (${clash.name}) — 而那个 row 没绑 Lark. ` +
+              `名字看起来对得上, 很可能 ${candidateName} 就是 ${clash.name}, 只是从没 DM 过 Leon. ` +
+              `如果确认是同一个人, 我可以把他的 lark_open_id (${pending.lark_open_id}) 绑到 rep_id=${clash.id} 上, 不开新 row. 你回 'bind ${clash.id}' 我就执行.`,
+          });
+          await sendMessage({
+            receive_id: pending.lark_open_id,
+            receive_id_type: "open_id",
+            text:
+              `这邮箱看起来已经是你之前的账号了 (${clash.name}). ` +
+              `我已经发给 admin 确认了, 不用重新走一遍 onboarding — 等他回复我会再 DM 你.`,
+          });
+          // Pause the candidate. Admin's bind action will close it out.
+          await supabase
+            .from("pending_onboarding")
+            .update({ status: "paused_existing_rep" })
+            .eq("id", pending.id);
+          return;
+        }
+
+        await noteValidationFailure(
+          pending,
+          `${email} 已经被 ${clash.name} 用了. 换一个前缀:`,
+        );
         return;
       }
       await supabase
         .from("pending_onboarding")
-        .update({ claimed_email: email, step: "ask_password" })
+        .update({ claimed_email: email, step: "ask_password", ...clearFailures() })
         .eq("id", pending.id);
       await sendMessage({
         receive_id: pending.lark_open_id,
@@ -501,17 +585,13 @@ async function handleCandidateStep(
     case "ask_password": {
       const pw = text;
       if (pw.length < 8 || !/\d/.test(pw)) {
-        await sendMessage({
-          receive_id: pending.lark_open_id,
-          receive_id_type: "open_id",
-          text: "密码不够强 — 至少 8 位且要带数字. 再来一次:",
-        });
+        await noteValidationFailure(pending, "密码不够强 — 至少 8 位且要带数字. 再来一次:");
         return;
       }
       const hash = await bcrypt.hash(pw, 10);
       await supabase
         .from("pending_onboarding")
-        .update({ password_hash: hash, step: "ask_wechat" })
+        .update({ password_hash: hash, step: "ask_wechat", ...clearFailures() })
         .eq("id", pending.id);
       await sendMessage({
         receive_id: pending.lark_open_id,
@@ -525,11 +605,7 @@ async function handleCandidateStep(
     case "ask_wechat": {
       const wechat = text.trim().slice(0, 60);
       if (!wechat) {
-        await sendMessage({
-          receive_id: pending.lark_open_id,
-          receive_id_type: "open_id",
-          text: "微信号是空的 — 再发一遍?",
-        });
+        await noteValidationFailure(pending, "微信号是空的 — 再发一遍?");
         return;
       }
       await supabase
@@ -537,6 +613,7 @@ async function handleCandidateStep(
         .update({
           claimed_wechat: wechat,
           step: "awaiting_admin",
+          ...clearFailures(),
         })
         .eq("id", pending.id);
       await sendMessage({
@@ -636,35 +713,57 @@ const QIJI_INTRO_TEXT =
   "你这边的工作是**判断这条 lead 值不值得发** + **跟回信的人接上**. " +
   "重复劳动 (拟稿 / 跟踪 / 提醒 / 统计) 我帮你做.";
 
+/**
+ * For greetings: pull the given (first) name out of a Chinese full name.
+ * "杜雨洁" → "雨洁". Single-char surname assumption — covers ~99% of
+ * Han names. For 2-char surnames (欧阳, 上官 …) we'd misfire by 1
+ * char, but that's still a friendly form. Pure-latin / mixed names
+ * are returned as-is.
+ *
+ * Why we bother: addressing a new joiner by their full name feels
+ * formal/HR-like; using just the given name feels warm and personal.
+ * Leon's whole pitch is "I'm your teammate, not a system" — small
+ * touches like this carry that.
+ */
+function firstNameForGreeting(fullName: string): string {
+  const s = fullName.trim();
+  if (!s) return s;
+  // Pure CJK (no spaces, no latin) and length ≥ 2 → strip surname char
+  const allCjk = /^[一-鿿]+$/.test(s);
+  if (allCjk && s.length >= 2) return s.slice(1);
+  return s;
+}
+
 async function sendWalkthrough(
   pending: PendingRow,
   repId: number,
   senderEmail: string,
 ): Promise<void> {
   const cfg = await loadAdminConfig();
+  // Pull trust_notes (the per-rep admin note set at approval time) +
+  // canonical name. We use the row Leon just inserted, not pending,
+  // because provisionRep already chose lark_name vs claimed_name for us.
+  const { data: rep } = await supabase
+    .from("sales_reps")
+    .select("name, trust_notes")
+    .eq("id", repId)
+    .maybeSingle();
+  const fullName = rep?.name ?? pending.lark_name ?? pending.claimed_name ?? "你";
+  const given = firstNameForGreeting(fullName);
+  const adminNote = (rep?.trust_notes ?? "").trim();
 
-  // Message 1: welcome + what 算力组 is + dashboard login.
-  // We split into two messages so the new rep has time to breathe and
-  // open the dashboard link before the system tour arrives.
+  // ─── Message 1: warm welcome + 算力组 intro ────────────────────────
+  // The first thing they see should feel personal, not bureaucratic.
+  // Address by given name. Acknowledge them by their actual identity.
   const msg1Lines: string[] = [
-    `🎉 你已通过审核, 欢迎加入团队!`,
+    `${given}, 欢迎 🎉`,
+    ``,
+    `Admin 已经通过你的申请了 — 你正式是 算力组 的人了.`,
     ``,
     QIJI_INTRO_TEXT,
-    ``,
-    `**Dashboard**: https://calistamind.com`,
-    `登录: \`${senderEmail}\` + 你刚才设的密码.`,
-    `(想换密码就跟我说一句, 我让 admin 帮你重置 — 暂时还没有 self-serve 改密码的页面.)`,
-    ``,
-    `**重要**: 我 (Leon) 不只在 Lark 里. 你登进 dashboard 也会看到我 — 右下角有个 ✨ helper 按钮, 那是同一个我, 上下文也是通的. 你在这里跟我聊的, 那边也记得.`,
   ];
   if (cfg.team_intro) {
-    msg1Lines.push(``, `👥 **团队介绍**:`, cfg.team_intro);
-  }
-  if (cfg.welcome_doc_url) {
-    msg1Lines.push(``, `📚 **新人手册**: ${cfg.welcome_doc_url}`);
-  }
-  if (cfg.day_one_notes) {
-    msg1Lines.push(``, `📝 **第一天提醒**:`, cfg.day_one_notes);
+    msg1Lines.push(``, `👥 **团队**:`, cfg.team_intro);
   }
   await sendMessage({
     receive_id: pending.lark_open_id,
@@ -672,41 +771,109 @@ async function sendWalkthrough(
     text: msg1Lines.join("\n"),
   });
 
-  // Message 2: short system tour + how to use Leon.
-  // Sent right after msg1 (no artificial delay — Lark will display them
-  // in order). Keeps each message scrollable rather than a wall.
+  // ─── Message 2: dashboard login + how Leon works across surfaces ──
+  // Login + the "I'm the same Leon on the dashboard" framing. Kept
+  // separate so they can copy the email cleanly without scrolling past
+  // a wall of intro text.
   const msg2Lines: string[] = [
+    `**Dashboard**: https://calistamind.com`,
+    `登录邮箱: \`${senderEmail}\``,
+    `密码: 就是你刚才在这跟我设的那个.`,
+    ``,
     `登进去之后看这几个页面就够了:`,
+    `  • **/pipeline** — 你的 lead 在这. 每天早上 cron 塞新 lead, AI 已经帮你拟好邮件草稿, 你看一眼 OK 就点 Send.`,
+    `  • **/emails** — 邮件追踪. 谁打开了 / 谁回了 / 谁退订.`,
+    `  • **/inbox** — 客户回信. (我会在收到新回复时主动 DM 你提醒.)`,
     ``,
-    `**/pipeline** — 你的 lead 在这. 每天早上 cron 塞新 lead 进来, AI 已经帮你拟好邮件了, 看一眼觉得 OK 就点 Send.`,
-    ``,
-    `**/emails** — 邮件追踪. 谁打开了 / 谁回了 / 谁退订, 全在这.`,
-    ``,
-    `**/inbox** — 客户回信都在这. (我也会在收到新回复时主动 DM 你提醒.)`,
-    ``,
-    `**加微信流程**: 客户回邮件之后, 你跟他要微信. 加上之后回 dashboard 点 "Added on WeChat" 标记一下 — **或者直接 Lark 里跟我说一句 "加了 X 微信" 我帮你标**. 这是算转化的关键一步, 别忘.`,
-    ``,
-    `**怎么使唤我**: 直接 DM. 例子:`,
-    `  • "我今天还有几条 ready?"`,
-    `  • "把张三的 lead 给 Leo"`,
-    `  • "刚加了 wang@xxx 的微信"`,
-    `  • "有新回复吗?"`,
-    `  • "发了那条 Yujie 的"  → 我会真的把那封发出去`,
+    `**重要**: 我 (Leon) 不只在 Lark. 你登进 dashboard, 右下角有个 ✨ helper 按钮 — 那是同一个我, 上下文也是通的. 你在 Lark 跟我聊的, 那边也记得.`,
   ];
-  if (cfg.sales_group_chat_id) {
-    const added = await addToSalesGroup(cfg.sales_group_chat_id, pending.lark_open_id);
-    if (added) {
-      msg2Lines.push(``, `已经把你拉进算力组群了 👋`);
-    } else {
-      msg2Lines.push(``, `(算力组群我没拉成功, admin 待会手动加你.)`);
-    }
-  }
-  msg2Lines.push(``, `第一封邮件慢慢看, 不急. 有问题随时 DM 我.`);
-  void repId;
   await sendMessage({
     receive_id: pending.lark_open_id,
     receive_id_type: "open_id",
     text: msg2Lines.join("\n"),
+  });
+
+  // ─── Message 3: doc bundle ─────────────────────────────────────────
+  // All the URLs / playbooks / cheat sheets in one scrollable place,
+  // so they have a single message to bookmark / pin. Each line only
+  // shows if the admin actually filled in that config — no empty
+  // bullets, no "TODO" placeholders.
+  const docLines: string[] = [];
+  if (cfg.welcome_doc_url) {
+    docLines.push(`📚 **新人手册 (overview)**: ${cfg.welcome_doc_url}`);
+  }
+  if (cfg.sop_doc_url) {
+    docLines.push(`📘 **Sales SOP / playbook**: ${cfg.sop_doc_url}`);
+  }
+  if (cfg.faq_doc_url) {
+    docLines.push(`❓ **FAQ / 常见反对意见**: ${cfg.faq_doc_url}`);
+  }
+  if (cfg.first_week_checklist) {
+    // first_week_checklist is content OR a URL — we display either way.
+    docLines.push(`✅ **第一周 checklist**:`, cfg.first_week_checklist);
+  }
+  if (cfg.who_does_what) {
+    docLines.push(`🧭 **谁负责什么 (cheat sheet)**:`, cfg.who_does_what);
+  }
+  if (cfg.day_one_notes) {
+    docLines.push(`📝 **第一天提醒** (admin 写给你的)`, cfg.day_one_notes);
+  }
+  // Only send the doc message if there's actually something to show —
+  // otherwise we'd send an awkward "(空)" message.
+  if (docLines.length > 0) {
+    const msg3Lines = [
+      `**📂 资料合集** — 我把所有重要的链接 / playbook 放这一条里, 方便你回头来翻:`,
+      ``,
+      ...docLines.flatMap((line) => [line, ``]),
+      `这一条值得 pin 一下 (长按消息 → Pin to chat).`,
+    ];
+    await sendMessage({
+      receive_id: pending.lark_open_id,
+      receive_id_type: "open_id",
+      text: msg3Lines.join("\n"),
+    });
+  }
+
+  // ─── Message 4: how to use Leon + group invite + first-week beat ──
+  // Closing message: tonally warmer, sets expectations for the first
+  // week. If admin left a note about THIS specific rep, we surface it
+  // here as the most personal touch — it's specifically from a human
+  // who saw their card.
+  const msg4Lines: string[] = [
+    `**怎么使唤我** (直接 DM 就行):`,
+    `  • "今天我还有几条 ready?"`,
+    `  • "把张三的 lead 给 Leo"`,
+    `  • "刚加了 wang@xxx 的微信"  → 我会自动标这条转化`,
+    `  • "有新回复吗?"`,
+    `  • "发了那条给张三的邮件"  → 我会真的把那封发出去`,
+    ``,
+    `**加微信流程**: 客户回邮件 → 你跟他要微信 → 加上 → Lark 里跟我说一句 "加了 X 微信" 我帮你标. 这是算转化的关键一步, 别忘.`,
+  ];
+  if (cfg.sales_group_chat_id) {
+    const added = await addToSalesGroup(cfg.sales_group_chat_id, pending.lark_open_id);
+    if (added) {
+      msg4Lines.push(``, `✅ 已经把你拉进算力组群了 👋`);
+    } else {
+      msg4Lines.push(``, `(算力组群我没拉成功, admin 待会儿手动加你.)`);
+    }
+  }
+  if (adminNote) {
+    msg4Lines.push(
+      ``,
+      `💬 **Admin 想让我转告你**:`,
+      adminNote,
+    );
+  }
+  msg4Lines.push(
+    ``,
+    `第一封邮件慢慢看, 不急. 第一周不用追求量 — 把节奏感建立起来就行.`,
+    `我明早 (北京时间 9 点左右) 会再 DM 你一下, 看看第一天有没有卡住的地方. 任何时候直接 DM 我都行.`,
+  );
+  void repId;
+  await sendMessage({
+    receive_id: pending.lark_open_id,
+    receive_id_type: "open_id",
+    text: msg4Lines.join("\n"),
   });
 }
 
@@ -862,6 +1029,7 @@ interface PendingRow {
   password_hash: string | null;
   claimed_role: string | null;
   lark_chat_id: string | null;
+  step_failures: number; // migration 059
 }
 
 async function getPendingByOpenId(openId: string): Promise<PendingRow | null> {
@@ -904,6 +1072,10 @@ async function loadAdminConfig(): Promise<Record<ConfigKey, string | null>> {
   const out: Record<ConfigKey, string | null> = {
     sales_group_chat_id: null,
     welcome_doc_url: null,
+    sop_doc_url: null,
+    faq_doc_url: null,
+    first_week_checklist: null,
+    who_does_what: null,
     team_intro: null,
     day_one_notes: null,
   };
@@ -934,6 +1106,12 @@ async function sendOnboardingCard(pending: PendingRow): Promise<void> {
     console.error("[onboarding] cannot send admin card — admin has no lark_open_id");
     return;
   }
+  // The whole interactive section is wrapped in a form — that's how
+  // Lark cards bundle the input value into the button-click payload.
+  // Without a form wrapper, the input is fire-and-forget on every
+  // keystroke and we can't capture "what did admin type when they
+  // clicked Approve". With the form, on button click we receive
+  // event.action.form_value.admin_note alongside the button's value.
   const card = {
     config: { wide_screen_mode: true },
     header: {
@@ -958,25 +1136,47 @@ async function sendOnboardingCard(pending: PendingRow): Promise<void> {
         },
       },
       {
-        tag: "action",
-        actions: [
+        tag: "form",
+        name: "approval_form",
+        elements: [
           {
-            tag: "button",
-            text: { tag: "plain_text", content: "Approve as sales" },
-            type: "primary",
-            value: { onboarding_action: "approve_sales", pending_id: pending.id },
+            tag: "input",
+            name: "admin_note",
+            placeholder: {
+              tag: "plain_text",
+              content:
+                "Anything Leon should tell this rep? (e.g., '老板特意推荐的, 多关注一下', '英文邮件能力强', '只做晚上'). 空着也行.",
+            },
+            max_length: 500,
+            // 'multi_line' makes the input grow vertically — useful for
+            // 1-2 sentence notes without forcing them into a tiny box.
+            multi_line: true,
           },
           {
-            tag: "button",
-            text: { tag: "plain_text", content: "Approve as senior" },
-            type: "default",
-            value: { onboarding_action: "approve_senior", pending_id: pending.id },
-          },
-          {
-            tag: "button",
-            text: { tag: "plain_text", content: "Deny" },
-            type: "danger",
-            value: { onboarding_action: "deny", pending_id: pending.id },
+            tag: "action",
+            actions: [
+              {
+                tag: "button",
+                text: { tag: "plain_text", content: "Approve as sales" },
+                type: "primary",
+                form_action_type: "submit",
+                value: { onboarding_action: "approve_sales", pending_id: pending.id },
+              },
+              {
+                tag: "button",
+                text: { tag: "plain_text", content: "Approve as senior" },
+                type: "default",
+                form_action_type: "submit",
+                value: { onboarding_action: "approve_senior", pending_id: pending.id },
+              },
+              {
+                tag: "button",
+                text: { tag: "plain_text", content: "Deny" },
+                type: "danger",
+                form_action_type: "submit",
+                value: { onboarding_action: "deny", pending_id: pending.id },
+              },
+            ],
           },
         ],
       },
@@ -986,7 +1186,7 @@ async function sendOnboardingCard(pending: PendingRow): Promise<void> {
           {
             tag: "plain_text",
             content:
-              "Lark name + open_id are from Lark auth (cannot be spoofed). Self-claimed fields are user input — verify the name + email match the person you expect.",
+              "Lark name + open_id are from Lark auth (cannot be spoofed). Self-claimed fields are user input — verify the name + email match the person you expect. The note field above (if filled) will be saved on the rep's row and Leon will mention it in their welcome DM.",
           },
         ],
       },
@@ -1045,4 +1245,269 @@ async function loadLarkPrimitives(): Promise<{
         ? "https://open.larksuite.com/open-apis"
         : "https://open.feishu.cn/open-apis",
   };
+}
+
+// ─── stuck-candidate detection ─────────────────────────────────────────
+//
+// Threshold: 2 consecutive failed validations on the same step trigger
+// an admin escalation. We don't pause the candidate — they can keep
+// trying — but admin gets pinged so they can intervene if it's a real
+// problem (e.g., their pre-filled email got rejected by a typo they
+// can't see). Counter is reset to 0 every time the step transitions.
+const STUCK_THRESHOLD = 2;
+
+/**
+ * Record a validation failure on the candidate's current step. Sends
+ * them the corrective hint message AND, if this is their Nth failure
+ * in a row on this step (N >= STUCK_THRESHOLD), pings admin via
+ * escalateToAdmin so a human can step in.
+ *
+ * Callers should use this in place of the previous pattern of
+ * `sendMessage(...corrective hint...)` at every validation-fail branch.
+ * It returns nothing — caller continues to early-return after.
+ */
+async function noteValidationFailure(
+  pending: PendingRow,
+  hintToCandidate: string,
+): Promise<void> {
+  const newFailures = (pending.step_failures ?? 0) + 1;
+  await supabase
+    .from("pending_onboarding")
+    .update({ step_failures: newFailures })
+    .eq("id", pending.id);
+
+  await sendMessage({
+    receive_id: pending.lark_open_id,
+    receive_id_type: "open_id",
+    text: hintToCandidate,
+  });
+
+  if (newFailures >= STUCK_THRESHOLD) {
+    // Idempotent: dedup_hash on admin_inbox keys on (kind, open_id, step)
+    // so a single stuck step only generates one inbox entry. The Lark
+    // DM still re-fires each time — a stuck rep should reach admin's
+    // attention even if they ignored the first ping.
+    await escalateToAdmin(pending, {
+      kind: `stuck_step_${pending.step}`,
+      summary:
+        `${pending.lark_name ?? pending.lark_open_id} 在 onboarding 第 \`${pending.step}\` 步连续失败 ${newFailures} 次. ` +
+        `最后一次提示: "${hintToCandidate.slice(0, 120).replace(/\n+/g, " ")}". ` +
+        `要不要我帮他 / 直接 DM 他?`,
+    });
+  }
+}
+
+/**
+ * Reset the failure counter when the step transitions. Call this from
+ * any UPDATE that advances `step` to a new value. Cheap to also call
+ * defensively — it's just a `step_failures: 0` column write.
+ *
+ * (We can't put this inside noteValidationFailure because that helper
+ * runs on FAILURE; this one runs on SUCCESS. They're complementary.)
+ */
+function clearFailures(): { step_failures: 0 } {
+  return { step_failures: 0 };
+}
+
+// ─── name similarity (conservative) ────────────────────────────────────
+// CJK = Han ideographs range. Pinyin / latin alone is never a confirm
+// signal per project memory (feedback_chinese_name_matching) — surnames
+// must match exactly when both sides are CJK; otherwise we escalate.
+const CJK_RANGE = /[一-鿿]/;
+
+function isCJK(s: string): boolean {
+  return CJK_RANGE.test(s);
+}
+
+/**
+ * Returns true ONLY when the two names are very likely the same person.
+ * False positives here cost an incorrect lark_open_id binding — we are
+ * deliberately strict.
+ *
+ * Cases handled:
+ *  - Both CJK: surname (first char) must match exactly. Then at least
+ *    one additional Han char from the typed name must appear in the DB
+ *    name (substring match, either direction).
+ *  - Both pure latin: case-insensitive exact match, OR one is a prefix
+ *    of the other AND the shorter is ≥3 chars (to avoid "yu" matching
+ *    "yujie").
+ *  - Mixed (one CJK, one latin / pinyin): never auto-confirm. Pinyin
+ *    alone is never a signal, so we return false and let admin decide.
+ */
+function namesProbablyMatch(typed: string, dbName: string | null | undefined): boolean {
+  const a = (typed ?? "").trim();
+  const b = (dbName ?? "").trim();
+  if (!a || !b) return false;
+
+  const aHasCjk = isCJK(a);
+  const bHasCjk = isCJK(b);
+
+  if (aHasCjk && bHasCjk) {
+    if (a[0] !== b[0]) return false; // surname must match
+    // At least one additional CJK char in common
+    for (const ch of a.slice(1)) {
+      if (CJK_RANGE.test(ch) && b.includes(ch)) return true;
+    }
+    return false;
+  }
+
+  if (!aHasCjk && !bHasCjk) {
+    const al = a.toLowerCase();
+    const bl = b.toLowerCase();
+    if (al === bl) return true;
+    const [shorter, longer] = al.length <= bl.length ? [al, bl] : [bl, al];
+    if (shorter.length >= 3 && longer.startsWith(shorter)) return true;
+    return false;
+  }
+
+  // Mixed scripts — pinyin/latin alone never confirms a CJK name.
+  return false;
+}
+
+/**
+ * Send the admin a DM about a stuck/ambiguous candidate. Used by the
+ * existing-rep detector and by stuck-candidate auto-escalation.
+ *
+ * The summary is the only field shown — it MUST contain everything
+ * admin needs (candidate name, what they're trying to do, the proposed
+ * fix command). Keep it self-contained; the admin won't have the
+ * pending_onboarding row open in front of them.
+ */
+async function escalateToAdmin(
+  pending: PendingRow,
+  payload: { kind: string; summary: string },
+): Promise<void> {
+  const adminOpenId = await getAdminOpenId();
+  if (!adminOpenId) {
+    console.error("[onboarding] escalateToAdmin: no admin open_id configured");
+    return;
+  }
+
+  // Best-effort: upsert into admin_inbox. Per migration 058 the design
+  // is "same dedup_hash → update body, keep status" so re-escalating
+  // the same candidate doesn't spam the inbox. We don't fail the
+  // escalation if this errors — the Lark DM is the authoritative path.
+  try {
+    await supabase.from("admin_inbox").upsert(
+      {
+        kind: "request",
+        headline: `Onboarding 卡住: ${pending.lark_name ?? pending.lark_open_id}`,
+        body: payload.summary,
+        evidence: { onboarding_kind: payload.kind, pending_id: pending.id },
+        dedup_hash: `onboarding:${payload.kind}:${pending.lark_open_id}`,
+        updated_at: new Date().toISOString(),
+        // status: omitted on update so an already-acknowledged row stays acked.
+      },
+      { onConflict: "dedup_hash" },
+    );
+  } catch (e) {
+    console.error("[onboarding] admin_inbox upsert failed:", e);
+  }
+
+  await sendMessage({
+    receive_id: adminOpenId,
+    receive_id_type: "open_id",
+    text: `🔔 ${payload.summary}`,
+  });
+}
+
+/**
+ * Admin types `bind <rep_id>` after seeing an existing-rep escalation.
+ * Effect: take the candidate that's `paused_existing_rep`, copy their
+ * lark_open_id (and lark_email if any) onto sales_reps[rep_id], delete
+ * the pending row, and DM the candidate that they're set up.
+ *
+ * Returns false if no paused candidate was found — admin gets a friendly
+ * "no candidate to bind" message either way.
+ */
+async function handleAdminBindCommand(adminOpenId: string, repId: number): Promise<boolean> {
+  // Find a paused candidate. There SHOULD be at most one at a time;
+  // if multiple, we take the most recent and warn.
+  const { data: paused } = await supabase
+    .from("pending_onboarding")
+    .select("*")
+    .eq("status", "paused_existing_rep")
+    .order("created_at", { ascending: false })
+    .limit(2);
+  const candidate = (paused?.[0] as PendingRow | undefined) ?? null;
+  if (!candidate) {
+    await sendMessage({
+      receive_id: adminOpenId,
+      receive_id_type: "open_id",
+      text: `没有 paused 的候选要 bind. (rep_id=${repId} 没动.)`,
+    });
+    return true;
+  }
+  if ((paused?.length ?? 0) > 1) {
+    await sendMessage({
+      receive_id: adminOpenId,
+      receive_id_type: "open_id",
+      text:
+        `⚠️ 有多个 paused 候选, 我先 bind 最新那个 (${candidate.lark_name ?? candidate.lark_open_id}). ` +
+        `如果错了, 等会儿再 bind 另一个.`,
+    });
+  }
+
+  // Verify the rep exists and isn't already bound.
+  const { data: rep } = await supabase
+    .from("sales_reps")
+    .select("id, name, lark_open_id, sender_email")
+    .eq("id", repId)
+    .maybeSingle();
+  if (!rep) {
+    await sendMessage({
+      receive_id: adminOpenId,
+      receive_id_type: "open_id",
+      text: `rep_id=${repId} 不存在.`,
+    });
+    return true;
+  }
+  if (rep.lark_open_id && rep.lark_open_id !== candidate.lark_open_id) {
+    await sendMessage({
+      receive_id: adminOpenId,
+      receive_id_type: "open_id",
+      text:
+        `rep_id=${repId} (${rep.name}) 已经绑了另一个 open_id (${rep.lark_open_id}). ` +
+        `不会覆盖. 如果要换, 你直接改 DB.`,
+    });
+    return true;
+  }
+
+  // Bind. We DON'T touch password_hash — they should reset via admin if
+  // they forgot; we DON'T touch sender_email. This op is purely about
+  // pairing the Lark identity to an existing row.
+  const { error: updateErr } = await supabase
+    .from("sales_reps")
+    .update({
+      lark_open_id: candidate.lark_open_id,
+      lark_email: candidate.lark_email ?? null,
+    })
+    .eq("id", repId);
+  if (updateErr) {
+    await sendMessage({
+      receive_id: adminOpenId,
+      receive_id_type: "open_id",
+      text: `bind 失败: ${updateErr.message}`,
+    });
+    return true;
+  }
+
+  // Clean up the pending row.
+  await supabase.from("pending_onboarding").delete().eq("id", candidate.id);
+
+  await sendMessage({
+    receive_id: adminOpenId,
+    receive_id_type: "open_id",
+    text: `✅ 已绑定: ${rep.name} (rep_id=${repId}) ↔ open_id ${candidate.lark_open_id}.`,
+  });
+  // Tell the candidate.
+  await sendMessage({
+    receive_id: candidate.lark_open_id,
+    receive_id_type: "open_id",
+    text:
+      `Admin 确认了, 你之前的账号已经绑到这个 Lark 上. ` +
+      `登录: \`${rep.sender_email}\` + 你之前的密码. ` +
+      `如果忘了密码, 跟我说一句, 我让 admin 重置.`,
+  });
+  return true;
 }
