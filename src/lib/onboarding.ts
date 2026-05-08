@@ -193,17 +193,16 @@ export async function processOnboardingCardAction(rawEvent: unknown): Promise<{
         onboarding_action?: "approve_sales" | "approve_senior" | "deny";
         pending_id?: string;
       };
-      // Lark form submission: button click bundles the form's input
-      // values here, keyed by each input's `name`. The wrapping form
-      // is `approval_form` and the input is `admin_note` (see the
-      // card schema in sendOnboardingCard).
-      form_value?: { admin_note?: string };
     };
   };
   const operatorOpenId = event.operator?.open_id;
   const action = event.action?.value?.onboarding_action;
   const pendingId = event.action?.value?.pending_id;
-  const adminNote = event.action?.form_value?.admin_note?.trim() ?? "";
+  // Admin note used to come from event.action.form_value.admin_note when
+  // the card was wrapped in a Lark form, but that broke buttons on real
+  // Lark clients (see comment in sendOnboardingCard). To set a note now,
+  // admin DMs Leon "for rep_id=N, trust_notes: ..." after approving.
+  const adminNote = "";
   if (!operatorOpenId || !action || !pendingId) {
     return { ok: true, reason: "incomplete card action" };
   }
@@ -1106,12 +1105,19 @@ async function sendOnboardingCard(pending: PendingRow): Promise<void> {
     console.error("[onboarding] cannot send admin card — admin has no lark_open_id");
     return;
   }
-  // The whole interactive section is wrapped in a form — that's how
-  // Lark cards bundle the input value into the button-click payload.
-  // Without a form wrapper, the input is fire-and-forget on every
-  // keystroke and we can't capture "what did admin type when they
-  // clicked Approve". With the form, on button click we receive
-  // event.action.form_value.admin_note alongside the button's value.
+  // FLAT card schema — buttons live in a top-level `tag: "action"` element
+  // whose clicks Lark sends to our webhook with action.value populated.
+  // Earlier (Task 21 / commit 3549ce2) this was wrapped in a `tag: "form"`
+  // to capture an inline admin-note input alongside the button click. That
+  // broke approval entirely on the user's Lark client — the buttons either
+  // didn't render or didn't dispatch the action event. Symptom: the user
+  // tried to "approve" via DM and Leon had nothing to act on.
+  //
+  // Trade-off accepted: we lose the inline admin-note capture (Task 21).
+  // If admin wants to add a note for the new rep, they can DM Leon
+  // afterwards: "for rep_id=N, trust_notes: ..." — and Leon's tool path
+  // already supports that. Approve buttons working is more important
+  // than the inline note shortcut.
   const card = {
     config: { wide_screen_mode: true },
     header: {
@@ -1127,56 +1133,34 @@ async function sendOnboardingCard(pending: PendingRow): Promise<void> {
             `**Lark identity** (from Lark, can't be spoofed):\n` +
             `- Name: ${pending.lark_name ?? "(no name)"}\n` +
             `- Email: ${pending.lark_email ?? "(no email)"}\n` +
-            `- open_id: \`${pending.lark_open_id}\`\n\n` +
+            `- open_id: \`${pending.lark_open_id || "(missing)"}\`\n\n` +
             `**Self-claimed** (from chat, verify these match the person):\n` +
-            `- Name: ${pending.claimed_name}\n` +
-            `- Email: \`${pending.claimed_email}\`\n` +
-            `- WeChat: ${pending.claimed_wechat}\n` +
+            `- Name: ${pending.claimed_name ?? "(not claimed)"}\n` +
+            `- Email: \`${pending.claimed_email ?? "(not claimed)"}\`\n` +
+            `- WeChat: ${pending.claimed_wechat ?? "(not claimed)"}\n` +
             `- Role: ${pending.claimed_role ?? "(not claimed)"}`,
         },
       },
       {
-        tag: "form",
-        name: "approval_form",
-        elements: [
+        tag: "action",
+        actions: [
           {
-            tag: "input",
-            name: "admin_note",
-            placeholder: {
-              tag: "plain_text",
-              content:
-                "Anything Leon should tell this rep? (e.g., '老板特意推荐的, 多关注一下', '英文邮件能力强', '只做晚上'). 空着也行.",
-            },
-            max_length: 500,
-            // 'multi_line' makes the input grow vertically — useful for
-            // 1-2 sentence notes without forcing them into a tiny box.
-            multi_line: true,
+            tag: "button",
+            text: { tag: "plain_text", content: "Approve as sales" },
+            type: "primary",
+            value: { onboarding_action: "approve_sales", pending_id: pending.id },
           },
           {
-            tag: "action",
-            actions: [
-              {
-                tag: "button",
-                text: { tag: "plain_text", content: "Approve as sales" },
-                type: "primary",
-                form_action_type: "submit",
-                value: { onboarding_action: "approve_sales", pending_id: pending.id },
-              },
-              {
-                tag: "button",
-                text: { tag: "plain_text", content: "Approve as senior" },
-                type: "default",
-                form_action_type: "submit",
-                value: { onboarding_action: "approve_senior", pending_id: pending.id },
-              },
-              {
-                tag: "button",
-                text: { tag: "plain_text", content: "Deny" },
-                type: "danger",
-                form_action_type: "submit",
-                value: { onboarding_action: "deny", pending_id: pending.id },
-              },
-            ],
+            tag: "button",
+            text: { tag: "plain_text", content: "Approve as senior" },
+            type: "default",
+            value: { onboarding_action: "approve_senior", pending_id: pending.id },
+          },
+          {
+            tag: "button",
+            text: { tag: "plain_text", content: "Deny" },
+            type: "danger",
+            value: { onboarding_action: "deny", pending_id: pending.id },
           },
         ],
       },
@@ -1186,7 +1170,7 @@ async function sendOnboardingCard(pending: PendingRow): Promise<void> {
           {
             tag: "plain_text",
             content:
-              "Lark name + open_id are from Lark auth (cannot be spoofed). Self-claimed fields are user input — verify the name + email match the person you expect. The note field above (if filled) will be saved on the rep's row and Leon will mention it in their welcome DM.",
+              "Lark name + open_id are from Lark auth. Self-claimed fields are user input — verify they match the person. To add a personal note for the new rep, DM Leon after approving: 'for rep_id=N, trust_notes: ...'.",
           },
         ],
       },
