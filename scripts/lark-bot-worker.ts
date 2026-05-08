@@ -89,6 +89,7 @@ const baseConfig = {
 console.log(`[worker] starting (region=${REGION}, domain=${baseConfig.domain}, app=${APP_ID.slice(0, 12)}...)`);
 
 let firstEnvelopeLogged = false;
+let firstCardEnvelopeLogged = false;
 
 let wsClient = new Lark.WSClient({
   ...baseConfig,
@@ -148,18 +149,42 @@ const dispatcher = new Lark.EventDispatcher({}).register({
   //   - JITR offer cards (jitr_action in payload) → processJitrCardAction
   //   - Onboarding admin cards (onboarding_action) → processOnboardingCardAction
   // Discriminate by which key sits in event.action.value.
+  //
+  // SDK envelope quirk: like im.message.receive_v1 above, the SDK may
+  // pass either {header, event: {action: ...}} OR {action: ...} as
+  // `data`. The previous version only handled the latter, which is
+  // why card clicks reported "code: 200340" — the dispatcher saw the
+  // envelope, couldn't find action.value, fell through to the JITR
+  // path, JITR couldn't find jitr_action, and the result was nothing.
+  // Now we mirror the message-handler unwrap pattern.
   "card.action.trigger": async (data: unknown) => {
     const t0 = Date.now();
     try {
+      const env = data as {
+        header?: { event_id?: string };
+        event?: unknown;
+        action?: { value?: Record<string, unknown> };
+      };
+      // Probe-log the FIRST card action's envelope so we can spot any
+      // future SDK shape changes. Only logs once per worker process.
+      if (!firstCardEnvelopeLogged) {
+        console.log(`[worker] FIRST CARD envelope keys: ${Object.keys(env).join(",")}`);
+        firstCardEnvelopeLogged = true;
+      }
+      const innerEvent = env.event ?? data;
       const value =
-        ((data as { action?: { value?: Record<string, unknown> } })?.action?.value) ?? {};
+        ((innerEvent as { action?: { value?: Record<string, unknown> } })?.action?.value) ?? {};
+      console.log(`[worker] card action received, value keys: ${Object.keys(value).join(",")}`);
       if ("onboarding_action" in value) {
         const onboarding = await import("../src/lib/onboarding.ts");
-        const result = await onboarding.processOnboardingCardAction({ event: data });
+        const result = await onboarding.processOnboardingCardAction({ event: innerEvent });
         console.log(`[worker] onboarding card action in ${Date.now() - t0}ms ok=${result.ok} reason=${result.reason ?? ""}`);
-      } else {
-        const result = await processJitrCardAction({ event: data }, "ws");
+      } else if ("jitr_action" in value) {
+        const result = await processJitrCardAction({ event: innerEvent }, "ws");
         console.log(`[worker] jitr card action in ${Date.now() - t0}ms ok=${result.ok} reason=${result.reason ?? ""}`);
+      } else {
+        // Neither key — log so we can see what the unknown card type was.
+        console.error(`[worker] card action with unknown value keys: ${JSON.stringify(value).slice(0, 200)}`);
       }
     } catch (err) {
       console.error(`[worker] card action threw:`, err);
