@@ -22,8 +22,39 @@ async function getControlRoom(): Promise<ControlRoomPayload | null> {
   return res.json();
 }
 
+interface HypothesisRow {
+  id: string;
+  hypothesis: string;
+  reasoning: string;
+  segment: Record<string, unknown>;
+  status: "proposed" | "testing" | "confirmed" | "refuted" | "abandoned";
+  proposed_template_id: string | null;
+  outcome_evidence: Record<string, unknown> | null;
+  generated_at: string;
+}
+
+/** Pull recent hypotheses (active + recently-decided) directly from
+ *  Supabase. Server-component only — uses service-role key implicitly
+ *  via the server-side client. */
+async function getHypotheses(): Promise<HypothesisRow[]> {
+  // Use the same supabase client the rest of the app uses (admin-side)
+  const { supabase } = await import("@/lib/db");
+  const { data } = await supabase
+    .from("congress_hypotheses")
+    .select("id, hypothesis, reasoning, segment, status, proposed_template_id, outcome_evidence, generated_at")
+    .order("generated_at", { ascending: false })
+    .limit(20);
+  return (data ?? []) as HypothesisRow[];
+}
+
 export default async function CongressWeeklyPage() {
-  const data = await getControlRoom();
+  // Parallel fetch — control-room data + hypothesis stream. The
+  // hypothesis section is additive; if the table read fails (e.g.
+  // migration 065 not applied yet) we just show no hypotheses.
+  const [data, hypotheses] = await Promise.all([
+    getControlRoom(),
+    getHypotheses().catch(() => [] as HypothesisRow[]),
+  ]);
   if (!data) {
     return (
       <div className="section-card" style={{ padding: 16 }}>
@@ -61,6 +92,19 @@ export default async function CongressWeeklyPage() {
             {data.pending_proposals.filter((p) => p.state === "admin_review").map((p) => (
               <ProposalRow key={p.id} p={p} />
             ))}
+          </div>
+        )}
+      </Section>
+
+      {/* Hypothesis stream — congress-hypothesis runner output.
+          Migration 065. Active proposed/testing first, then recently
+          decided (confirmed/refuted) for context. */}
+      <Section title="Hypotheses in flight" count={hypotheses.filter((h) => h.status === "proposed" || h.status === "testing").length}>
+        {hypotheses.length === 0 ? (
+          <Empty text="No hypotheses yet — runner fires daily at noon Beijing." />
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {hypotheses.map((h) => <HypothesisRowCmp key={h.id} h={h} />)}
           </div>
         )}
       </Section>
@@ -343,6 +387,96 @@ function Footer({ data }: { data: ControlRoomPayload }) {
         <span>Unbound reps: {data.unbound_reps.join(", ")} — DM the bot once.</span>
       )}
       <span style={{ marginLeft: "auto" }}>Updated {new Date(data.generated_at).toLocaleTimeString()}</span>
+    </div>
+  );
+}
+
+/** One hypothesis row — shows the assertion, reasoning collapsed,
+ *  current status badge, and outcome data if any. */
+function HypothesisRowCmp({ h }: { h: HypothesisRow }) {
+  const statusStyle = {
+    proposed: { bg: "var(--tag-warn-bg, #fff7ed)", color: "#b45309", border: "#fcd34d" },
+    testing: { bg: "var(--tag-info-bg, #dbeafe)", color: "#1d4ed8", border: "#93c5fd" },
+    confirmed: { bg: "var(--tag-ok-bg, #d1fae5)", color: "#059669", border: "#6ee7b7" },
+    refuted: { bg: "var(--tag-bad-bg, #fee2e2)", color: "#dc2626", border: "#fca5a5" },
+    abandoned: { bg: "#f1f5f9", color: "#64748b", border: "#cbd5e1" },
+  }[h.status];
+
+  const seg = h.segment ?? {};
+  const segLabel = Object.entries(seg)
+    .map(([k, v]) => `${k}=${v}`)
+    .join(" / ") || "—";
+
+  // Outcome line (only if testing/confirmed/refuted with evidence)
+  let outcome: string | null = null;
+  if (h.outcome_evidence) {
+    const e = h.outcome_evidence as Record<string, unknown>;
+    const vp = typeof e.value_proposal === "number" ? (e.value_proposal as number) * 100 : null;
+    const vb = typeof e.value_baseline === "number" ? (e.value_baseline as number) * 100 : null;
+    const sp = e.sample_proposal as number | undefined;
+    const sb = e.sample_baseline as number | undefined;
+    if (vp != null && vb != null) {
+      outcome = `proposal ${vp.toFixed(1)}% (n=${sp}) vs baseline ${vb.toFixed(1)}% (n=${sb})`;
+    }
+  }
+
+  return (
+    <div className="section-card" style={{ padding: 12 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 4 }}>
+        <span
+          style={{
+            fontSize: 10,
+            fontWeight: 700,
+            textTransform: "uppercase",
+            letterSpacing: "0.06em",
+            padding: "2px 6px",
+            borderRadius: 3,
+            background: statusStyle.bg,
+            color: statusStyle.color,
+            border: `1px solid ${statusStyle.border}`,
+            flexShrink: 0,
+          }}
+        >
+          {h.status}
+        </span>
+        <span style={{ fontSize: 10, color: "var(--text-tertiary)", flexShrink: 0 }}>
+          {segLabel}
+        </span>
+      </div>
+      <p style={{ fontSize: 13, lineHeight: 1.5, margin: "4px 0", color: "var(--text-primary)" }}>
+        {h.hypothesis}
+      </p>
+      <details style={{ marginTop: 4 }}>
+        <summary style={{ fontSize: 11, color: "var(--text-tertiary)", cursor: "pointer" }}>
+          Reasoning
+        </summary>
+        <p
+          style={{
+            fontSize: 12,
+            lineHeight: 1.5,
+            margin: "6px 0 0",
+            color: "var(--text-secondary)",
+            whiteSpace: "pre-wrap",
+          }}
+        >
+          {h.reasoning}
+        </p>
+      </details>
+      {outcome && (
+        <div style={{ marginTop: 6, fontSize: 11, color: "var(--text-secondary)", fontFamily: "var(--font-mono, monospace)" }}>
+          {outcome}
+        </div>
+      )}
+      {h.proposed_template_id && (
+        <div style={{ marginTop: 4, fontSize: 11 }}>
+          <Link
+            href={`/templates/${h.proposed_template_id}/inspect`}
+            style={{ color: "var(--link-color, #0070f3)" }}
+          >
+            View test template →
+          </Link>
+        </div>
+      )}
     </div>
   );
 }
