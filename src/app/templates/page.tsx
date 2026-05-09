@@ -178,7 +178,24 @@ function TemplateLibrary() {
             archived: { bg: "#f1f5f9", color: "#64748b", border: "#cbd5e1" },
           }[t.status];
           return (
-            <div key={t.id} className="section-card" style={{ padding: 12 }}>
+            // Whole card is a link → /templates/[id]/inspect. The
+            // inspect page already shows a mail-client-style render
+            // (subject + body in a clean white card on the right).
+            // Per user: 'click directly into the template and it
+            // renders like the mail page'.
+            <Link
+              key={t.id}
+              href={`/templates/${t.id}/inspect`}
+              className="section-card"
+              style={{
+                padding: 12,
+                display: "block",
+                textDecoration: "none",
+                color: "inherit",
+                cursor: "pointer",
+                transition: "background 0.1s",
+              }}
+            >
               <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 4 }}>
                 <span style={{
                   fontSize: 10, fontWeight: 700, textTransform: "uppercase",
@@ -200,10 +217,8 @@ function TemplateLibrary() {
                 {t.proposed_by && (
                   <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>via <b>{t.proposed_by}</b></span>
                 )}
-                <span style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-                  <Link href={`/templates/${t.id}/inspect`} style={{ fontSize: 12, color: "var(--blue)" }}>
-                    Inspect →
-                  </Link>
+                <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--blue)" }}>
+                  Open →
                 </span>
               </div>
               {t.proposed_reason && (
@@ -214,7 +229,7 @@ function TemplateLibrary() {
               {t.notes && !t.proposed_reason && (
                 <p style={{ fontSize: 11, color: "var(--text-tertiary)", margin: "4px 0 0" }}>{t.notes}</p>
               )}
-            </div>
+            </Link>
           );
         })}
       </div>

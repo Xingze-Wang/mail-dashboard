@@ -260,24 +260,41 @@ export default function TemplateInspectPage({ params }: { params: Promise<{ id: 
                 })}
               </div>
 
-              {/* Rendered preview */}
+              {/* Mail-client-style preview — From / To / Subject header
+                  + rendered body, like opening the email in Gmail. */}
               <div>
-                <h3 className="text-sm font-medium text-slate-700 mb-2">Full rendered preview</h3>
-                <div className="bg-white border border-slate-200 rounded-md p-4">
-                  <div className="text-xs font-semibold text-slate-700 mb-3 pb-2 border-b border-slate-100">
-                    {active.rendered?.subject}
+                <h3 className="text-sm font-medium text-slate-700 mb-2">Email preview</h3>
+                <div className="bg-white border border-slate-200 rounded-md shadow-sm overflow-hidden">
+                  {/* From / To / Subject envelope */}
+                  <div className="bg-slate-50 border-b border-slate-200 px-4 py-3 space-y-1">
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-[11px] uppercase tracking-wide text-slate-500 w-12 shrink-0">From</span>
+                      <span className="text-[13px] text-slate-900">
+                        {active.lead.assigned_rep.name} &lt;{active.lead.assigned_rep.name.toLowerCase()}@compute.miracleplus.com&gt;
+                      </span>
+                    </div>
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-[11px] uppercase tracking-wide text-slate-500 w-12 shrink-0">To</span>
+                      <span className="text-[13px] text-slate-900 font-mono">{active.lead.author_email}</span>
+                    </div>
+                    <div className="flex items-baseline gap-2 pt-1 border-t border-slate-200/50 mt-1">
+                      <span className="text-[11px] uppercase tracking-wide text-slate-500 w-12 shrink-0">Subj</span>
+                      <span className="text-[14px] font-semibold text-slate-900">
+                        {active.rendered?.subject}
+                      </span>
+                    </div>
                   </div>
+                  {/* Rendered body */}
                   <div
-                    className="text-[13px] text-slate-700 leading-relaxed prose prose-sm max-w-none"
+                    className="text-[14px] text-slate-800 leading-relaxed prose prose-sm max-w-none p-5"
                     dangerouslySetInnerHTML={{ __html: sanitizeHtml(active.rendered?.html ?? "") }}
                   />
                 </div>
-                <div className="mt-3 text-[11px] text-slate-500">
-                  Recipient: <span className="font-mono">{active.lead.author_email}</span>
-                  {" · "}
-                  As-rep: <span className="font-medium">{active.lead.assigned_rep.name}</span>
-                  {active.lead.assigned_rep.wechat && ` (${active.lead.assigned_rep.wechat})`}
-                </div>
+                {active.lead.assigned_rep.wechat && (
+                  <div className="mt-2 text-[11px] text-slate-500">
+                    WeChat: <span className="font-mono">{active.lead.assigned_rep.wechat}</span>
+                  </div>
+                )}
               </div>
             </div>
           )}
