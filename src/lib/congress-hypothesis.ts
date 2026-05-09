@@ -36,8 +36,15 @@
 
 import { llmChat } from "@/lib/llm-proxy";
 import { supabase } from "@/lib/db";
+import { BRAND_DNA, BRAND_DNA_THIN } from "@/lib/brand-dna";
 
-const HYPOTHESIS_GENERATOR_SYSTEM = `你是 Qiji 算力 program 的资深 sales 数据分析师 + 销售心理学专家.
+const HYPOTHESIS_GENERATOR_SYSTEM = `${BRAND_DNA_THIN}
+
+# 你的角色
+
+你是 奇绩算力 program 的资深数据分析师 + 沟通心理学家.
+
+提假设时, 想的是"为什么这个 segment 的人收到信后没行动 — 是信息没传到? 是不对得上他们当下的状态? 是邮件让他们读起来像被推销?". 自由发散, 跨维度连想, 大胆.
 
 你的工作:
 1. 看实际发件数据的 segment-level patterns (geo, school, click rate 之类)
@@ -81,23 +88,64 @@ const HYPOTHESIS_GENERATOR_SYSTEM = `你是 Qiji 算力 program 的资深 sales 
 
 只返回 JSON, 不要 markdown fences. 1-3 条假设. 每条都要可证伪 + 提到具体 segment + 具体段落.`;
 
-const STRATEGIST_SYSTEM = `你是 Qiji 算力 program 的 sales copywriter + template 工程师.
+const STRATEGIST_SYSTEM = `${BRAND_DNA}
 
-收到一条 hypothesis + 当前 baseline template 的某一段内容. 你要根据 hypothesis 起草一个新版本的那一段, 用来 A/B 测试.
+# 你的角色
 
-要求:
-1. 严格保留原段落的**结构性 placeholder** (e.g. {{rep_name}}, {{closing_name}}, {{rep_wechat}}, {{title}}, {{abstract}}, {{base_info}}, {{school_text}}, {{directions_text}}, {{wechat_article_url}}, {{apply_url}}, {{REP_NAME}}, {{REP_WECHAT}}, {{CLOSING_NAME}}). 这些是占位符, 不要展开, 不要删.
-2. 改动要**具体响应 hypothesis**. 不是泛泛"更友好"或"更短", 而是针对那个心理学 / 文化判断做的微调.
-3. 中文为主, 技术词保留英文. 跟原段落风格一致, 不要突然换 register.
-4. 严格不要碰 program facts (100 万等值算力 / 通过率 1.5% / 不占股).
+你是 奇绩算力 program 的内容编辑. 收到一条 hypothesis + 当前模板中某一段内容. 根据 hypothesis 起草一个新版本的那一段, 用来 A/B 测试.
 
-输出 JSON:
+# 任务要求 (品牌 DNA 在上面, 这里只补技术性约束)
+1. **占位符严格保留**: {{rep_name}}, {{closing_name}}, {{rep_wechat}}, {{title}}, {{abstract}}, {{base_info}}, {{school_text}}, {{directions_text}}, {{wechat_article_url}}, {{apply_url}}, {{REP_NAME}}, {{REP_WECHAT}}, {{CLOSING_NAME}}. 不展开, 不删.
+2. 改动要**具体响应 hypothesis** 的判断, 不是泛泛"更友好"或"更短".
+3. 跟原段落 register 一致, 不要突然换 register.
+
+输出 JSON (只返回 JSON, 不要 markdown fence):
 {
   "new_paragraph": "新版本的那一段, 完整文本",
-  "what_changed": "1 句话总结你改了什么 + 为什么这样改对应 hypothesis",
+  "what_changed": "1 句话: 你改了什么 + 为什么对应 hypothesis",
   "expected_pitfall": "1 句话: 这个改动可能在什么场景下反而更糟"
+}`;
+
+const EDITOR_SYSTEM = `你是奇绩创坛的主编, 现在审核一段即将进入 A/B 测试池的邮件正文段落. 这是冷启动邮件, 给做 AI 研究的研究员介绍**免费 GPU 算力**项目.
+
+记住基本判断:
+- 这不是销售推文. 我们不是 salespeople. 这是免费算力, 给真正在做研究的人.
+- 邮件目的: 让收件人 30 秒内 get 到"我能不能用上 / 跟我有没有关系", 而不是被说服.
+- 写得不好的段落 (吹捧, 煽动, 自夸, 用词过 / 过卑) 比不发更糟 — 那是失信于品牌.
+
+红线 (任一触发即 reject):
+1. 错别字 / 错误标点 / 语病
+2. 销售话术或夸大: "立即/火热/独家/震撼/重磅/最强/顶级/行业领先/国内首家"
+3. 卑微 / 过热称谓: "您"/"您们"/"亲爱的"/"敬爱的"/"尊敬的"
+4. 自夸: 不能让段落读起来像在自我表扬
+5. 内部代号 (S23/F24 这种): 必须用读者能理解的表述
+6. 数字与 program facts 不符 (program facts: 单项目最高 100 万等值算力 / 通过率约 1.5% / 完全免费 / 不占股 / 不要求署名)
+7. 流量话术: "点击查看"/"扫码立即报名"/"不容错过"
+8. 第一/第二人称代词滥用 (重点检查: 第一人称连用 3 次以上常常是过度煽情)
+9. 主观模糊词: "感觉"/"似乎"/"应该"/"或许" — 邮件不要这些
+10. 占位符被破坏 ({{...}} 形式必须完整保留)
+
+软标准 (累积 ≥3 个 → revise):
+- 段落 > 150 字 (太长, 拆或砍)
+- 一段中超过 2 个核心观点
+- 加粗 > 3 处
+- 同类形容词堆砌 (e.g. "高效, 强大, 灵活")
+- 任何让段落读起来像广告而不是同行通知的修辞
+
+输出严格 JSON (无 markdown fence):
+{
+  "verdict": "pass" | "revise" | "reject",
+  "issues": [
+    { "severity": "red" | "yellow", "rule": "<触发的红线编号或软标准描述>", "evidence": "<具体引用段落里的字句>", "suggestion": "<怎么改>" }
+  ],
+  "tone_assessment": "<1-2 句话: 这段语气是否符合 务实 / 坦然 / 简朴 / 谦逊, 哪一项不符>"
 }
-只返回 JSON, 不要 markdown fences.`;
+
+verdict 规则:
+- 任一红线触发 → reject (issues 里给具体证据)
+- 0 红线 + ≤2 个软标准 → pass
+- 0 红线 + ≥3 个软标准 → revise
+- pass 时 issues 可以是空数组`;
 
 interface HypothesisRow {
   id: string;
@@ -422,6 +470,96 @@ ${histText}
  * 'proposal' template with that paragraph swapped, link it to the
  * hypothesis row.
  */
+interface EditorIssue {
+  severity: "red" | "yellow";
+  rule: string;
+  evidence: string;
+  suggestion: string;
+}
+interface EditorReview {
+  verdict: "pass" | "revise" | "reject";
+  issues: EditorIssue[];
+  tone_assessment: string;
+}
+
+/**
+ * Editor gate. Reviews a candidate proposal paragraph against 奇绩
+ * brand standards (务实 / 坦然 / 简朴 / 谦逊) before it can land in
+ * email_templates. Catches sales talk, hype, kowtow language, and
+ * fact-drift before they reach admin's library.
+ *
+ * Returns a structured verdict; the caller decides whether to insert,
+ * trigger a revision pass, or reject outright.
+ *
+ * If the editor LLM call itself fails or returns malformed JSON, we
+ * default to 'revise' (not 'pass') — better to have admin manually
+ * confirm than to let an unreviewed paragraph through.
+ */
+async function reviewProposalAsEditor(
+  paragraph: string,
+  slot: string,
+): Promise<EditorReview> {
+  const userPrompt = `# 待审段落 (slot: ${slot})
+
+${paragraph}
+
+# 你的任务
+按 EDITOR_SYSTEM 里的红线 + 软标准审查这段. 输出严格 JSON.`;
+  // 4000 tokens because Chinese reasoning + multi-issue JSON gets long.
+  // Same JSON-repair fallback pattern as analyst/strategist — Gemini
+  // truncates mid-string at low budgets, repair recovers ~half of those.
+  const tryParse = (raw: string): EditorReview | null => {
+    try {
+      const clean = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "");
+      const parsed = JSON.parse(clean) as EditorReview;
+      if (!parsed.verdict || !Array.isArray(parsed.issues)) return null;
+      return parsed;
+    } catch {
+      return null;
+    }
+  };
+  try {
+    const r = await llmChat({
+      model: "gemini-3-flash",
+      system: EDITOR_SYSTEM,
+      user: userPrompt,
+      temperature: 0.1, // editor should be consistent, not creative
+      max_tokens: 4000,
+    });
+    const direct = tryParse(r.text ?? "");
+    if (direct) return direct;
+
+    // One repair pass before falling back to revise.
+    try {
+      const repair = await llmChat({
+        model: "gemini-3-flash",
+        system: "You are a JSON repair tool. Return valid JSON only, dropping any incomplete trailing fields.",
+        user: `Repair this editor verdict JSON:\n\n${(r.text ?? "").slice(0, 3500)}`,
+        temperature: 0,
+        max_tokens: 4000,
+      });
+      const repaired = tryParse(repair.text ?? "");
+      if (repaired) return repaired;
+    } catch {
+      // fall through
+    }
+
+    // Couldn't parse even after repair — fail safe.
+    return {
+      verdict: "revise",
+      issues: [{ severity: "yellow", rule: "editor returned unparseable verdict", evidence: (r.text ?? "").slice(0, 100), suggestion: "human review" }],
+      tone_assessment: "(editor self-failure; needs human review)",
+    };
+  } catch (e) {
+    // Network failure — fail safe to revise so admin sees it.
+    return {
+      verdict: "revise",
+      issues: [{ severity: "yellow", rule: "editor unavailable", evidence: (e as Error).message.slice(0, 100), suggestion: "retry or human review" }],
+      tone_assessment: "(editor call failed; needs human review)",
+    };
+  }
+}
+
 async function craftProposalForHypothesis(
   h: GeneratedHypothesis & { id: string },
 ): Promise<{ ok: boolean; templateId?: string; error?: string }> {
@@ -523,6 +661,67 @@ ${baselineSlot}`;
     return { ok: false, error: "strategist returned no-op or empty paragraph" };
   }
 
+  // ─── EDITOR GATE ────────────────────────────────────────────────────
+  // The 主编 reviews the draft against 奇绩 brand standards before it's
+  // allowed to land in email_templates. Per user: "we're not salespeople
+  // — it is free compute". The editor blocks sales talk, hype, kowtow
+  // language, fact-drift, and stylistic violations. Three outcomes:
+  //   - pass: continue to insert
+  //   - revise: one round of strategist re-draft with editor's notes,
+  //             then re-review (if still not pass → reject)
+  //   - reject: don't insert; record the editor's reasons on the
+  //             hypothesis row so the next congress round knows
+  let attempt = parsed.new_paragraph;
+  let attemptChanged = parsed.what_changed ?? "";
+  let attemptPitfall = parsed.expected_pitfall ?? "";
+  let editorReview = await reviewProposalAsEditor(attempt, slotToSwap);
+
+  if (editorReview.verdict === "revise") {
+    // One revision cycle. The strategist gets the editor's issue list
+    // and rewrites. We don't loop more than once — if the editor still
+    // isn't happy, it means the underlying hypothesis maps badly to a
+    // paragraph swap and we should let admin see the rejection.
+    const revisePrompt =
+      `# Original hypothesis\n${h.hypothesis}\n\n` +
+      `# Slot being mutated\n${slotToSwap}\n\n` +
+      `# Baseline content\n${baselineSlot}\n\n` +
+      `# Your previous draft\n${attempt}\n\n` +
+      `# Editor's issues to fix\n` +
+      editorReview.issues
+        .map((i, idx) => `${idx + 1}. [${i.severity}] ${i.rule}\n   evidence: ${i.evidence}\n   suggestion: ${i.suggestion}`)
+        .join("\n") +
+      `\n\nRewrite. Same JSON output shape: { new_paragraph, what_changed, expected_pitfall }. Address every issue.`;
+    try {
+      const r2 = await llmChat({
+        model: "gemini-3-flash",
+        system: STRATEGIST_SYSTEM,
+        user: revisePrompt,
+        temperature: 0.3,
+        max_tokens: 3000,
+      });
+      const clean2 = (r2.text ?? "").trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "");
+      const parsed2 = JSON.parse(clean2) as typeof parsed;
+      if (parsed2.new_paragraph && parsed2.new_paragraph !== baselineSlot) {
+        attempt = parsed2.new_paragraph;
+        attemptChanged = parsed2.what_changed ?? attemptChanged;
+        attemptPitfall = parsed2.expected_pitfall ?? attemptPitfall;
+        editorReview = await reviewProposalAsEditor(attempt, slotToSwap);
+      }
+    } catch {
+      // Revision parse failed — keep the original draft, let editor's
+      // verdict on it stand (still 'revise' → falls through to reject).
+    }
+  }
+
+  if (editorReview.verdict !== "pass") {
+    // Editor rejected. Record on the hypothesis row so the runner can
+    // mark status='abandoned' and the next round avoids this angle.
+    return {
+      ok: false,
+      error: `editor ${editorReview.verdict}: ${editorReview.issues.map((i) => `[${i.severity}] ${i.rule}`).join("; ") || "(no issues listed)"}`,
+    };
+  }
+
   // Clone baseline → new 'proposal' template with the swap.
   const proposalName = `proposal_h${h.id.slice(0, 8)}_${slotToSwap}_${new Date().toISOString().slice(0, 10).replace(/-/g, "")}`;
   const insertRow: Record<string, unknown> = {
@@ -532,15 +731,16 @@ ${baselineSlot}`;
     status: "proposal",
     segment_default: geo,
     proposed_by: "congress",
-    proposed_reason: `${parsed.what_changed ?? "(no rationale)"}\n\nHypothesis: ${h.hypothesis}\n\nExpected pitfall: ${parsed.expected_pitfall ?? "(unstated)"}`,
+    proposed_reason: `${attemptChanged || "(no rationale)"}\n\nHypothesis: ${h.hypothesis}\n\nExpected pitfall: ${attemptPitfall || "(unstated)"}\n\nEditor: ${editorReview.tone_assessment}`,
     proposed_evidence: {
       hypothesis_id: h.id,
       slot_swapped: slotToSwap,
       baseline_template_id: baseline.id,
-      what_changed: parsed.what_changed,
-      expected_pitfall: parsed.expected_pitfall,
+      what_changed: attemptChanged,
+      expected_pitfall: attemptPitfall,
+      editor_tone_assessment: editorReview.tone_assessment,
     },
-    notes: `Generated by hypothesis-driven congress. Mutates ${slotToSwap} of "${baseline.name}".`,
+    notes: `Generated by hypothesis-driven congress. Mutates ${slotToSwap} of "${baseline.name}". Passed editor gate.`,
     subject_format: baseline.subject_format,
     intro_prompt: baseline.intro_prompt,
     greeting_format: baseline.greeting_format,
@@ -548,7 +748,7 @@ ${baselineSlot}`;
     school_pitch_format: baseline.school_pitch_format,
     cta_signoff_format: baseline.cta_signoff_format,
   };
-  insertRow[slotToSwap] = parsed.new_paragraph;
+  insertRow[slotToSwap] = attempt;
 
   const { data: created, error } = await supabase
     .from("email_templates")
@@ -658,7 +858,27 @@ export async function runHypothesisCongress(opts: { lookbackDays?: number; runId
       );
       proposalsDrafted++;
     } else {
-      notes.push(`hypothesis ${hypId.slice(0, 8)} couldn't be turned into a proposal: ${crafted.error}`);
+      // Either strategist failed OR editor rejected. Mark abandoned
+      // so future runs don't re-spawn the same angle, and persist the
+      // reason on the row for the next round's reasoning context.
+      const reasonStr = crafted.error ?? "unknown reason";
+      const isEditorReject = reasonStr.startsWith("editor ");
+      await supabase
+        .from("congress_hypotheses")
+        .update({
+          status: "abandoned",
+          outcome_evidence: {
+            abandoned_at: new Date().toISOString(),
+            reason: reasonStr,
+            killed_by: isEditorReject ? "editor_gate" : "strategist_failure",
+          },
+          decided_at: new Date().toISOString(),
+        })
+        .eq("id", hypId);
+      const note = isEditorReject
+        ? `hypothesis ${hypId.slice(0, 8)} blocked by editor gate: ${reasonStr.slice(0, 200)}`
+        : `hypothesis ${hypId.slice(0, 8)} couldn't be turned into a proposal: ${reasonStr}`;
+      notes.push(note);
     }
   }
 

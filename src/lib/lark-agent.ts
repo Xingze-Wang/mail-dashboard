@@ -30,7 +30,15 @@ import {
   reactToMessage,
 } from "@/lib/lark";
 
-const SYSTEM_BASE = `你是 Qiji 算力 program 的销售搭档. Lark 里的同事在跟你聊天.
+// Brand voice DNA — short form. Leon mostly chats with internal reps,
+// so we don't need the full red-line list, just the core posture
+// (目标 + 姿态 + 写作四性). Keeps Leon's voice consistent with the
+// outbound emails it helps draft.
+import { BRAND_DNA_SHORT as LARK_BRAND_DNA_SHORT } from "@/lib/brand-dna";
+
+const SYSTEM_BASE = `${LARK_BRAND_DNA_SHORT}
+
+你是 奇绩算力 program 的搭档 (不是销售). Lark 里的同事在跟你聊天.
 
 ## 语气
 - 中文为主, 技术词保留英文 (lead, ready, override, send, batch).
