@@ -5,25 +5,19 @@ import { requireSession } from "@/lib/auth-helpers";
 export const maxDuration = 30;
 
 /**
- * POST /api/templates/[id]/promote
- * Body: { archive_template_id?: string }
+ * POST /api/templates/[id]/promote — DEPRECATED single-click flip.
  *
- * Flips a status='proposal' (or status='archived') row to 'active'.
- * Optional `archive_template_id`: simultaneously moves another template
- * to status='archived', so swapping a proposal in for the row it's
- * meant to replace is a single transaction-ish call. (We don't have
- * real transactions through supabase-js — but two consecutive UPDATEs
- * are close enough; the dangerous middle state would be "both active",
- * which is OK because loadEffectiveTemplate filters status='active'
- * anyway and routing is by rep_id/name not segment yet.)
+ * Migration 066 split approval into two stages:
+ *   /approve-draft → status: proposal | approved_draft → approved_draft
+ *   /activate      → status: approved_draft | active → active
  *
- * The opposite direction — archiving an active template without
- * promoting anything — is also supported: just call without an
- * `archive_template_id` on a row whose `status` is already 'active',
- * which currently no-ops. To explicitly archive, use
- * /api/templates/[id]/archive (separate route, not yet built — for
- * v1 admin can edit the row directly via the existing /api/templates
- * PUT path).
+ * This endpoint is preserved for back-compat: it does BOTH steps in
+ * one call. New UI should call the two endpoints separately so admin
+ * has explicit consent for each stage. The promote endpoint stays
+ * available for one-off scripts and the bench-page Activate button
+ * that hasn't been split yet.
+ *
+ * Body: { archive_template_id?: string } — same as before.
  *
  * Auth: admin only.
  */

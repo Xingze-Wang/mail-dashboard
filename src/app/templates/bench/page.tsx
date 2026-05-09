@@ -69,7 +69,7 @@ interface Template {
   id: string;
   name: string;
   rep_id: number | null;
-  status: "active" | "proposal" | "archived";
+  status: "active" | "approved_draft" | "proposal" | "archived";
   segment_default: string | null;
   // Historical performance over last 90 days. Empty (sent=0) for new
   // templates / proposals — UI hides the metric block when sent<10
@@ -215,17 +215,20 @@ export default function TemplatesBenchPage() {
     }
   }, [forkParent, forkName, forkSlot, forkValue, forkSegment, closeForkModal, run]);
 
-  const promoteProposal = useCallback(
+  // Two-stage approval (migration 066): first call /approve-draft to
+  // confirm the prose, then /activate to confirm the routing rule.
+  // Each is its own admin click. We expose both as separate callbacks
+  // and the bench shows the appropriate next-step button per status.
+  const approveDraft = useCallback(
     async (templateId: string, name: string) => {
-      // Confirm — this changes prod behavior (loadEffectiveTemplate
-      // will start picking this row up). Safer to require an explicit
-      // click than to do it silently on the bench.
       const ok = window.confirm(
-        `Activate "${name}"? It will become a candidate for production sends. Existing 'global' / per-rep templates are NOT auto-archived — you'll need to demote those separately if needed.`,
+        `Approve the DRAFT of "${name}"?\n\nThis only confirms the prose looks right. ` +
+        `Production traffic will NOT route through this yet — that requires a separate ` +
+        `Activate step.`,
       );
       if (!ok) return;
       try {
-        const res = await fetch(`/api/templates/${templateId}/promote`, {
+        const res = await fetch(`/api/templates/${templateId}/approve-draft`, {
           method: "POST",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
@@ -233,23 +236,67 @@ export default function TemplatesBenchPage() {
         });
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
-          alert(`Promote failed: ${err.error ?? res.status}`);
+          alert(`Approve draft failed: ${err.error ?? res.status}`);
           return;
         }
-        // Optimistic: flip the local copy. A full re-run would re-render
-        // every Gemini call, which is wasteful and slow.
         setResult((prev) =>
           prev
             ? {
                 ...prev,
                 templates: prev.templates.map((t) =>
-                  t.id === templateId ? { ...t, status: "active" } : t,
+                  t.id === templateId ? { ...t, status: "approved_draft" } : t,
                 ),
               }
             : prev,
         );
       } catch (e) {
-        alert(`Promote failed: ${(e as Error).message}`);
+        alert(`Approve draft failed: ${(e as Error).message}`);
+      }
+    },
+    [],
+  );
+
+  const activateTemplate = useCallback(
+    async (templateId: string, name: string, currentSegment: string | null) => {
+      const segChoice = window.prompt(
+        `Activate "${name}" — production traffic for which segment?\n\n` +
+        `Type one of: cn / overseas / edu / fallback / (blank for none)\n\n` +
+        `If another template currently holds this segment, it will be archived.`,
+        currentSegment ?? "",
+      );
+      if (segChoice === null) return; // user cancelled
+      const trimmed = segChoice.trim();
+      const valid = ["cn", "overseas", "edu", "fallback", ""].includes(trimmed);
+      if (!valid) {
+        alert(`"${trimmed}" is not a valid segment. Use cn / overseas / edu / fallback / (blank).`);
+        return;
+      }
+      try {
+        const res = await fetch(`/api/templates/${templateId}/activate`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ segment_default: trimmed === "" ? null : trimmed }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          alert(`Activate failed: ${err.error ?? res.status}`);
+          return;
+        }
+        setResult((prev) =>
+          prev
+            ? {
+                ...prev,
+                templates: prev.templates.map((t) =>
+                  t.id === templateId
+                    ? { ...t, status: "active", segment_default: trimmed === "" ? null : trimmed }
+                    : t,
+                ),
+              }
+            : prev,
+        );
+      } catch (e) {
+        alert(`Activate failed: ${(e as Error).message}`);
       }
     },
     [],
@@ -491,11 +538,27 @@ export default function TemplatesBenchPage() {
                               PROPOSAL
                             </span>
                             <button
-                              onClick={() => void promoteProposal(tpl.id, tpl.name)}
-                              className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100"
-                              title="Promote this proposal to status='active' — it'll become a candidate for production sends"
+                              onClick={() => void approveDraft(tpl.id, tpl.name)}
+                              className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100"
+                              title="Step 1: approve the prose. Production traffic will NOT route through this — that's a separate Activate step."
                             >
-                              <CheckCircle2 className="w-2.5 h-2.5" /> Activate
+                              <CheckCircle2 className="w-2.5 h-2.5" /> Approve draft
+                            </button>
+                          </>
+                        )}
+                        {tpl.status === "approved_draft" && (
+                          <>
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 border border-blue-200">
+                              DRAFT-APPROVED
+                            </span>
+                            <button
+                              onClick={() =>
+                                void activateTemplate(tpl.id, tpl.name, tpl.segment_default)
+                              }
+                              className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100"
+                              title="Step 2: activate for a segment. Production traffic for that segment will start routing through this template."
+                            >
+                              <CheckCircle2 className="w-2.5 h-2.5" /> Activate (route)
                             </button>
                           </>
                         )}
