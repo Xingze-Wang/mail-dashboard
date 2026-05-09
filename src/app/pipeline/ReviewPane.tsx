@@ -369,6 +369,45 @@ export function ReviewPane({ leads, onExit, onSent, onSkipped, initialLeadId }: 
   // still triggers the same intercept.
   const doSend = requestSend;
 
+  // saveStatus: gives the user feedback on whether their edits are
+  // persisted. The previous behavior was: edits only persisted on
+  // Skip/Send, AND only when isEdited was true. Several silent failure
+  // modes resulted ('looked saved but wasn't' user reports). New
+  // behavior: save on every navigation/blur, with a visible indicator.
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+
+  // Reusable save: idempotent, safe to call repeatedly. Returns true
+  // if save succeeded (or was a no-op because nothing was edited).
+  const saveDraftIfEdited = useCallback(async (): Promise<boolean> => {
+    if (!lead) return true;
+    if (!isEdited) return true;
+    setSaveStatus("saving");
+    try {
+      const res = await fetch(`/api/pipeline/${lead.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          draftSubject: subject,
+          draftHtml: plainToHtml(body),
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(`Save failed: ${data.error ?? `HTTP ${res.status}`}. Edits NOT saved.`);
+        setSaveStatus("error");
+        return false;
+      }
+      setSaveStatus("saved");
+      // Auto-clear "saved" indicator after a couple seconds
+      setTimeout(() => setSaveStatus((s) => (s === "saved" ? "idle" : s)), 2000);
+      return true;
+    } catch (e) {
+      setError(`Save failed: ${e instanceof Error ? e.message : "Network error"}. Edits NOT saved.`);
+      setSaveStatus("error");
+      return false;
+    }
+  }, [lead, isEdited, subject, body]);
+
   const doSkip = useCallback(async () => {
     if (!lead || skipping) return;
     setSkipping(true);
@@ -377,36 +416,52 @@ export function ReviewPane({ leads, onExit, onSent, onSkipped, initialLeadId }: 
       // Skip = "save my edits (if any) and move on." It does NOT flip
       // status=skipped — the lead stays in 'ready' so sales can come
       // back to it. Terminal rejection is handled by Flag (soft→note
-      // only, hard→blocklist + skip). That's why this payload omits
-      // status entirely when there's nothing to save, and includes
-      // only the edited draft fields otherwise.
-      if (isEdited) {
-        const res = await fetch(`/api/pipeline/${lead.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            draftSubject: subject,
-            draftHtml: plainToHtml(body),
-          }),
-        });
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          setError(`Save failed: ${data.error ?? `HTTP ${res.status}`}. Edits NOT saved.`);
-          return;
-        }
-      }
+      // only, hard→blocklist + skip).
+      const ok = await saveDraftIfEdited();
+      if (!ok) return;
       // Move to next lead. Since status stays 'ready', the parent's
       // refetch won't drop this lead from the ready[] slice — so we
       // DO need to advance() manually here (unlike Send, which relies
       // on server-side status change to naturally drop it).
       onSkipped(lead);
       advance();
-    } catch (e) {
-      setError(`Save failed: ${e instanceof Error ? e.message : "Network error"}. Edits NOT saved.`);
     } finally {
       setSkipping(false);
     }
-  }, [lead, skipping, isEdited, subject, body, onSkipped, advance]);
+  }, [lead, skipping, saveDraftIfEdited, onSkipped, advance]);
+
+  // Save when navigating away from this lead (J/K/arrow buttons).
+  // We trigger save on lead.id change BEFORE the sync effect runs.
+  // Use a ref to capture the previous lead so we can save its draft.
+  const prevLeadIdRef = useRef<string | null>(null);
+  const prevSubjectRef = useRef<string>("");
+  const prevBodyRef = useRef<string>("");
+  useEffect(() => {
+    // Capture current state for the navigation hook
+    prevSubjectRef.current = subject;
+    prevBodyRef.current = body;
+  }, [subject, body]);
+  useEffect(() => {
+    const prevId = prevLeadIdRef.current;
+    if (prevId && lead?.id && prevId !== lead.id) {
+      // Navigated away from prevId. Save its edits using last-known
+      // subject/body. Fire-and-forget — we don't block UI on it.
+      const prevSubject = prevSubjectRef.current;
+      const prevBody = prevBodyRef.current;
+      void fetch(`/api/pipeline/${prevId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          draftSubject: prevSubject,
+          draftHtml: plainToHtml(prevBody),
+        }),
+      }).catch(() => {
+        // Non-fatal — user already moved on. The next save attempt
+        // (Skip/Send) on that lead will catch it.
+      });
+    }
+    prevLeadIdRef.current = lead?.id ?? null;
+  }, [lead?.id]);
 
   // Keyboard shortcuts. We attach to window so they fire even when focus
   // is in the textarea — but Cmd/Ctrl+Enter is the only "active" shortcut
@@ -655,6 +710,7 @@ export function ReviewPane({ leads, onExit, onSent, onSkipped, initialLeadId }: 
                 type="text"
                 value={subject}
                 onChange={(e) => setSubject(e.target.value)}
+                onBlur={() => void saveDraftIfEdited()}
                 placeholder="Subject"
               />
               <label
@@ -668,11 +724,28 @@ export function ReviewPane({ leads, onExit, onSent, onSkipped, initialLeadId }: 
                 }}
               >
                 Body (plain text)
+                {/*
+                  Save indicator: lights up green when an explicit save
+                  succeeded (via saveDraftIfEdited triggered on blur).
+                  Critical for users to trust their edits stick — the
+                  prior failure mode was 'edited then nothing visible
+                  happens until I send/skip'.
+                */}
+                {saveStatus === "saving" && (
+                  <span className="ml-2 text-[10px] text-slate-400">saving…</span>
+                )}
+                {saveStatus === "saved" && (
+                  <span className="ml-2 text-[10px] text-emerald-600">✓ saved</span>
+                )}
+                {saveStatus === "error" && (
+                  <span className="ml-2 text-[10px] text-red-600">save failed</span>
+                )}
               </label>
               <textarea
                 ref={bodyRef}
                 value={body}
                 onChange={(e) => setBody(e.target.value)}
+                onBlur={() => void saveDraftIfEdited()}
                 placeholder="Write your message…"
               />
             </>
