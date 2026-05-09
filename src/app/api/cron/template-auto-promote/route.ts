@@ -49,8 +49,33 @@ interface TplBucket {
   clicked: number;
 }
 
+/**
+ * Wilson 95% confidence interval for a click rate.
+ * Returns [lower, upper] in [0, 1].
+ *
+ * Why Wilson and not normal approximation:
+ *   - Handles n < 100 reliably
+ *   - Handles extreme rates (0/30 or 30/30) without producing
+ *     nonsensical bounds outside [0, 1]
+ *   - Standard choice for A/B testing at small scale
+ *
+ * z=1.96 corresponds to two-tailed 95% CI. Returns [0, 1] for n=0
+ * (zero info → infinite uncertainty, but clamped to valid range).
+ */
+function wilsonCI(clicked: number, sent: number, z = 1.96): [number, number] {
+  if (sent === 0) return [0, 1];
+  const p = clicked / sent;
+  const denom = 1 + (z * z) / sent;
+  const center = (p + (z * z) / (2 * sent)) / denom;
+  const margin = (z * Math.sqrt((p * (1 - p)) / sent + (z * z) / (4 * sent * sent))) / denom;
+  return [Math.max(0, center - margin), Math.min(1, center + margin)];
+}
+
+// Statistical floor before considering any decision. With n<30
+// Wilson CIs are too wide to ever separate. (Threshold is a soft
+// gate on top of the CI math — even with n=15 Wilson works
+// numerically, but the bounds are so wide they'd never separate.)
 const MIN_SAMPLE = 30;
-const LIFT_THRESHOLD = 1.2; // 20% lift
 
 export async function GET(req: NextRequest) {
   const secret = process.env.CRON_SECRET;
@@ -155,10 +180,22 @@ export async function GET(req: NextRequest) {
     }
     const aRate = active.clicked / active.sent;
     const dRate = draft.clicked / draft.sent;
-    const lift = aRate > 0 ? dRate / aRate : Infinity;
+    const [aLow, aHigh] = wilsonCI(active.clicked, active.sent);
+    const [dLow, dHigh] = wilsonCI(draft.clicked, draft.sent);
 
-    if (lift >= LIFT_THRESHOLD) {
-      // Promote draft → active, archive old active
+    // CI-based decision: a promotion requires the draft's lower bound
+    // to exceed the active's upper bound. That's a much stricter
+    // criterion than a point-estimate ratio — it accounts for
+    // sample size automatically. With small n, even a large mean
+    // difference may still have overlapping CIs, and we correctly
+    // wait. With large n, smaller real effects also pass.
+    const promote = dLow > aHigh;
+    const refute = dHigh < aLow;
+    const ciSummary =
+      `active ${(aRate * 100).toFixed(1)}% [${(aLow * 100).toFixed(1)}, ${(aHigh * 100).toFixed(1)}], ` +
+      `draft ${(dRate * 100).toFixed(1)}% [${(dLow * 100).toFixed(1)}, ${(dHigh * 100).toFixed(1)}]`;
+
+    if (promote) {
       const tNow = new Date().toISOString();
       await supabase.from("email_templates").update({
         status: "active",
@@ -169,20 +206,19 @@ export async function GET(req: NextRequest) {
         active: false,
         updated_at: tNow,
       }).eq("id", active.id);
-      // Mirror to admin_inbox so admin sees the swap
       await supabase.from("admin_inbox").upsert({
         kind: "observation",
         headline: `Auto-promoted template for segment '${segment}': ${draft.name}`,
-        body: `Approved-draft '${draft.name}' beat active '${active.name}' by ${((lift - 1) * 100).toFixed(0)}% click rate (n_draft=${draft.sent}, n_active=${active.sent}). Auto-archived '${active.name}' for the swap. Visit /templates/${draft.id}/inspect to review the new active.`,
+        body: `Approved-draft '${draft.name}' beat active '${active.name}' on click rate with non-overlapping 95% CIs:\n${ciSummary}\nn_draft=${draft.sent}, n_active=${active.sent}. Auto-archived '${active.name}' for the swap. Visit /templates/${draft.id}/inspect to review the new active.`,
         evidence: {
           source: "template-auto-promote",
+          gate: "wilson_ci",
           segment,
           promoted_id: draft.id,
           archived_id: active.id,
-          rate_promoted: dRate,
-          rate_archived: aRate,
-          n_promoted: draft.sent,
-          n_archived: active.sent,
+          rate_promoted: dRate, rate_archived: aRate,
+          ci_promoted: [dLow, dHigh], ci_archived: [aLow, aHigh],
+          n_promoted: draft.sent, n_archived: active.sent,
         },
         dedup_hash: `auto-promote:${draft.id}`,
         updated_at: tNow,
@@ -192,10 +228,9 @@ export async function GET(req: NextRequest) {
         promoted_id: draft.id, archived_id: active.id,
         rate_a: aRate, rate_b: dRate,
         n_a: active.sent, n_b: draft.sent,
-        reason: `lift=${lift.toFixed(2)}x ≥ ${LIFT_THRESHOLD}`,
+        reason: `wilson: ${ciSummary}`,
       });
-    } else if (lift <= 1 / LIFT_THRESHOLD) {
-      // Draft refuted — archive it
+    } else if (refute) {
       const tNow = new Date().toISOString();
       await supabase.from("email_templates").update({
         status: "archived",
@@ -205,16 +240,15 @@ export async function GET(req: NextRequest) {
       await supabase.from("admin_inbox").upsert({
         kind: "observation",
         headline: `Refuted template proposal for segment '${segment}': ${draft.name}`,
-        body: `Approved-draft '${draft.name}' lost to active '${active.name}' by ${((1 - lift) * 100).toFixed(0)}% click rate (n_draft=${draft.sent}, n_active=${active.sent}). Auto-archived. The hypothesis behind this proposal was wrong; the next congress round will know.`,
+        body: `Approved-draft '${draft.name}' lost to active '${active.name}' on click rate with non-overlapping 95% CIs:\n${ciSummary}\nn_draft=${draft.sent}, n_active=${active.sent}. Auto-archived. The hypothesis behind this proposal was wrong; the next congress round will see this outcome.`,
         evidence: {
           source: "template-auto-promote",
+          gate: "wilson_ci",
           segment,
-          archived_id: draft.id,
-          kept_active_id: active.id,
-          rate_archived: dRate,
-          rate_kept: aRate,
-          n_archived: draft.sent,
-          n_kept: active.sent,
+          archived_id: draft.id, kept_active_id: active.id,
+          rate_archived: dRate, rate_kept: aRate,
+          ci_archived: [dLow, dHigh], ci_kept: [aLow, aHigh],
+          n_archived: draft.sent, n_kept: active.sent,
         },
         dedup_hash: `auto-refute:${draft.id}`,
         updated_at: tNow,
@@ -224,14 +258,15 @@ export async function GET(req: NextRequest) {
         archived_id: draft.id,
         rate_a: aRate, rate_b: dRate,
         n_a: active.sent, n_b: draft.sent,
-        reason: `lift=${lift.toFixed(2)}x ≤ ${(1 / LIFT_THRESHOLD).toFixed(2)}x`,
+        reason: `wilson: ${ciSummary}`,
       });
     } else {
+      // Inconclusive — CIs overlap. Keep accumulating data.
       decisions.push({
         action: "no_op", segment,
         rate_a: aRate, rate_b: dRate,
         n_a: active.sent, n_b: draft.sent,
-        reason: `lift=${lift.toFixed(2)}x in inconclusive band`,
+        reason: `wilson CIs overlap: ${ciSummary}`,
       });
     }
   }

@@ -3,91 +3,94 @@
 /**
  * /admin/template-insights
  *
- * Surfaces per-template AI vs human ratings to find disagreement
- * gaps. The user's framing: insights need a WHY, not just numbers.
- * So this page emphasizes:
- *   1. The mean_gap (|AI − human|) sorted DESC — biggest disagreements
- *      first, those are the hypothesis-generating signals
- *   2. Sample reasonings from both sides — the gap means nothing
- *      without seeing what each rater said
- *   3. A "Backfill ratings" button that calls /api/admin/rate-recent
- *      so admin can populate AI ratings on emails that were sent
- *      before this feature shipped
+ * Surfaces calibration data from template_ratings:
+ *   - Top: per-dimension systematic bias (do humans + AI agree on
+ *     average across dims, or does AI consistently over/under-rate?)
+ *   - Bottom: per-template list sorted by |gap|, biggest disagreements
+ *     first. Each row shows AI vs mean-human side-by-side per dim,
+ *     plus a sample of each side's reasoning.
  *
- * The page is intentionally minimal — meant for the admin to read,
- * notice patterns, then write hypotheses (template improvements,
- * segment splits) into admin_inbox manually or via Leon. The
- * automation that turns insights into proposals lives in the cron
- * /api/cron/template-proposals.
+ * Read-only. To rate a template, follow the row's link to
+ * /templates/[id]/judge.
  */
 
-import { useCallback, useEffect, useState } from "react";
-import { Loader2, AlertCircle, RefreshCw, Sparkles, Brain, Users } from "lucide-react";
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { Loader2, AlertCircle, TrendingUp, TrendingDown } from "lucide-react";
 
-interface InsightRow {
+const DIMS = [
+  { key: "politeness",       label: "Polite" },
+  { key: "clarity",          label: "Clarity" },
+  { key: "peer_register",    label: "Peer reg" },
+  { key: "brand_fit",        label: "Brand" },
+  { key: "factual_accuracy", label: "Facts" },
+  { key: "naturalness",      label: "Natural" },
+] as const;
+type Dim = typeof DIMS[number]["key"];
+
+interface PerTemplate {
   template_id: string;
-  template_name: string | null;
-  template_status: string | null;
+  template_name: string;
+  template_status: string;
   template_segment: string | null;
-  n_human: number;
-  mean_human: number | null;
-  n_ai: number;
-  mean_ai: number | null;
-  n_both: number;
-  mean_gap: number | null;
-  sample_human_reason: string | null;
-  sample_ai_reason: string | null;
+  ai: Record<Dim, number> | null;
+  human_mean: Record<Dim, number> | null;
+  n_humans: number;
+  gap: Record<Dim, number> | null;
+  abs_gap_total: number;
+  sample_human_reasoning: string | null;
+  sample_ai_reasoning: string | null;
+}
+
+interface PerDimension {
+  dimension: Dim;
+  n_templates: number;
+  ai_mean: number;
+  human_mean: number;
+  mean_gap: number;
+}
+
+interface InsightsResponse {
+  perTemplate: PerTemplate[];
+  perDimension: PerDimension[];
+  totals: {
+    n_templates_with_ratings: number;
+    n_templates_paired: number;
+    n_total_ratings: number;
+  };
+}
+
+function fmt(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return "—";
+  return n.toFixed(1);
+}
+
+function gapColor(g: number): string {
+  const a = Math.abs(g);
+  if (a < 1) return "text-slate-400";
+  if (a < 2) return "text-amber-600";
+  return "text-red-600";
 }
 
 export default function TemplateInsightsPage() {
-  const [rows, setRows] = useState<InsightRow[]>([]);
-  const [windowDays, setWindowDays] = useState(30);
+  const [data, setData] = useState<InsightsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [authError, setAuthError] = useState(false);
-  const [backfilling, setBackfilling] = useState(false);
-  const [backfillResult, setBackfillResult] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  useEffect(() => {
     setLoading(true);
-    try {
-      const res = await fetch(`/api/templates/insights?days=${windowDays}`, {
-        credentials: "include",
-      });
-      if (res.status === 403) { setAuthError(true); return; }
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        alert(`Insights load failed: ${err.error ?? res.status}`);
-        return;
-      }
-      const data = (await res.json()) as { rows: InsightRow[] };
-      setRows(data.rows);
-    } finally { setLoading(false); }
-  }, [windowDays]);
-
-  useEffect(() => { void load(); }, [load]);
-
-  const backfill = useCallback(async () => {
-    if (backfilling) return;
-    setBackfilling(true);
-    setBackfillResult(null);
-    try {
-      const res = await fetch("/api/admin/rate-recent", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ limit: 20, days: windowDays }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setBackfillResult(`Failed: ${data.error ?? res.status}`);
-        return;
-      }
-      setBackfillResult(
-        `Rated ${data.rated} emails (${data.errors} errors). Reload to see updated insights.`,
-      );
-      void load();
-    } finally { setBackfilling(false); }
-  }, [backfilling, windowDays, load]);
+    fetch("/api/admin/template-insights", { credentials: "include" })
+      .then(async (r) => {
+        if (r.status === 403) { setAuthError(true); return; }
+        if (!r.ok) {
+          alert(`Load failed: ${r.status}`);
+          return;
+        }
+        setData((await r.json()) as InsightsResponse);
+      })
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, []);
 
   if (authError) {
     return (
@@ -100,152 +103,148 @@ export default function TemplateInsightsPage() {
     );
   }
 
+  if (loading || !data) {
+    return (
+      <div className="p-12 text-center">
+        <Loader2 className="w-6 h-6 animate-spin text-slate-400 mx-auto" />
+      </div>
+    );
+  }
+
   return (
-    <div className="max-w-7xl mx-auto p-6">
-      <div className="flex items-center justify-between mb-5">
-        <div>
-          <h1 className="text-2xl font-semibold text-slate-900">Template insights</h1>
-          <p className="text-sm text-slate-500 mt-0.5">
-            AI vs human ratings per template. Sorted by |gap| DESC — biggest disagreements first.
-            Read the sample reasonings to find hypotheses.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <select
-            value={windowDays}
-            onChange={(e) => setWindowDays(Number(e.target.value))}
-            className="text-sm border border-slate-300 rounded px-2 py-1.5"
-          >
-            <option value={7}>7 days</option>
-            <option value={14}>14 days</option>
-            <option value={30}>30 days</option>
-            <option value={90}>90 days</option>
-          </select>
-          <button
-            onClick={() => void load()}
-            disabled={loading}
-            className="p-1.5 rounded-md hover:bg-slate-100 text-slate-600 disabled:opacity-50"
-            title="Refresh"
-          >
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-          </button>
-          <button
-            onClick={() => void backfill()}
-            disabled={backfilling}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-purple-600 text-white rounded text-sm hover:bg-purple-700 disabled:opacity-50"
-            title="Run AI rating on the last 20 unrated emails in this window"
-          >
-            {backfilling ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-            Backfill AI ratings
-          </button>
-        </div>
+    <div className="max-w-6xl mx-auto p-6">
+      <div className="mb-6">
+        <h1 className="text-2xl font-semibold text-slate-900">Template scoring calibration</h1>
+        <p className="text-sm text-slate-500 mt-1 leading-relaxed">
+          AI 评分 vs 人工评分 在各维度上的差异. 系统性偏差 (AI 一致地对某个维度过高/过低评分) 是校准信号 —
+          以后可以用累积的标注数据训练一个"听起来像不像人话"的打分模型.
+          {" "}
+          <span className="text-slate-600">
+            {data.totals.n_templates_paired} 个模板有 AI + 人工双方评分 ·
+            {" "}{data.totals.n_total_ratings} 总评分行
+          </span>
+        </p>
       </div>
 
-      {backfillResult && (
-        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-800">
-          {backfillResult}
-        </div>
-      )}
+      {/* Per-dimension systematic bias */}
+      <div className="mb-8">
+        <h2 className="text-base font-medium text-slate-800 mb-3">维度级别的系统性偏差</h2>
+        <p className="text-xs text-slate-500 mb-3">
+          Mean(human) − Mean(AI) per dimension. 正数 = humans rate higher than AI thinks
+          (AI 低估了这个维度). 负数 = AI rates higher than humans agree
+          (AI 高估了; 这是更需要警惕的方向, 意味着 AI 在自己的盲点上也很自信).
+        </p>
+        {data.perDimension.length === 0 || data.perDimension.every((d) => d.n_templates === 0) ? (
+          <div className="bg-slate-50 border border-slate-200 rounded p-4 text-center text-sm text-slate-500">
+            还没有人工评分数据. 去 <Link href="/templates" className="text-blue-600">/templates</Link> 选一个 proposal, 进 inspect, 再点 judge.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full border-separate border-spacing-y-1">
+              <thead>
+                <tr className="text-xs text-slate-500">
+                  <th className="text-left p-2">Dimension</th>
+                  <th className="text-right p-2">n templates</th>
+                  <th className="text-right p-2">AI mean</th>
+                  <th className="text-right p-2">Human mean</th>
+                  <th className="text-right p-2">Mean gap</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.perDimension.map((d) => {
+                  const trend = d.mean_gap > 0.5 ? "humans-higher" : d.mean_gap < -0.5 ? "ai-higher" : "agree";
+                  return (
+                    <tr key={d.dimension} className="bg-white border border-slate-200">
+                      <td className="p-2 text-sm font-medium text-slate-900">{d.dimension}</td>
+                      <td className="p-2 text-right text-xs text-slate-600">{d.n_templates}</td>
+                      <td className="p-2 text-right text-sm">{fmt(d.ai_mean)}</td>
+                      <td className="p-2 text-right text-sm">{fmt(d.human_mean)}</td>
+                      <td className={`p-2 text-right text-sm font-medium ${gapColor(d.mean_gap)}`}>
+                        {Number.isFinite(d.mean_gap) ? (d.mean_gap > 0 ? "+" : "") + d.mean_gap.toFixed(2) : "—"}
+                        {trend === "ai-higher" && <TrendingUp className="inline w-3 h-3 ml-1 text-red-600" />}
+                        {trend === "humans-higher" && <TrendingDown className="inline w-3 h-3 ml-1 text-amber-600" />}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
-      {loading && rows.length === 0 && (
-        <div className="p-12 text-center">
-          <Loader2 className="w-6 h-6 animate-spin text-slate-400 mx-auto" />
-        </div>
-      )}
+      {/* Per-template detail */}
+      <div>
+        <h2 className="text-base font-medium text-slate-800 mb-3">
+          Per-template, sorted by total |gap|
+        </h2>
+        {data.perTemplate.length === 0 ? (
+          <div className="bg-slate-50 border border-slate-200 rounded p-4 text-center text-sm text-slate-500">
+            没有 AI + 人工双评的模板.
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {data.perTemplate.map((p) => (
+              <Link
+                key={p.template_id}
+                href={`/templates/${p.template_id}/judge`}
+                className="block bg-white border border-slate-200 rounded-lg p-4 hover:border-slate-400 transition"
+              >
+                <div className="flex items-baseline gap-2 mb-2">
+                  <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-slate-100 text-slate-700">
+                    {p.template_status}
+                  </span>
+                  <span className="text-sm font-medium text-slate-900">{p.template_name}</span>
+                  {p.template_segment && (
+                    <span className="text-xs text-slate-500">seg={p.template_segment}</span>
+                  )}
+                  <span className="text-xs text-slate-500">· {p.n_humans} human{p.n_humans === 1 ? "" : "s"}</span>
+                  <span className="ml-auto text-xs text-slate-600">
+                    total |gap|: <span className={gapColor(p.abs_gap_total / 6)}>{p.abs_gap_total.toFixed(1)}</span>
+                  </span>
+                </div>
 
-      {!loading && rows.length === 0 && (
-        <div className="bg-slate-50 border border-slate-200 rounded-lg p-10 text-center">
-          <Brain className="w-10 h-10 text-slate-400 mx-auto mb-3" />
-          <p className="text-slate-600 font-medium">No ratings yet in this window</p>
-          <p className="text-slate-500 text-sm mt-1">
-            Click "Backfill AI ratings" above to populate AI scores on recent emails,
-            then reps need to rate manually for the human side.
-          </p>
-        </div>
-      )}
+                <div className="grid grid-cols-6 gap-2">
+                  {DIMS.map((dim) => {
+                    const ai = p.ai?.[dim.key] ?? null;
+                    const hm = p.human_mean?.[dim.key] ?? null;
+                    const g = p.gap?.[dim.key] ?? 0;
+                    return (
+                      <div key={dim.key} className="text-center">
+                        <div className="text-[10px] uppercase text-slate-500 tracking-wide mb-1">{dim.label}</div>
+                        <div className="text-xs">
+                          <span className="text-purple-700 font-mono">AI {fmt(ai)}</span>
+                          <span className="text-slate-400"> · </span>
+                          <span className="text-emerald-700 font-mono">H {fmt(hm)}</span>
+                        </div>
+                        <div className={`text-[10px] mt-0.5 font-medium ${gapColor(g)}`}>
+                          {Number.isFinite(g) && g !== 0 ? (g > 0 ? "+" : "") + g.toFixed(1) : "—"}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
 
-      <div className="space-y-3">
-        {rows.map((r) => {
-          const gapColor = r.mean_gap == null
-            ? "text-slate-400"
-            : r.mean_gap > 1.5
-              ? "text-red-600"
-              : r.mean_gap > 0.8
-                ? "text-amber-600"
-                : "text-emerald-600";
-          return (
-            <div key={r.template_id} className="bg-white border border-slate-200 rounded-lg p-4">
-              <div className="flex items-start justify-between gap-4 mb-2">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-mono text-sm font-medium text-slate-900">
-                      {r.template_name ?? r.template_id.slice(0, 8)}
-                    </span>
-                    {r.template_status && r.template_status !== "active" && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 border border-amber-200">
-                        {r.template_status.toUpperCase()}
-                      </span>
+                {(p.sample_ai_reasoning || p.sample_human_reasoning) && (
+                  <div className="mt-3 pt-3 border-t border-slate-100 grid grid-cols-2 gap-3">
+                    {p.sample_ai_reasoning && (
+                      <div className="text-xs">
+                        <div className="text-purple-700 font-medium mb-0.5">AI:</div>
+                        <p className="text-slate-700 line-clamp-2">{p.sample_ai_reasoning}</p>
+                      </div>
                     )}
-                    {r.template_segment && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
-                        seg={r.template_segment}
-                      </span>
+                    {p.sample_human_reasoning && (
+                      <div className="text-xs">
+                        <div className="text-emerald-700 font-medium mb-0.5">Human:</div>
+                        <p className="text-slate-700 line-clamp-2">{p.sample_human_reasoning}</p>
+                      </div>
                     )}
                   </div>
-                </div>
-                <div className={`text-right shrink-0 ${gapColor}`}>
-                  <div className="text-2xl font-semibold leading-none">
-                    {r.mean_gap == null ? "—" : `±${r.mean_gap.toFixed(2)}`}
-                  </div>
-                  <div className="text-[10px] uppercase tracking-wide mt-1">avg gap</div>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4 mt-3">
-                <div className="flex items-start gap-2">
-                  <Users className="w-4 h-4 text-slate-500 mt-0.5 shrink-0" />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-xs text-slate-500">
-                      Human ({r.n_human})
-                      {r.mean_human != null && (
-                        <span className="ml-1 font-medium text-slate-900">{r.mean_human.toFixed(2)}/5</span>
-                      )}
-                    </div>
-                    {r.sample_human_reason ? (
-                      <p className="text-[12px] text-slate-700 mt-1 leading-snug whitespace-pre-wrap line-clamp-3">
-                        "{r.sample_human_reason}"
-                      </p>
-                    ) : (
-                      <p className="text-[11px] text-slate-400 mt-1 italic">No human ratings yet</p>
-                    )}
-                  </div>
-                </div>
-                <div className="flex items-start gap-2">
-                  <Sparkles className="w-4 h-4 text-purple-500 mt-0.5 shrink-0" />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-xs text-slate-500">
-                      AI ({r.n_ai})
-                      {r.mean_ai != null && (
-                        <span className="ml-1 font-medium text-slate-900">{r.mean_ai.toFixed(2)}/5</span>
-                      )}
-                    </div>
-                    {r.sample_ai_reason ? (
-                      <p className="text-[12px] text-slate-700 mt-1 leading-snug whitespace-pre-wrap line-clamp-3">
-                        "{r.sample_ai_reason}"
-                      </p>
-                    ) : (
-                      <p className="text-[11px] text-slate-400 mt-1 italic">No AI ratings yet</p>
-                    )}
-                  </div>
-                </div>
-              </div>
-              {r.n_both > 0 && (
-                <div className="mt-3 pt-2 border-t border-slate-100 text-[11px] text-slate-500">
-                  {r.n_both} email(s) rated by both. Click any to drill down (coming soon).
-                </div>
-              )}
-            </div>
-          );
-        })}
+                )}
+              </Link>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

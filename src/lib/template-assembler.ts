@@ -238,24 +238,59 @@ function hashToBucket(leadId: string | null | undefined, modulo: number): number
  * If `leadId` is null (e.g. preview / inspect), always returns the
  * active template — drafts only get exposed to actual production sends.
  */
+/**
+ * Inner helper — given a candidate active template + a list of
+ * approved_draft templates targeting the same scope, pick which one
+ * to use for this lead. Deterministic via the lead-id hash.
+ *
+ * Returns activeTpl when leadId is missing (preview / inspect),
+ * when there are no drafts, or when this lead's bucket falls
+ * outside the A/B split percentage.
+ */
+function pickWithABSplit(
+  activeTpl: EmailTemplate,
+  drafts: EmailTemplate[],
+  leadId: string | null | undefined,
+): EmailTemplate {
+  if (!leadId || drafts.length === 0) return activeTpl;
+  const bucket = hashToBucket(leadId, 100);
+  if (bucket >= APPROVED_DRAFT_TRAFFIC_PCT) return activeTpl;
+  const draftIdx = hashToBucket(leadId + "draft", drafts.length);
+  return drafts[draftIdx];
+}
+
 export async function loadEffectiveTemplate(
   repId: number | null,
   leadId?: string | null,
 ): Promise<EmailTemplate | null> {
-  // Per-rep template wins over everything else. No A/B split here —
-  // per-rep is a small population and admins manage it directly.
+  // Layer 1: per-rep template (rep_id matches). When a rep has both
+  // an active and one or more approved_draft templates, A/B split
+  // applies here too — per-rep volume is small but if admin set up
+  // a per-rep draft they explicitly want to test it.
   if (repId !== null) {
-    const { data: perRep } = await supabase
+    const { data: perRepActive } = await supabase
       .from("email_templates")
       .select("*")
       .eq("rep_id", repId)
       .eq("active", true)
       .eq("status", "active")
       .maybeSingle();
-    if (perRep) return perRep as EmailTemplate;
+    if (perRepActive) {
+      const { data: perRepDrafts } = await supabase
+        .from("email_templates")
+        .select("*")
+        .eq("rep_id", repId)
+        .eq("active", true)
+        .eq("status", "approved_draft");
+      return pickWithABSplit(
+        perRepActive as EmailTemplate,
+        (perRepDrafts ?? []) as EmailTemplate[],
+        leadId,
+      );
+    }
   }
 
-  // Global active template (the baseline).
+  // Layer 2: org-wide global active template (the baseline).
   const { data: global } = await supabase
     .from("email_templates")
     .select("*")
@@ -264,30 +299,15 @@ export async function loadEffectiveTemplate(
     .eq("status", "active")
     .maybeSingle();
   const activeTpl = (global as EmailTemplate | null) ?? null;
-  if (!activeTpl || !leadId) return activeTpl;
+  if (!activeTpl) return null;
 
-  // A/B split: if there's an approved_draft with no rep_id (org-wide),
-  // route APPROVED_DRAFT_TRAFFIC_PCT% of leads through it. This is
-  // how draft proposals accumulate the click data the auto-promote
-  // cron needs. Per-lead-deterministic so re-renders are stable.
-  const { data: drafts } = await supabase
+  const { data: orgDrafts } = await supabase
     .from("email_templates")
     .select("*")
     .eq("status", "approved_draft")
     .eq("active", true)
     .is("rep_id", null);
-  const eligibleDrafts = (drafts ?? []) as EmailTemplate[];
-  if (eligibleDrafts.length === 0) return activeTpl;
-
-  // Bucket the lead. With APPROVED_DRAFT_TRAFFIC_PCT=20 and N drafts,
-  // each draft gets 20/N% of traffic; the rest stays on active.
-  const bucket = hashToBucket(leadId, 100);
-  if (bucket >= APPROVED_DRAFT_TRAFFIC_PCT) return activeTpl;
-
-  // Pick which draft — round-robin via second hash (so leads spread
-  // across drafts evenly when there are multiple).
-  const draftIdx = hashToBucket(leadId + "draft", eligibleDrafts.length);
-  return eligibleDrafts[draftIdx];
+  return pickWithABSplit(activeTpl, (orgDrafts ?? []) as EmailTemplate[], leadId);
 }
 
 // ── String substitution ──────────────────────────────────────────────
