@@ -82,12 +82,36 @@ export async function POST(req: NextRequest) {
     // Load assignment config once for the whole batch
     const config = await getAssignmentConfig();
 
+    // Garbage-name set: Python scrapers occasionally stringify None /
+    // null / undefined when a field is missing, producing literal
+    // strings here. Per user 'if there is null or anything like that
+    // just kill the lead' — we reject at import. Better not to have
+    // it than to have it.
+    const GARBAGE_NAMES = new Set([
+      "null", "Null", "NULL",
+      "undefined", "Undefined", "UNDEFINED",
+      "none", "None", "NONE",
+      "nan", "NaN", "NAN",
+      "n/a", "N/A", "na",
+      "",
+    ]);
+
     for (const lead of leads) {
       const rawEmail = lead.authorEmail as string;
       if (!rawEmail || typeof rawEmail !== "string" || !rawEmail.includes("@")) {
         errors.push("Missing or invalid authorEmail");
         skipped++;
         continue;
+      }
+
+      // Garbage-firstName guard. Treat the lead as malformed and skip.
+      const firstNameRaw = (lead.firstName as string | null | undefined) ?? null;
+      if (firstNameRaw !== null && typeof firstNameRaw === "string") {
+        if (GARBAGE_NAMES.has(firstNameRaw.trim())) {
+          errors.push(`Skipped: garbage firstName "${firstNameRaw}" for ${rawEmail}`);
+          skipped++;
+          continue;
+        }
       }
       // Aggressively canonicalize so dedup catches:
       //   - mixed case

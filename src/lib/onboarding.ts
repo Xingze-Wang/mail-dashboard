@@ -651,18 +651,22 @@ async function provisionRep(
     return { ok: false, error: "pending row missing required fields" };
   }
 
-  // Lark-resolved name wins over the typed claim. lark_name was captured
-  // at triage time from /contact/v3/users — that's what their colleagues
-  // see in Lark, so it's the canonical display name. claimed_name is a
-  // fallback for the rare case where the Lark API failed during triage.
-  // Without this preference we get drift: someone types "Yujie" in DM
-  // but Lark knows them as "杜雨洁", and then every email signature
-  // and AI prompt uses the pinyin variant they don't actually go by.
-  const canonicalName = (pending.lark_name?.trim() || pending.claimed_name).trim();
+  // Customer-facing name comes from the typed claim ("Yujie", "Ethan").
+  // Lark's Han display name ("杜雨洁") is stored separately on
+  // sales_reps.lark_name (migration 067) for internal Lark identity
+  // matching + admin UI clarity, but never leaks into customer email
+  // signatures, dashboard dropdowns, or templates.
+  //
+  // History note: an earlier version (commit fc59117) made Lark Han
+  // name win over the typed claim. User reverted: 'i had the names
+  // as is. just keep using eng names as previous not the cn. the cn
+  // are useful for identifying lark name and more'.
+  const customerFacingName = pending.claimed_name.trim();
+  const larkHanName = pending.lark_name?.trim() || null;
 
-  // First-name as username (lowercase, alpha-num only). We derive this
-  // from the typed claim, not the Lark name — Chinese chars don't survive
-  // the [^a-z0-9] filter, and login usernames need to be ASCII anyway.
+  // First-name as username (lowercase, alpha-num only). Derived from
+  // the typed claim — Chinese chars don't survive the [^a-z0-9] filter,
+  // and login usernames need to be ASCII anyway.
   const username = pending.claimed_name
     .toLowerCase()
     .split(/\s+/)[0]
@@ -671,8 +675,10 @@ async function provisionRep(
   const { data: inserted, error } = await supabase
     .from("sales_reps")
     .insert({
-      name: canonicalName,
-      sender_name: canonicalName,
+      name: customerFacingName,
+      sender_name: customerFacingName,
+      english_handle: customerFacingName, // mig 064 — keep in sync
+      lark_name: larkHanName,             // mig 067 — Han form stored separately
       sender_email: pending.claimed_email,
       login_email: pending.claimed_email,
       username: username || null,

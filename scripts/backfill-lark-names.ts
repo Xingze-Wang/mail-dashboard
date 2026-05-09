@@ -1,17 +1,15 @@
 /**
- * One-shot: for every active rep with lark_open_id, call
- * getLarkUserInfo and update their `name` + `sender_name` to the
- * canonical Lark display name.
+ * For every active rep with lark_open_id, call getLarkUserInfo and
+ * cache the canonical Lark display name into sales_reps.lark_name
+ * (migration 067). Does NOT touch sales_reps.name / sender_name —
+ * those stay as the customer-facing English handle.
  *
- * Why this exists: pre-existing reps were inserted via manual SQL
- * migrations and their `name` was whatever I typed (often pinyin or
- * a guess). Once their lark_open_id is bound, Lark IS the source of
- * truth for what they actually go by — using anything else means our
- * dashboard, email signatures, and AI prompts all show a name that
- * isn't really theirs.
+ * History note: an earlier version of this script overwrote name +
+ * sender_name with the Lark Han form. User reverted: keep English
+ * handles for customer-facing fields, store Han name separately on
+ * lark_name for internal matching only.
  *
- * Idempotent: running twice produces the same result. Safe to run
- * after every onboarding too if drift is suspected.
+ * Idempotent. Safe to run any time drift is suspected.
  *
  * Run: set -a && source .env.local && set +a && npx tsx scripts/backfill-lark-names.ts
  */
@@ -21,7 +19,7 @@ import { supabase } from "../src/lib/db";
 async function main() {
   const { data: reps } = await supabase
     .from("sales_reps")
-    .select("id, name, sender_name, lark_open_id, active")
+    .select("id, name, lark_name, lark_open_id, active")
     .eq("active", true)
     .not("lark_open_id", "is", null);
 
@@ -36,20 +34,22 @@ async function main() {
       console.log(`  rep_id=${rep.id} ${rep.name}: lark fetch failed (${info.error ?? "no name"}) — skip`);
       continue;
     }
-    const larkName = info.name.trim();
-    if (rep.name === larkName && rep.sender_name === larkName) {
-      console.log(`  rep_id=${rep.id} ${rep.name}: already canonical (${larkName}) — skip`);
+    const larkHanName = info.name.trim();
+    if (rep.lark_name === larkHanName) {
+      console.log(`  rep_id=${rep.id} ${rep.name}: lark_name already cached (${larkHanName}) — skip`);
       continue;
     }
     const { error } = await supabase
       .from("sales_reps")
-      .update({ name: larkName, sender_name: larkName })
+      .update({ lark_name: larkHanName })
       .eq("id", rep.id);
     if (error) {
       console.log(`  rep_id=${rep.id}: update failed — ${error.message}`);
       continue;
     }
-    console.log(`  rep_id=${rep.id}: '${rep.name}' / '${rep.sender_name}' → '${larkName}'`);
+    console.log(
+      `  rep_id=${rep.id} ${rep.name}: lark_name '${rep.lark_name ?? "(null)"}' → '${larkHanName}' (name unchanged)`,
+    );
   }
   console.log("\nbackfill done.");
 }
