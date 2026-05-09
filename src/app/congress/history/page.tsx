@@ -13,7 +13,7 @@ interface HistoryData { metrics: WeeklyMetric[]; markers: DecisionMarker[] }
 async function getHistory(): Promise<HistoryData | null> {
   const h = await headers();
   const c = await cookies();
-  const host = h.get("host") ?? "qiji-pipeline.vercel.app";
+  const host = h.get("host") ?? "calistamind.com";
   const proto = host.startsWith("localhost") ? "http" : "https";
   const cookieStr = c.getAll().map((x) => `${x.name}=${x.value}`).join("; ");
   const res = await fetch(`${proto}://${host}/api/congress/history`, {

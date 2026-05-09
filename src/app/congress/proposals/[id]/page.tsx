@@ -56,7 +56,7 @@ export default async function ProposalDiscussionPage({ params }: { params: Promi
   const { id } = await params;
   const h = await headers();
   const c = await cookies();
-  const host = h.get("host") ?? "qiji-pipeline.vercel.app";
+  const host = h.get("host") ?? "calistamind.com";
   const cookieStr = c.getAll().map((x) => `${x.name}=${x.value}`).join("; ");
 
   const [db, traceEvents] = await Promise.all([

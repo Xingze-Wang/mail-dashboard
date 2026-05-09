@@ -10,7 +10,9 @@
  *   2. Forge a card.action.trigger payload with action.value =
  *      { onboarding_action: "deny", pending_id: ... } and
  *      operator.open_id = admin's real open_id
- *   3. POST to https://qiji-pipeline.vercel.app/api/lark/webhook
+ *   3. POST to https://calistamind.com/api/lark/webhook (the prod
+ *      domain Lark itself talks to — testing the SAME hostname Lark
+ *      uses ensures we exercise the same WAF/challenge surface)
  *   4. Wait 5s for after() to drain
  *   5. Re-read the pending row — if status='denied', the handler
  *      reached production code and worked. Otherwise diagnose.
@@ -80,7 +82,7 @@ const payload = {
 
 let res, respText;
 try {
-  res = await fetch("https://qiji-pipeline.vercel.app/api/lark/webhook", {
+  res = await fetch("https://calistamind.com/api/lark/webhook", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),

@@ -7,7 +7,7 @@ export const SALES_GUIDE = `# Qiji Pipeline 销售上手手册
 帮你把 arXiv 论文作者变成奇绩潜在合作者的工具。系统每天自动扫论文 → 找作者邮箱 → 起草个性化邮件 → 你 review、修改、发送。核心动作 = 过 leads + 点 Send，不是从零写邮件。
 
 ## 第一次登录
-- URL: https://qiji-pipeline.vercel.app/login
+- URL: https://calistamind.com/login
 - 用奇绩邮箱 + 拿到的 password
 - 默认进 Overview 页
 - 多账号: 左下角头像 dropdown → Add another account, 切换在同一个 dropdown
