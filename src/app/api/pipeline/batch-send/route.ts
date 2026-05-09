@@ -361,6 +361,11 @@ export async function POST(req: NextRequest) {
         // rep_id vs actor_rep_id distinction.
         actor_rep_id: actingRepId,
         template_id: templateId,
+        // Audit (migration 062): resolved prompt + LLM output captured
+        // at draft-queue time. NULL on legacy/Python-supplied drafts.
+        intro_prompt_resolved:
+          (lead.draft_intro_prompt_resolved as string | null | undefined) ?? null,
+        intro_output: (lead.draft_intro_output as string | null | undefined) ?? null,
       });
       if (emailInsertErr) {
         console.error("batch emails insert failed", { id, resendId: result.data?.id, err: emailInsertErr });

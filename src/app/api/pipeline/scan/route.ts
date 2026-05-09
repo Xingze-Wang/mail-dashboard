@@ -16,7 +16,12 @@ export const maxDuration = 300;
 
 async function insertLead(
   lead: ScannedLead,
-  draft: { subject: string; html: string } | null,
+  draft: {
+    subject: string;
+    html: string;
+    introPromptResolved?: string | null;
+    introOutput?: string | null;
+  } | null,
   extras: {
     s2AuthorId?: string | null;
     hIndex?: number | null;
@@ -52,6 +57,10 @@ async function insertLead(
     matched_directions: lead.matchedDirections,
     draft_subject: draft?.subject ?? null,
     draft_html: draft?.html ?? null,
+    // Capture the prompt + LLM output that produced this draft
+    // (migration 062). Lead-bound, not rep-bound — survives reassign.
+    draft_intro_prompt_resolved: draft?.introPromptResolved ?? null,
+    draft_intro_output: draft?.introOutput ?? null,
     status: draft ? "ready" : "new",
     s2_author_id: extras.s2AuthorId ?? null,
     h_index: extras.hIndex ?? null,
@@ -159,7 +168,12 @@ async function runScan() {
     const rep = await getRep(repId);
 
     // 4. Generate draft with rep identity
-    let draft: { subject: string; html: string } | null = null;
+    let draft: {
+      subject: string;
+      html: string;
+      introPromptResolved?: string | null;
+      introOutput?: string | null;
+    } | null = null;
     try {
       draft = await generateDraft({
         title: lead.title,

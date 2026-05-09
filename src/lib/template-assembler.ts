@@ -148,7 +148,7 @@ async function generatePersonalizedIntro(
   introPrompt: string,
   title: string,
   abstract: string,
-): Promise<string> {
+): Promise<{ output: string; resolvedPrompt: string }> {
   const apiKey = process.env.GOOGLE_API_KEY;
   if (!apiKey) throw new Error("GOOGLE_API_KEY not set");
 
@@ -178,7 +178,10 @@ ${prompt}`;
   if (!res.ok) throw new Error(`Gemini ${res.status}: ${await res.text()}`);
   const data = await res.json();
   const raw: string = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-  return sanitizePersonalizedIntro(raw);
+  return {
+    output: sanitizePersonalizedIntro(raw),
+    resolvedPrompt: finalPrompt,
+  };
 }
 
 // ── Template loading ─────────────────────────────────────────────────
@@ -287,10 +290,56 @@ function matchesContext(when: Record<string, unknown>, ctx: SegmentContext): boo
   return true;
 }
 
+/**
+ * Per-paragraph provenance for the inspector view (`/templates/[id]/inspect`).
+ *
+ * Each "kind" tells the UI how to render the badge / explainer:
+ *   - 'fixed': literal template text, no substitution other than
+ *     trivial vars (rep_name placeholder, lead first_name)
+ *   - 'segment_selected': the template defined multiple variants and
+ *     the segment context picked one (`when` clause matched)
+ *   - 'rule_computed': value computed from program rules (school
+ *     pitch text picked by SCHOOL_DATA + directions)
+ *   - 'ai_generated': LLM produced this — prompt + raw output also
+ *     surface so admin can see the full sausage
+ */
+export type AssembledPartKind =
+  | "fixed"
+  | "segment_selected"
+  | "rule_computed"
+  | "ai_generated";
+
+export interface AssembledPart {
+  slot: string;                    // 'subject' | 'greeting' | 'intro' | 'rep_intro' | 'school_pitch' | 'cta_signoff' | 'signature'
+  kind: AssembledPartKind;
+  rendered: string;                // the final string for this part (HTML for body parts, plain for subject)
+  source_format?: string;          // template's format string before substitution (for fixed/segment_selected/rule_computed)
+  resolved_prompt?: string;        // for ai_generated: the full Gemini prompt
+  selection_reason?: string;       // for segment_selected: which `when` clause matched
+}
+
 export async function assembleDraft(
   template: EmailTemplate,
   input: AssemblyInput,
-): Promise<{ subject: string; html: string }> {
+): Promise<{
+  subject: string;
+  html: string;
+  // Audit: the FULL prompt fed to Gemini for the personalized intro
+  // (after {{title}}/{{abstract}} substitution + the back-compat
+  // wrapper if the template was a legacy one). Send routes stamp this
+  // onto emails.intro_prompt_resolved so downstream analytics can
+  // trace "what went in" → "what came out".
+  introPromptResolved: string;
+  // The raw LLM output (post-sanitize, pre-HTML-escape). Same chunk
+  // that becomes paragraph 2 of the email body. Stored on
+  // emails.intro_output for predictor / rater training signal.
+  introOutput: string;
+  // Per-paragraph parts for the inspector view. Indexed by slot name.
+  // Parts are computed from the same data assembleDraft already
+  // produces, no extra LLM cost. Callers that don't need them can
+  // ignore.
+  parts: AssembledPart[];
+}> {
   const schoolInfo = getSchoolInfo(input.authorEmail);
   const segmentCtx = deriveSegmentContext(input);
 
@@ -309,11 +358,12 @@ export async function assembleDraft(
     // table missing — segment-aware path silently no-ops
   }
 
-  const personalizedIntro = await generatePersonalizedIntro(
+  const introResult = await generatePersonalizedIntro(
     pickSlot(template, "intro_prompt", overrides, segmentCtx),
     input.title,
     input.abstract,
   );
+  const personalizedIntro = introResult.output;
 
   const pitch = computeSchoolPitchVars(schoolInfo, input.matchedDirections);
 
@@ -386,7 +436,110 @@ ${ctaSignoff}<br><br>
 ${signature}
 </body></html>`;
 
-  return { subject, html };
+  // Per-paragraph provenance for inspector view. Kept as a flat array
+  // in slot order — easy to map to badges in the UI. Each part records
+  // the source_format so admin can see "this is what the template
+  // says before substitution". For ai_generated, resolved_prompt is
+  // the full prompt fed to Gemini.
+  const parts: AssembledPart[] = [
+    {
+      slot: "subject",
+      kind: hasMatchingOverride(overrides, "subject_format", segmentCtx)
+        ? "segment_selected"
+        : "fixed",
+      rendered: subject,
+      source_format: pickSlot(template, "subject_format", overrides, segmentCtx),
+      selection_reason: matchReason(overrides, "subject_format", segmentCtx),
+    },
+    {
+      slot: "greeting",
+      kind: hasMatchingOverride(overrides, "greeting_format", segmentCtx)
+        ? "segment_selected"
+        : "fixed",
+      rendered: greeting,
+      source_format: pickSlot(template, "greeting_format", overrides, segmentCtx),
+      selection_reason: matchReason(overrides, "greeting_format", segmentCtx),
+    },
+    {
+      slot: "intro",
+      kind: "ai_generated",
+      rendered: personalizedIntroHtml,
+      resolved_prompt: introResult.resolvedPrompt,
+    },
+    {
+      slot: "rep_intro",
+      kind: hasMatchingOverride(overrides, "rep_intro_format", segmentCtx)
+        ? "segment_selected"
+        : "fixed",
+      rendered: repIntro,
+      source_format: pickSlot(template, "rep_intro_format", overrides, segmentCtx),
+      selection_reason: matchReason(overrides, "rep_intro_format", segmentCtx),
+    },
+    {
+      slot: "school_pitch",
+      // school_pitch ALWAYS includes rule-computed values (school_text
+      // from SCHOOL_DATA), so even if the format is fixed it's
+      // effectively rule_computed.
+      kind: "rule_computed",
+      rendered: schoolPitch,
+      source_format: pickSlot(template, "school_pitch_format", overrides, segmentCtx),
+      selection_reason: schoolInfo
+        ? `school=${schoolInfo.name}, count=${schoolInfo.count}, tier=${schoolInfo.tier}`
+        : "no school info — fallback pitch",
+    },
+    {
+      slot: "cta_signoff",
+      kind: hasMatchingOverride(overrides, "cta_signoff_format", segmentCtx)
+        ? "segment_selected"
+        : "fixed",
+      rendered: ctaSignoff,
+      source_format: pickSlot(template, "cta_signoff_format", overrides, segmentCtx),
+      selection_reason: matchReason(overrides, "cta_signoff_format", segmentCtx),
+    },
+    {
+      slot: "signature",
+      kind: "fixed",
+      rendered: signature,
+      source_format: signature,
+    },
+  ];
+
+  return {
+    subject,
+    html,
+    introPromptResolved: introResult.resolvedPrompt,
+    introOutput: introResult.output,
+    parts,
+  };
+}
+
+/** Did any override clause match this segmentCtx for the given slot? */
+function hasMatchingOverride(
+  overrides: SlotOverride[],
+  slot: string,
+  ctx: SegmentContext,
+): boolean {
+  for (const o of overrides) {
+    if (o.slot_name !== slot) continue;
+    if (matchesContext(o.when, ctx)) return true;
+  }
+  return false;
+}
+
+/** Human-readable description of which `when` clause matched. Empty
+ *  when no override fired — caller should not display a reason. */
+function matchReason(
+  overrides: SlotOverride[],
+  slot: string,
+  ctx: SegmentContext,
+): string | undefined {
+  for (const o of overrides) {
+    if (o.slot_name !== slot) continue;
+    if (matchesContext(o.when, ctx)) {
+      return `matched: ${JSON.stringify(o.when)}`;
+    }
+  }
+  return undefined;
 }
 
 /**

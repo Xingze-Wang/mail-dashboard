@@ -409,6 +409,12 @@ export async function POST(req: NextRequest) {
         // admin/senior sends on behalf of another rep.
         actor_rep_id: actingRepId,
         template_id: templateId,
+        // Audit (migration 062): copy the resolved prompt + LLM output
+        // captured at draft-queue time. NULL on legacy / Python-supplied
+        // drafts that never went through assembleDraft.
+        intro_prompt_resolved:
+          (lead.draft_intro_prompt_resolved as string | null | undefined) ?? null,
+        intro_output: (lead.draft_intro_output as string | null | undefined) ?? null,
       })
       .select()
       .single();

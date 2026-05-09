@@ -136,6 +136,10 @@ async function processOne(row: Record<string, unknown>): Promise<boolean> {
         assigned_rep_id: newRepId,
         draft_subject: draft.subject,
         draft_html: draft.html,
+        // Capture the LLM prompt + output that produced this intro
+        // (migration 062). Lead-bound; survives reassignment unchanged.
+        draft_intro_prompt_resolved: draft.introPromptResolved ?? null,
+        draft_intro_output: draft.introOutput ?? null,
         // Snapshot for diff mining (frozen even as sales edits).
         draft_original_subject: draft.subject,
         draft_original_html: draft.html,
