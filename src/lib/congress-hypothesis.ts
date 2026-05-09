@@ -357,21 +357,49 @@ ${histText}
 生成 1-3 条**新的**假设. 不要重复已经在 testing 的角度.
 特别欢迎: (1) 跨 dimension 的 (city tier × name format), (2) refuted 后的反向 hypothesis ("反过来试").`;
 
+  // Bumped max_tokens to 4000 — qualitative hypothesis text in
+  // Chinese with reasoning blocks easily exceeds 2000 tokens for
+  // 3 hypotheses. Truncation produces invalid JSON that fails parsing
+  // and we lose a whole round of analyst work. Gemini-3-flash is
+  // cheap enough that 4000 isn't a cost concern.
   const r = await llmChat({
     model: "gemini-3-flash",
     system: HYPOTHESIS_GENERATOR_SYSTEM,
     user: userPrompt,
     temperature: 0.7,
-    max_tokens: 2000,
+    max_tokens: 4000,
   });
   const raw = (r.text ?? "").trim();
   const clean = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "");
   try {
     const parsed = JSON.parse(clean) as { hypotheses?: GeneratedHypothesis[] };
     return Array.isArray(parsed.hypotheses) ? parsed.hypotheses : [];
-  } catch (e) {
-    console.error("[congress-hypothesis] analyst returned non-JSON:", clean.slice(0, 300), e);
-    return [];
+  } catch (parseErr) {
+    // One repair attempt: ask the model to fix its truncated/malformed
+    // JSON. Cheaper than throwing away a whole round.
+    console.warn("[congress-hypothesis] analyst returned non-JSON, attempting repair");
+    try {
+      const repair = await llmChat({
+        model: "gemini-3-flash",
+        system: "You are a JSON repair tool. Given a partial / malformed / truncated JSON document, return the valid JSON. If truncated, drop the incomplete trailing element. Only output valid JSON, no markdown.",
+        user: `Original document (may be malformed):\n\n${clean}`,
+        temperature: 0,
+        max_tokens: 4000,
+      });
+      const repaired = (repair.text ?? "").trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "");
+      const parsed = JSON.parse(repaired) as { hypotheses?: GeneratedHypothesis[] };
+      return Array.isArray(parsed.hypotheses) ? parsed.hypotheses : [];
+    } catch (repairErr) {
+      console.error(
+        "[congress-hypothesis] repair also failed:",
+        repairErr,
+        "original parseErr:",
+        parseErr,
+        "raw head:",
+        clean.slice(0, 400),
+      );
+      return [];
+    }
   }
 }
 
@@ -448,17 +476,36 @@ ${h.proposed_test}
 
 # Current baseline content for that slot
 ${baselineSlot}`;
+  // Bumped to 3000 — Chinese template paragraphs + rationale + pitfall
+  // can be long. Same repair fallback as the analyst.
   const r = await llmChat({
     model: "gemini-3-flash",
     system: STRATEGIST_SYSTEM,
     user: strategistPrompt,
     temperature: 0.4,
-    max_tokens: 1500,
+    max_tokens: 3000,
   });
   const raw = (r.text ?? "").trim();
   const clean = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "");
   let parsed: { new_paragraph?: string; what_changed?: string; expected_pitfall?: string };
-  try { parsed = JSON.parse(clean); } catch { return { ok: false, error: "strategist non-JSON" }; }
+  try {
+    parsed = JSON.parse(clean);
+  } catch {
+    // One repair attempt
+    try {
+      const repair = await llmChat({
+        model: "gemini-3-flash",
+        system: "You are a JSON repair tool. Return valid JSON only, dropping any incomplete trailing fields.",
+        user: `Repair this JSON:\n\n${clean}`,
+        temperature: 0,
+        max_tokens: 3000,
+      });
+      const repaired = (repair.text ?? "").trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "");
+      parsed = JSON.parse(repaired);
+    } catch {
+      return { ok: false, error: "strategist non-JSON (even after repair)" };
+    }
+  }
   if (!parsed.new_paragraph || parsed.new_paragraph === baselineSlot) {
     return { ok: false, error: "strategist returned no-op or empty paragraph" };
   }
