@@ -26,79 +26,104 @@
 import { supabase } from "./db";
 
 /**
- * Scan an HTML draft for "stale rep name" markers — names that don't
- * match the rep that's actually about to send. Returns a freshened
- * version of the html + subject if drift is found, or the originals
- * untouched if not.
+ * Scan an HTML draft for stale rep-bound fields — names AND wechat ids
+ * AND any other identity-coupled string baked in at scan time that no
+ * longer matches the rep about to send. Returns a freshened version
+ * of the html + subject if drift is found, or originals if not.
  *
- * The detection set is build from a fixed list of recently-known-rep
- * names: anything that USED TO BE a sales_reps name but doesn't match
- * THIS rep's current sender_name. We pull the list dynamically so as
- * reps come and go the catch-list updates.
+ * Detection sets are pulled dynamically from sales_reps so the catch
+ * list updates as reps come and go. We swap any non-target value to
+ * the current target. We don't depend on knowing the prior value.
  *
- * Returns { html, subject, swapped: boolean, swappedFrom?: string }.
- * `swapped=false` means the draft was already fresh. Callers should
- * persist back to pipeline_leads.draft_html on swap=true so future
- * reads see the corrected version (and analytics line up).
+ * Returns { html, subject, swapped, swaps[] } where swaps lists each
+ * (kind, from, to) for logging/audit. Callers should persist html +
+ * subject back to pipeline_leads on swapped=true so future reads +
+ * analytics see the corrected version.
  */
 export async function freshenDraftForRep(args: {
   draftHtml: string | null | undefined;
   draftSubject: string | null | undefined;
   /** The rep this email is being sent AS. */
   currentSenderName: string;
+  /** The wechat_id of the rep this email is being sent AS. */
+  currentWechatId?: string | null;
 }): Promise<{
   html: string;
   subject: string;
   swapped: boolean;
   swappedFrom?: string;
+  swaps: Array<{ kind: "name" | "wechat"; from: string; to: string }>;
 }> {
   const html = args.draftHtml ?? "";
   const subject = args.draftSubject ?? "";
-  const target = args.currentSenderName.trim();
+  const targetName = args.currentSenderName.trim();
+  const targetWechat = (args.currentWechatId ?? "").trim();
 
-  if (!html || !target) {
-    return { html, subject, swapped: false };
+  if (!html || !targetName) {
+    return { html, subject, swapped: false, swaps: [] };
   }
 
-  // Pull the historical "things that were once a rep name" set. This
-  // is the live sales_reps.name + sales_reps.sender_name across all
-  // rows. If a draft mentions one of these strings AND the string isn't
-  // our current target, it's drift.
-  // We don't depend on knowing whether they were renamed — any name
-  // that ISN'T the current sender_name is presumed wrong.
+  // Pull all rep-bound identity fields. Any value here that isn't this
+  // rep's current value is drift if it shows up in the draft.
   const { data: reps } = await supabase
     .from("sales_reps")
-    .select("name, sender_name");
-  const knownNames = new Set<string>();
+    .select("name, sender_name, wechat_id");
+
+  const wrongNames = new Set<string>();
+  const wrongWechats = new Set<string>();
   for (const r of reps ?? []) {
-    if (r.name && r.name !== target) knownNames.add(r.name as string);
-    if (r.sender_name && r.sender_name !== target) knownNames.add(r.sender_name as string);
-  }
-
-  // Hard-coded historical names that no longer have a sales_reps row
-  // but might still be baked into older drafts. Add to this set when
-  // a rename happens — the cheap insurance is worth the line.
-  // (Migration 053 renamed Chenyu → Yujie / 杜雨洁; Chenyu has no row
-  // anymore so it wouldn't appear in the dynamic set above.)
-  const HISTORICAL_NAMES = ["Chenyu", "chenyu"];
-  for (const n of HISTORICAL_NAMES) knownNames.add(n);
-
-  // Build deterministic order so the swap is repeatable: longest first
-  // so "Chenyu" replaces before "Chen" (avoid prefix-replacement bugs).
-  const orderedNames = [...knownNames].sort((a, b) => b.length - a.length);
-
-  let newHtml = html;
-  let newSubject = subject;
-  let swapped = false;
-  let swappedFrom: string | undefined;
-  for (const wrongName of orderedNames) {
-    if (newHtml.includes(wrongName) || newSubject.includes(wrongName)) {
-      newHtml = newHtml.split(wrongName).join(target);
-      newSubject = newSubject.split(wrongName).join(target);
-      swapped = true;
-      swappedFrom ??= wrongName;
+    if (r.name && r.name !== targetName) wrongNames.add(r.name as string);
+    if (r.sender_name && r.sender_name !== targetName) wrongNames.add(r.sender_name as string);
+    if (r.wechat_id && targetWechat && r.wechat_id !== targetWechat) {
+      wrongWechats.add(r.wechat_id as string);
     }
   }
 
-  return { html: newHtml, subject: newSubject, swapped, swappedFrom };
+  // Hard-coded historical strings that no longer have a sales_reps row
+  // but might still be baked into older drafts. Add when a rename
+  // happens. Migration 053 renamed Chenyu → Yujie/杜雨洁 — no sales_reps
+  // row carries 'Chenyu' anymore so it wouldn't appear dynamically.
+  const HISTORICAL_NAMES = ["Chenyu", "chenyu"];
+  for (const n of HISTORICAL_NAMES) {
+    if (n !== targetName) wrongNames.add(n);
+  }
+
+  // Longest-first sort so "Chenyu" replaces before "Chen" — avoids
+  // prefix-replacement bugs where a substring of one name eats another.
+  const orderedNames = [...wrongNames].sort((a, b) => b.length - a.length);
+  const orderedWechats = [...wrongWechats].sort((a, b) => b.length - a.length);
+
+  let newHtml = html;
+  let newSubject = subject;
+  const swaps: Array<{ kind: "name" | "wechat"; from: string; to: string }> = [];
+
+  for (const wrongName of orderedNames) {
+    if (newHtml.includes(wrongName) || newSubject.includes(wrongName)) {
+      newHtml = newHtml.split(wrongName).join(targetName);
+      newSubject = newSubject.split(wrongName).join(targetName);
+      swaps.push({ kind: "name", from: wrongName, to: targetName });
+    }
+  }
+
+  // Wechat swaps are body-only (subject lines never contain wechat ids).
+  // We still write through targetWechat into the subject if there were
+  // false positives — but in practice swaps[].kind='wechat' will only
+  // affect newHtml.
+  if (targetWechat) {
+    for (const wrongWechat of orderedWechats) {
+      if (newHtml.includes(wrongWechat)) {
+        newHtml = newHtml.split(wrongWechat).join(targetWechat);
+        swaps.push({ kind: "wechat", from: wrongWechat, to: targetWechat });
+      }
+    }
+  }
+
+  const swapped = swaps.length > 0;
+  return {
+    html: newHtml,
+    subject: newSubject,
+    swapped,
+    swappedFrom: swaps[0]?.from,
+    swaps,
+  };
 }

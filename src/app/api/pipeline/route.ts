@@ -12,6 +12,7 @@ import {
 } from "@/lib/assignment";
 import { requireSession } from "@/lib/auth-helpers";
 import { listEnvelope } from "@/lib/list-envelope";
+import { resolveLatePlaceholders } from "@/lib/template-assembler";
 
 // ─── Shared field mapper ────────────────────────────────────────────────────
 
@@ -139,6 +140,50 @@ export async function GET(req: NextRequest) {
   ]);
 
   let mapped = (leads || []).map(mapLead);
+
+  // Resolve {{REP_*}} late-binding placeholders in draftHtml/draftSubject
+  // for the preview shown on /pipeline. This mirrors what the send route
+  // does at send time — but here it's just for display, NOT persisted.
+  // So a reassigned lead's preview immediately shows the new rep's name
+  // without anyone needing to refresh or re-render. One batched rep
+  // fetch keyed by the unique assignedRepIds in the page.
+  {
+    const repIds = Array.from(
+      new Set(
+        mapped
+          .map((l) => l.assignedRepId as number | null | undefined)
+          .filter((v): v is number => typeof v === "number"),
+      ),
+    );
+    if (repIds.length > 0) {
+      const { data: reps } = await supabase
+        .from("sales_reps")
+        .select("id, sender_name, name, wechat_id")
+        .in("id", repIds);
+      const repById = new Map<number, { name: string; wechat: string }>(
+        (reps ?? []).map((r) => [
+          r.id as number,
+          {
+            name: ((r.sender_name as string | null) ?? (r.name as string | null) ?? "") as string,
+            wechat: ((r.wechat_id as string | null) ?? "") as string,
+          },
+        ]),
+      );
+      mapped = mapped.map((l) => {
+        const aid = l.assignedRepId as number | null | undefined;
+        if (aid == null) return l;
+        const rep = repById.get(aid);
+        if (!rep || !rep.name) return l;
+        const r = resolveLatePlaceholders({
+          html: (l.draftHtml as string | null | undefined) ?? "",
+          subject: (l.draftSubject as string | null | undefined) ?? "",
+          repName: rep.name,
+          repWechat: rep.wechat,
+        });
+        return { ...l, draftHtml: r.html, draftSubject: r.subject };
+      });
+    }
+  }
 
   // DEFENSE IN DEPTH: filter the response in memory too. If the .eq()
   // above ever fails to apply (caching, bug, typo), this catch-net

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { requireAdmin, requireSession } from "@/lib/auth-helpers";
+import { resolveLatePlaceholders } from "@/lib/template-assembler";
 
 function mapLead(l: Record<string, unknown>) {
   return {
@@ -60,7 +61,28 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  return NextResponse.json(mapLead(lead));
+  // Resolve {{REP_*}} placeholders for preview against current rep.
+  // Same approach as the list GET — display-only, not persisted.
+  let mapped = mapLead(lead);
+  if (lead.assigned_rep_id) {
+    const { data: rep } = await supabase
+      .from("sales_reps")
+      .select("sender_name, name, wechat_id")
+      .eq("id", lead.assigned_rep_id)
+      .maybeSingle();
+    const repName = (rep?.sender_name as string | null) ?? (rep?.name as string | null) ?? "";
+    if (repName) {
+      const r = resolveLatePlaceholders({
+        html: (mapped.draftHtml as string | null | undefined) ?? "",
+        subject: (mapped.draftSubject as string | null | undefined) ?? "",
+        repName,
+        repWechat: (rep?.wechat_id as string | null) ?? "",
+      });
+      mapped = { ...mapped, draftHtml: r.html, draftSubject: r.subject };
+    }
+  }
+
+  return NextResponse.json(mapped);
 }
 
 export async function PATCH(

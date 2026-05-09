@@ -330,12 +330,25 @@ export async function assembleDraft(
   // Body parts — each gets its own placeholder set. Escape everywhere
   // except the CTA signoff, which contains an <a> tag that's part of
   // the template.
+  //
+  // CRITICAL: rep-specific values (rep_name, rep_wechat, closing_name)
+  // are NOT resolved here. They stay as {{REP_NAME}} / {{REP_WECHAT}} /
+  // {{CLOSING_NAME}} placeholders so the draft can survive a
+  // reassignment without rebake. Final resolution happens in
+  // resolveLatePlaceholders() at send/preview time against the CURRENT
+  // assigned_rep_id. (Lead-specific values like first_name DO resolve
+  // here — they don't change with reassignment.)
   const greeting = substitute(pickSlot(template, "greeting_format", overrides, segmentCtx), {
     first_name_or_you: firstNameOrYou,
   });
-  const repIntro = substitute(pickSlot(template, "rep_intro_format", overrides, segmentCtx), {
-    rep_name: input.repName,
-  });
+  // rep_name placeholder kept; substitute() ignores unknown {{...}}
+  // tokens (returns them as-is per its loop), but we want UPPERCASE
+  // sentinels so we can distinguish "send-time resolved" from regular
+  // template tokens. Inject the sentinel directly via substituteRaw.
+  const repIntro = substituteRaw(
+    pickSlot(template, "rep_intro_format", overrides, segmentCtx),
+    { rep_name: "{{REP_NAME}}" },
+  );
   const schoolPitch = substitute(pickSlot(template, "school_pitch_format", overrides, segmentCtx), {
     school_text: pitch.school_text,
     base_info: pitch.base_info,
@@ -344,20 +357,23 @@ export async function assembleDraft(
   });
   // cta_signoff_format contains a literal <a href="{{apply_url}}"> —
   // we do TWO passes: first unescape-substitute the URL (it's trusted
-  // server config), then html-escape the dynamic name/wechat fields.
+  // server config), then leave rep_wechat + closing_name as sentinels.
   const ctaWithUrl = substituteRaw(pickSlot(template, "cta_signoff_format", overrides, segmentCtx), {
     apply_url: APPLY_URL_CTA,
   });
-  const ctaSignoff = substitute(ctaWithUrl, {
-    closing_name: closingName,
-    rep_wechat: input.repWechatId,
+  const ctaSignoff = substituteRaw(ctaWithUrl, {
+    closing_name: "{{CLOSING_NAME}}",
+    rep_wechat: "{{REP_WECHAT}}",
   });
 
   // Personalized intro is the LLM output — escape it.
   const personalizedIntroHtml = escapeHtml(personalizedIntro);
 
-  // Signature block (stable across templates — not worth templating).
-  const signature = `<span style="font-size: 14px; color: #333; line-height: 1.6;">${escapeHtml(input.repName)}<br>奇绩创坛</span>`;
+  // Signature is now also a placeholder. resolveLatePlaceholders fills
+  // it from current rep state. closingName is left here unused —
+  // resolveLatePlaceholders will fold the rep_name sentinel pattern.
+  void closingName;
+  const signature = `<span style="font-size: 14px; color: #333; line-height: 1.6;">{{REP_NAME}}<br>奇绩创坛</span>`;
 
   const html = `<html>
 <head><meta charset="utf-8"></head>
@@ -371,4 +387,59 @@ ${signature}
 </body></html>`;
 
   return { subject, html };
+}
+
+/**
+ * Resolve the late-binding {{REP_*}} placeholders against the current
+ * rep state. Called at send time AND at preview time so the same draft
+ * shows the right rep no matter who's currently assigned.
+ *
+ * Inputs:
+ *   - html / subject: the partially-resolved draft from assembleDraft
+ *     (or any prior render). Lead-specific tokens are already gone;
+ *     only rep-specific UPPERCASE sentinels remain: {{REP_NAME}},
+ *     {{REP_WECHAT}}, {{CLOSING_NAME}}.
+ *   - repName / repWechat: the values to inject. closingName defaults
+ *     to repName since that's what the old assembler used.
+ *
+ * Returns the fully-resolved html + subject. If any sentinels were
+ * actually present, also returns the original strings substituted
+ * count so callers can audit-log whether resolution did real work.
+ *
+ * Why HTML-escape only repName for the body but not for the subject:
+ * the subject is plain text (gets put in the email's Subject header
+ * by Resend), HTML escapes there would render as &amp; in the user's
+ * inbox. Body content goes into HTML, so it MUST be escaped.
+ */
+export function resolveLatePlaceholders(args: {
+  html: string;
+  subject: string;
+  repName: string;
+  repWechat: string | null | undefined;
+  closingName?: string | null;
+}): { html: string; subject: string; resolvedCount: number } {
+  const escName = escapeHtml(args.repName);
+  const escWechat = escapeHtml(args.repWechat ?? "");
+  const escClosing = escapeHtml((args.closingName ?? args.repName).trim());
+
+  let html = args.html;
+  let subject = args.subject;
+  let count = 0;
+
+  const swap = (haystack: string, needle: string, replace: string) => {
+    if (!haystack.includes(needle)) return haystack;
+    count++;
+    return haystack.split(needle).join(replace);
+  };
+
+  html = swap(html, "{{REP_NAME}}", escName);
+  html = swap(html, "{{REP_WECHAT}}", escWechat);
+  html = swap(html, "{{CLOSING_NAME}}", escClosing);
+
+  // Subject: use raw rep name (no HTML escape).
+  subject = swap(subject, "{{REP_NAME}}", args.repName);
+  subject = swap(subject, "{{REP_WECHAT}}", args.repWechat ?? "");
+  subject = swap(subject, "{{CLOSING_NAME}}", (args.closingName ?? args.repName).trim());
+
+  return { html, subject, resolvedCount: count };
 }

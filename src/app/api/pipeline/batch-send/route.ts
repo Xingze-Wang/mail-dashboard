@@ -8,7 +8,7 @@ import { MIN_AGE_DAYS, leadAgeDays } from "@/lib/policy";
 import { canonicalizeEmail } from "@/lib/email-id";
 import { requireSession } from "@/lib/auth-helpers";
 import { DAILY_OVERRIDE_CAP, countOverridesTodayByRep } from "@/lib/override-quota";
-import { loadEffectiveTemplate } from "@/lib/template-assembler";
+import { loadEffectiveTemplate, resolveLatePlaceholders } from "@/lib/template-assembler";
 import { checkBulkSendAllowed, sendsTodayByRep } from "@/lib/trust-level";
 import { freshenDraftForRep } from "@/lib/draft-freshen";
 
@@ -239,10 +239,19 @@ export async function POST(req: NextRequest) {
           const m = senderFrom.match(/^(.*?)\s*<.*>$/);
           return (m?.[1] ?? senderFrom).trim();
         })();
+        // Resolve current rep's wechat for the wechat-staleness sweep
+        // (mirror of /api/pipeline/send). batch-send caches one rep's
+        // wechat once at the top — but reassignments inside a batch
+        // are rare enough that re-fetching per-lead is fine. If batch
+        // sizes balloon, hoist this lookup outside the loop.
+        const repForFresh =
+          (lead.assigned_rep_id ? await getRep(lead.assigned_rep_id).catch(() => null) : null) ??
+          (await getRep(actingRepId).catch(() => null));
         const fresh = await freshenDraftForRep({
           draftHtml: freshHtml,
           draftSubject: freshSubject,
           currentSenderName: senderNameOnly,
+          currentWechatId: repForFresh?.wechat_id ?? null,
         });
         if (fresh.swapped) {
           console.log(
@@ -255,6 +264,16 @@ export async function POST(req: NextRequest) {
             .update({ draft_html: freshHtml, draft_subject: freshSubject })
             .eq("id", id);
         }
+        // Resolve {{REP_*}} sentinels for THIS send. Not persisted —
+        // pipeline_leads.draft_html keeps the placeholders.
+        const resolved = resolveLatePlaceholders({
+          html: freshHtml,
+          subject: freshSubject,
+          repName: senderNameOnly,
+          repWechat: repForFresh?.wechat_id ?? null,
+        });
+        freshHtml = resolved.html;
+        freshSubject = resolved.subject;
       } catch (e) {
         // Best-effort: a freshness failure shouldn't block the send.
         console.error(`[batch-send] freshen threw on lead=${id}:`, e);

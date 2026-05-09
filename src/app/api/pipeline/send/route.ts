@@ -9,7 +9,7 @@ import { canonicalizeEmail } from "@/lib/email-id";
 import { checkBlocked } from "@/lib/blocklist";
 import { requireSession } from "@/lib/auth-helpers";
 import { checkSingleSendAllowed } from "@/lib/trust-level";
-import { loadEffectiveTemplate } from "@/lib/template-assembler";
+import { loadEffectiveTemplate, resolveLatePlaceholders } from "@/lib/template-assembler";
 import { freshenDraftForRep } from "@/lib/draft-freshen";
 import { buildQuotaCheck, countOverridesTodayByRep } from "@/lib/override-quota";
 
@@ -251,28 +251,55 @@ export async function POST(req: NextRequest) {
     // Persist the freshened version back to pipeline_leads so future
     // reads see it. Only run when the user didn't edit — otherwise we'd
     // be overwriting their explicit input.
+    // Resolve {{REP_*}} late-binding placeholders against the rep that's
+    // ACTUALLY sending right now (assigned > acting). This is the new
+    // approach replacing eager string baking — drafts stored in
+    // pipeline_leads carry sentinels, NOT names. So reassignment is
+    // free and the freshenDraftForRep sweep below is now belt-and-
+    // suspenders for any pre-migration drafts that still have baked
+    // strings from before this commit.
+    const senderNameOnly = (() => {
+      const m = senderFrom.match(/^(.*?)\s*<.*>$/);
+      return (m?.[1] ?? senderFrom).trim();
+    })();
+    const repForResolve =
+      (lead.assigned_rep_id ? await getRep(lead.assigned_rep_id).catch(() => null) : null) ??
+      (await getRep(actingRepId).catch(() => null));
     if (!hasEditedHtml && !hasEditedSubject) {
-      const senderNameOnly = (() => {
-        const m = senderFrom.match(/^(.*?)\s*<.*>$/);
-        return (m?.[1] ?? senderFrom).trim();
-      })();
+      // Order matters:
+      //   (1) Freshen first on the STORED form (placeholders + any
+      //       legacy baked names). Persist this back to pipeline_leads
+      //       so future reads keep the placeholder structure AND get
+      //       the legacy-name fix.
+      //   (2) THEN resolve {{REP_*}} for THIS send. We don't write the
+      //       resolved form back — it's send-time only.
       const fresh = await freshenDraftForRep({
         draftHtml: finalHtml,
         draftSubject: finalSubject,
         currentSenderName: senderNameOnly,
+        currentWechatId: repForResolve?.wechat_id ?? null,
       });
       if (fresh.swapped) {
         console.log(
-          `[send] freshened stale draft for lead=${id}: swapped "${fresh.swappedFrom}" → "${senderNameOnly}"`,
+          `[send] legacy-freshened lead=${id}: swapped "${fresh.swappedFrom}" → "${senderNameOnly}"`,
         );
         finalHtml = fresh.html;
         finalSubject = fresh.subject;
-        // Persist so subsequent reads (analytics, retries, audit) line up.
         await supabase
           .from("pipeline_leads")
           .update({ draft_html: finalHtml, draft_subject: finalSubject })
           .eq("id", id);
       }
+      // Now resolve {{REP_*}} sentinels for the actual send. NOT
+      // persisted — placeholders stay in DB.
+      const resolved = resolveLatePlaceholders({
+        html: finalHtml,
+        subject: finalSubject,
+        repName: senderNameOnly,
+        repWechat: repForResolve?.wechat_id ?? null,
+      });
+      finalHtml = resolved.html;
+      finalSubject = resolved.subject;
     }
     // Wrap Resend in try/catch — on a thrown error (network reset, DNS,
     // lib exception), the old code fell through to the outer catch and
