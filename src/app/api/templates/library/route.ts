@@ -27,7 +27,10 @@ export async function GET(req: NextRequest) {
   const { data, error } = await supabase
     .from("email_templates")
     .select(
-      "id, name, status, segment_default, rep_id, proposed_by, proposed_reason, proposed_evidence, notes, created_at, updated_at",
+      // Pull slot contents too so the Library card can show a preview
+      // sample of WHAT changed (especially valuable for proposals where
+      // the swapped paragraph IS the whole point of looking at it).
+      "id, name, status, segment_default, rep_id, proposed_by, proposed_reason, proposed_evidence, notes, created_at, updated_at, subject_format, intro_prompt, greeting_format, rep_intro_format, school_pitch_format, cta_signoff_format",
     )
     .order("status", { ascending: true })
     .order("updated_at", { ascending: false });

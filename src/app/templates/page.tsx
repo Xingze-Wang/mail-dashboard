@@ -108,16 +108,103 @@ interface EmailTemplateRow {
   rep_id: number | null;
   proposed_by: string | null;
   proposed_reason: string | null;
-  proposed_evidence: Record<string, unknown> | null;
+  proposed_evidence: { slot_swapped?: string; what_changed?: string; expected_pitfall?: string } | null;
   notes: string | null;
   created_at: string;
   updated_at: string;
+  // Slot contents — used by Library card to show inline preview of
+  // the swapped paragraph so admin doesn't have to open inspect to
+  // see what's actually different.
+  subject_format?: string;
+  intro_prompt?: string;
+  greeting_format?: string;
+  rep_intro_format?: string;
+  school_pitch_format?: string;
+  cta_signoff_format?: string;
+}
+
+const STATUS_META: Record<EmailTemplateRow["status"], { label: string; color: string; bg: string; ring: string; description: string }> = {
+  active: {
+    label: "Active",
+    color: "#047857",
+    bg: "#ecfdf5",
+    ring: "#a7f3d0",
+    description: "在跑生产流量",
+  },
+  approved_draft: {
+    label: "Approved draft",
+    color: "#1d4ed8",
+    bg: "#eff6ff",
+    ring: "#bfdbfe",
+    description: "Admin 看过文案, 等审核 routing",
+  },
+  proposal: {
+    label: "Proposal",
+    color: "#a16207",
+    bg: "#fefce8",
+    ring: "#fde68a",
+    description: "Congress 起草, 等 admin 决定",
+  },
+  archived: {
+    label: "Archived",
+    color: "#475569",
+    bg: "#f8fafc",
+    ring: "#cbd5e1",
+    description: "已归档, 不再使用",
+  },
+};
+
+const SLOT_LABEL: Record<string, string> = {
+  subject_format: "Subject",
+  intro_prompt: "Intro prompt (LLM)",
+  greeting_format: "Greeting",
+  rep_intro_format: "Rep intro paragraph",
+  school_pitch_format: "School + compute pitch",
+  cta_signoff_format: "CTA + signoff",
+};
+
+const SEGMENT_BADGE: Record<string, string> = {
+  cn: "🇨🇳 CN",
+  overseas: "🌍 Overseas",
+  edu: "🎓 EDU",
+  fallback: "⚪ Fallback",
+};
+
+/**
+ * Pull a short, human-readable derived title from a template name.
+ * Congress proposal names look like 'proposal_h7b6e604a_school_pitch_format_20260509'
+ * — that's machine-readable but admin shouldn't have to read it.
+ * Strip the prefix + hash + date and present "school_pitch swap"
+ * style.
+ */
+function humanTitle(t: EmailTemplateRow): string {
+  if (t.proposed_evidence?.slot_swapped) {
+    const slot = t.proposed_evidence.slot_swapped;
+    const slotPretty = SLOT_LABEL[slot] ?? slot;
+    if (t.proposed_by === "congress") {
+      return `${slotPretty} 改写 (congress)`;
+    }
+    return `${slotPretty} 改写`;
+  }
+  // Active/global templates: just use the name as-is
+  return t.name;
+}
+
+/**
+ * The actual swapped slot's text — for inline preview on Proposal
+ * cards. Returns the new content, plus a sense of what changed.
+ */
+function getSwappedContent(t: EmailTemplateRow): { slot: string; text: string } | null {
+  const slot = t.proposed_evidence?.slot_swapped;
+  if (!slot) return null;
+  const text = (t as unknown as Record<string, string>)[slot];
+  if (!text) return null;
+  return { slot, text };
 }
 
 function TemplateLibrary() {
   const [rows, setRows] = useState<EmailTemplateRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "approved_draft" | "proposal" | "archived">("all");
 
   useEffect(() => {
     setLoading(true);
@@ -128,111 +215,141 @@ function TemplateLibrary() {
       .finally(() => setLoading(false));
   }, []);
 
-  const filtered = statusFilter === "all" ? rows : rows.filter((r) => r.status === statusFilter);
-  const counts = {
-    active: rows.filter((r) => r.status === "active").length,
-    approved_draft: rows.filter((r) => r.status === "approved_draft").length,
-    proposal: rows.filter((r) => r.status === "proposal").length,
-    archived: rows.filter((r) => r.status === "archived").length,
+  // Group by status — admin scans by lifecycle stage, not by
+  // chronological order. Each group has its own header + card stream.
+  const groups: Record<EmailTemplateRow["status"], EmailTemplateRow[]> = {
+    proposal: [],
+    approved_draft: [],
+    active: [],
+    archived: [],
   };
+  for (const r of rows) groups[r.status].push(r);
+
+  const ORDER: EmailTemplateRow["status"][] = ["proposal", "approved_draft", "active", "archived"];
 
   return (
     <div>
-      <div style={{ marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-        <div>
-          <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>Email templates (new system)</h2>
-          <p style={{ fontSize: 12, color: "var(--text-tertiary)", margin: "4px 0 0" }}>
-            Multi-paragraph templates with segment routing + hypothesis-driven proposals.
-            Use <Link href="/templates/bench" style={{ color: "var(--blue)" }}>/templates/bench</Link> to compare side-by-side,
-            or <Link href="/congress" style={{ color: "var(--blue)" }}>/congress</Link> to see hypotheses in flight.
-          </p>
-        </div>
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
-          style={{ fontSize: 13, padding: "6px 10px", border: "1px solid var(--border-light)", borderRadius: 4 }}
-        >
-          <option value="all">All ({rows.length})</option>
-          <option value="active">Active ({counts.active})</option>
-          <option value="approved_draft">Approved draft ({counts.approved_draft})</option>
-          <option value="proposal">Proposal ({counts.proposal})</option>
-          <option value="archived">Archived ({counts.archived})</option>
-        </select>
+      <div style={{ marginBottom: 24 }}>
+        <h2 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>邮件模板库</h2>
+        <p style={{ fontSize: 13, color: "var(--text-tertiary)", margin: "6px 0 0", lineHeight: 1.6 }}>
+          多段落模板系统, 支持 segment 路由 + congress 自动起草新提案. 点任意一行进 inspect 看
+          {" "}
+          mail 客户端风格的渲染. 用 <Link href="/templates/bench" style={{ color: "var(--blue)" }}>bench</Link>
+          {" "}横向对比, 或者去 <Link href="/congress" style={{ color: "var(--blue)" }}>congress</Link>
+          {" "}看在飞的假设.
+        </p>
       </div>
 
       {loading && <p style={{ fontSize: 13, color: "var(--text-tertiary)" }}>Loading…</p>}
-      {!loading && filtered.length === 0 && (
-        <div className="section-card" style={{ padding: 16 }}>
-          <p style={{ fontSize: 13, color: "var(--text-tertiary)", margin: 0 }}>
-            No templates with status={statusFilter}. {statusFilter === "proposal" && "Run /api/cron/congress-hypothesis to generate some."}
+
+      {!loading && rows.length === 0 && (
+        <div className="section-card" style={{ padding: 24, textAlign: "center" }}>
+          <p style={{ fontSize: 14, color: "var(--text-tertiary)", margin: 0 }}>
+            还没有模板. 等 congress cron 跑出第一批提案.
           </p>
         </div>
       )}
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {filtered.map((t) => {
-          const statusStyle = {
-            active: { bg: "#d1fae5", color: "#059669", border: "#6ee7b7" },
-            approved_draft: { bg: "#dbeafe", color: "#1d4ed8", border: "#93c5fd" },
-            proposal: { bg: "#fff7ed", color: "#b45309", border: "#fcd34d" },
-            archived: { bg: "#f1f5f9", color: "#64748b", border: "#cbd5e1" },
-          }[t.status];
-          return (
-            // Whole card is a link → /templates/[id]/inspect. The
-            // inspect page already shows a mail-client-style render
-            // (subject + body in a clean white card on the right).
-            // Per user: 'click directly into the template and it
-            // renders like the mail page'.
-            <Link
-              key={t.id}
-              href={`/templates/${t.id}/inspect`}
-              className="section-card"
-              style={{
-                padding: 12,
-                display: "block",
-                textDecoration: "none",
-                color: "inherit",
-                cursor: "pointer",
-                transition: "background 0.1s",
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 4 }}>
-                <span style={{
-                  fontSize: 10, fontWeight: 700, textTransform: "uppercase",
-                  letterSpacing: "0.06em", padding: "2px 6px", borderRadius: 3,
-                  background: statusStyle.bg, color: statusStyle.color, border: `1px solid ${statusStyle.border}`,
-                  flexShrink: 0,
-                }}>
-                  {t.status.replace("_", " ")}
-                </span>
-                <span style={{ fontSize: 13, fontFamily: "monospace", fontWeight: 500 }}>{t.name}</span>
-                {t.segment_default && (
-                  <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
-                    seg=<b>{t.segment_default}</b>
-                  </span>
-                )}
-                {t.rep_id != null && (
-                  <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>rep_id={t.rep_id}</span>
-                )}
-                {t.proposed_by && (
-                  <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>via <b>{t.proposed_by}</b></span>
-                )}
-                <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--blue)" }}>
-                  Open →
-                </span>
-              </div>
-              {t.proposed_reason && (
-                <p style={{ fontSize: 12, lineHeight: 1.5, margin: "4px 0 0", color: "var(--text-secondary)", whiteSpace: "pre-wrap" }}>
-                  {t.proposed_reason.length > 240 ? t.proposed_reason.slice(0, 240) + "…" : t.proposed_reason}
-                </p>
-              )}
-              {t.notes && !t.proposed_reason && (
-                <p style={{ fontSize: 11, color: "var(--text-tertiary)", margin: "4px 0 0" }}>{t.notes}</p>
-              )}
-            </Link>
-          );
-        })}
-      </div>
+      {ORDER.map((status) => {
+        const group = groups[status];
+        if (group.length === 0) return null;
+        const meta = STATUS_META[status];
+        return (
+          <section key={status} style={{ marginBottom: 32 }}>
+            {/* Group header — large status badge + count + 1-line description */}
+            <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 12, paddingBottom: 8, borderBottom: `1px solid ${meta.ring}` }}>
+              <span style={{
+                fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em",
+                padding: "3px 10px", borderRadius: 4,
+                background: meta.bg, color: meta.color, border: `1px solid ${meta.ring}`,
+              }}>
+                {meta.label}
+              </span>
+              <span style={{ fontSize: 18, fontWeight: 600, color: meta.color }}>{group.length}</span>
+              <span style={{ fontSize: 13, color: "var(--text-tertiary)" }}>· {meta.description}</span>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {group.map((t) => {
+                const swapped = getSwappedContent(t);
+                const title = humanTitle(t);
+                return (
+                  <Link
+                    key={t.id}
+                    href={`/templates/${t.id}/inspect`}
+                    className="section-card"
+                    style={{
+                      padding: "14px 16px",
+                      display: "block",
+                      textDecoration: "none",
+                      color: "inherit",
+                      cursor: "pointer",
+                      transition: "background 0.1s",
+                      borderLeft: `3px solid ${meta.ring}`,
+                    }}
+                  >
+                    {/* Top row: title + segment + open arrow */}
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                      <span style={{ fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }}>
+                        {title}
+                      </span>
+                      {t.segment_default && (
+                        <span style={{
+                          fontSize: 11, padding: "2px 8px", borderRadius: 10,
+                          background: "#f1f5f9", color: "#475569", fontWeight: 500,
+                        }}>
+                          {SEGMENT_BADGE[t.segment_default] ?? t.segment_default}
+                        </span>
+                      )}
+                      {t.rep_id != null && (
+                        <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>rep #{t.rep_id}</span>
+                      )}
+                      <span style={{ marginLeft: "auto", fontSize: 13, color: "var(--blue)" }}>
+                        打开 →
+                      </span>
+                    </div>
+
+                    {/* Reason (proposal/approved_draft/archived only — active templates don't have a 'reason') */}
+                    {t.proposed_reason && (
+                      <p style={{
+                        fontSize: 13, lineHeight: 1.65, margin: "0 0 10px",
+                        color: "var(--text-secondary)", whiteSpace: "pre-wrap",
+                      }}>
+                        {t.proposed_reason.length > 280 ? t.proposed_reason.slice(0, 280) + "…" : t.proposed_reason}
+                      </p>
+                    )}
+
+                    {/* Inline preview of swapped slot — the actual NEW prose. */}
+                    {swapped && (
+                      <div style={{
+                        background: "#fafafa", border: "1px solid #e5e7eb", borderRadius: 6,
+                        padding: "10px 12px", fontSize: 13, lineHeight: 1.7, color: "#1f2937",
+                      }}>
+                        <div style={{
+                          fontSize: 10, fontWeight: 600, color: "#6b7280",
+                          textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6,
+                        }}>
+                          {SLOT_LABEL[swapped.slot] ?? swapped.slot} · 新版本
+                        </div>
+                        <div>
+                          {swapped.text.length > 280 ? swapped.text.slice(0, 280) + "…" : swapped.text}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Footnote — internal name + provenance, small + tertiary */}
+                    <div style={{ marginTop: 8, fontSize: 11, color: "var(--text-tertiary)", display: "flex", gap: 12 }}>
+                      <span style={{ fontFamily: "monospace" }}>{t.name}</span>
+                      {t.proposed_by && <span>via {t.proposed_by}</span>}
+                      <span>· updated {new Date(t.updated_at).toLocaleDateString()}</span>
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+          </section>
+        );
+      })}
     </div>
   );
 }
