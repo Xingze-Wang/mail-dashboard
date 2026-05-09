@@ -149,9 +149,6 @@ async function generatePersonalizedIntro(
   title: string,
   abstract: string,
 ): Promise<{ output: string; resolvedPrompt: string }> {
-  const apiKey = process.env.GOOGLE_API_KEY;
-  if (!apiKey) throw new Error("GOOGLE_API_KEY not set");
-
   // Substitute {{title}} / {{abstract}} in the prompt template.
   const prompt = introPrompt
     .replace("{{title}}", title)
@@ -166,20 +163,22 @@ async function generatePersonalizedIntro(
 
 ${prompt}`;
 
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ contents: [{ parts: [{ text: finalPrompt }] }] }),
-      signal: AbortSignal.timeout(20_000),
-    },
-  );
-  if (!res.ok) throw new Error(`Gemini ${res.status}: ${await res.text()}`);
-  const data = await res.json();
-  const raw: string = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+  // Route through MiraclePlus proxy. Direct Gemini
+  // (generativelanguage.googleapis.com) returns
+  // FAILED_PRECONDITION 'Your location is not supported' from Vercel
+  // hkg1 IPs (China-region edge). Same fix the Python scanner needed.
+  // The proxy supports the Gemini family via "gemini-3-flash" /
+  // "gemini-2.5-flash" aliases — see src/lib/llm-proxy.ts:KNOWN_MODELS.
+  const { llmChat } = await import("@/lib/llm-proxy");
+  const r = await llmChat({
+    model: "gemini-2.5-flash",
+    user: finalPrompt,
+    temperature: 0.5,
+    max_tokens: 500,
+    timeoutMs: 20_000,
+  });
   return {
-    output: sanitizePersonalizedIntro(raw),
+    output: sanitizePersonalizedIntro(r.text),
     resolvedPrompt: finalPrompt,
   };
 }

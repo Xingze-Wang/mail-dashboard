@@ -126,27 +126,25 @@ ${recipientProfile || "(no profile available)"}
 ## 4. Subject line
 ${email.subject ?? "(no subject)"}`;
 
-  const apiKey = process.env.GOOGLE_API_KEY;
-  if (!apiKey) return NextResponse.json({ error: "GOOGLE_API_KEY not set" }, { status: 503 });
-
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ contents: [{ parts: [{ text: fullPrompt }] }] }),
-      signal: AbortSignal.timeout(40_000),
-    },
-  );
-  if (!res.ok) {
-    const txt = await res.text().catch(() => "");
+  // Route via MiraclePlus proxy (Vercel hkg1 → direct Gemini errors
+  // with FAILED_PRECONDITION 'location not supported').
+  let raw = "";
+  try {
+    const { llmChat } = await import("@/lib/llm-proxy");
+    const r = await llmChat({
+      model: "gemini-2.5-flash",
+      user: fullPrompt,
+      temperature: 0.3,
+      max_tokens: 800,
+      timeoutMs: 40_000,
+    });
+    raw = r.text ?? "";
+  } catch (e) {
     return NextResponse.json(
-      { error: `Gemini ${res.status}: ${txt.slice(0, 200)}` },
+      { error: `AI rater failed: ${(e as Error).message}` },
       { status: 502 },
     );
   }
-  const data = await res.json();
-  const raw: string = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
   // Strip markdown fences if Gemini ignored the "no markdown" instruction.
   const clean = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "").trim();
   let parsed: { score?: unknown; why?: unknown };

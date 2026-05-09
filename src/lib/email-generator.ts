@@ -191,9 +191,6 @@ async function generatePersonalizedIntro(
   title: string,
   abstract: string,
 ): Promise<string> {
-  const apiKey = process.env.GOOGLE_API_KEY;
-  if (!apiKey) throw new Error("GOOGLE_API_KEY not set");
-
   // Load user-customized prompt or fall back to default
   const customPrompt = await loadPromptTemplate(DEFAULT_INTRO_PROMPT_NAME);
   const promptTemplate = customPrompt || DEFAULT_INTRO_PROMPT;
@@ -211,27 +208,17 @@ async function generatePersonalizedIntro(
 
 ${prompt}`;
 
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: finalPrompt }] }],
-      }),
-      signal: AbortSignal.timeout(20_000),
-    },
-  );
-
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Gemini API error ${res.status}: ${body}`);
-  }
-
-  const data = await res.json();
-  const raw: string =
-    data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-  return sanitizePersonalizedIntro(raw);
+  // Route through MiraclePlus proxy. Direct Gemini errors with
+  // FAILED_PRECONDITION on Vercel hkg1 IPs.
+  const { llmChat } = await import("./llm-proxy");
+  const r = await llmChat({
+    model: "gemini-2.5-flash",
+    user: finalPrompt,
+    temperature: 0.5,
+    max_tokens: 500,
+    timeoutMs: 20_000,
+  });
+  return sanitizePersonalizedIntro(r.text);
 }
 
 // ============ Main export ============

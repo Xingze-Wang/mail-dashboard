@@ -140,24 +140,26 @@ ${sectionsBlock}
 
 格式要求: Markdown, 每个段落用 ### 开头, 下面三个小条目. 用中文回答. 直接输出, 不要 preface, 不要总结.`;
 
-  const apiKey = process.env.GOOGLE_API_KEY;
-  if (!apiKey) return NextResponse.json({ error: "GOOGLE_API_KEY not set" }, { status: 503 });
-
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
-      signal: AbortSignal.timeout(40_000),
-    },
-  );
-  if (!res.ok) {
-    const txt = await res.text().catch(() => "");
-    return NextResponse.json({ error: `Gemini ${res.status}: ${txt.slice(0, 200)}` }, { status: 502 });
+  // Route through MiraclePlus proxy — direct Gemini
+  // (generativelanguage.googleapis.com) returns FAILED_PRECONDITION
+  // 'Your location is not supported' from Vercel hkg1 IPs.
+  let critique = "";
+  try {
+    const { llmChat } = await import("@/lib/llm-proxy");
+    const r = await llmChat({
+      model: "gemini-2.5-flash",
+      user: prompt,
+      temperature: 0.5,
+      max_tokens: 1500,
+      timeoutMs: 40_000,
+    });
+    critique = r.text ?? "";
+  } catch (e) {
+    return NextResponse.json(
+      { error: `Critique LLM failed: ${(e as Error).message}` },
+      { status: 502 },
+    );
   }
-  const data = await res.json();
-  const critique: string = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
 
   return NextResponse.json({
     template_id: body.template_id,

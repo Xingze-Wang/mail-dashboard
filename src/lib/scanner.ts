@@ -351,8 +351,6 @@ async function analyzeWithGemini(
   paper: ArxivPaper,
   emails: string[],
 ): Promise<GeminiAnalysis | null> {
-  const apiKey = process.env.GOOGLE_API_KEY;
-  if (!apiKey) return null;
 
   const directionsStr = ALL_DIRECTIONS.join(", ");
 
@@ -438,27 +436,19 @@ first_name是中文名的拼音（如Xinhao），用于邮件称呼。
   "matched_directions": ["方向1", "方向2"]
 }`;
 
+  // Route through MiraclePlus proxy. Direct Gemini errors with
+  // FAILED_PRECONDITION on Vercel hkg1 IPs.
+  let text = "";
   try {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-        }),
-        signal: AbortSignal.timeout(20_000),
-      },
-    );
-
-    if (!res.ok) {
-      console.error(`Gemini API error: ${res.status}`);
-      return null;
-    }
-
-    const data = await res.json();
-    const text: string | undefined =
-      data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    const { llmChat } = await import("./llm-proxy");
+    const r = await llmChat({
+      model: "gemini-2.5-flash",
+      user: prompt,
+      temperature: 0.2,
+      max_tokens: 800,
+      timeoutMs: 20_000,
+    });
+    text = r.text ?? "";
     if (!text) return null;
 
     const result = parseLlmJson<GeminiAnalysis | null>(text, null);
