@@ -3,7 +3,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Plus, Pencil, Trash2, FileText, X, Eye, Zap, Loader2 } from "lucide-react";
+import { Plus, Pencil, Trash2, FileText, X, Eye, Zap, Loader2, Sparkles } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 import { sanitizeHtml } from "@/lib/sanitize";
 import AnalysisPage from "@/app/analysis/page";
@@ -121,6 +121,15 @@ interface EmailTemplateRow {
   rep_intro_format?: string;
   school_pitch_format?: string;
   cta_signoff_format?: string;
+  // Pending edits joined server-side. Null = no pending. The banner
+  // attribution + slot + gate verdict come from the most recent
+  // pending edit; count is total pending across all slots.
+  pending_edits: {
+    count: number;
+    latest_submitter: string | null;
+    latest_slot: string | null;
+    latest_verdict: string | null;
+  } | null;
 }
 
 const STATUS_META: Record<EmailTemplateRow["status"], { label: string; color: string; bg: string; ring: string; description: string }> = {
@@ -276,7 +285,9 @@ function TemplateLibrary() {
                 return (
                   <Link
                     key={t.id}
-                    href={`/templates/${t.id}/inspect`}
+                    href={t.pending_edits && t.pending_edits.count > 0
+                      ? `/templates/${t.id}/edit`
+                      : `/templates/${t.id}/inspect`}
                     className="section-card"
                     style={{
                       padding: "14px 16px",
@@ -304,10 +315,62 @@ function TemplateLibrary() {
                       {t.rep_id != null && (
                         <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>rep #{t.rep_id}</span>
                       )}
+                      {t.pending_edits && t.pending_edits.count > 0 && (
+                        <span
+                          title="Pending edits — admin needs to review"
+                          style={{
+                            fontSize: 10, padding: "2px 7px", borderRadius: 10,
+                            background: "#fef3c7", color: "#92400e", fontWeight: 600,
+                            letterSpacing: "0.02em",
+                          }}
+                        >
+                          {t.pending_edits.count} pending
+                        </span>
+                      )}
                       <span style={{ marginLeft: "auto", fontSize: 13, color: "var(--blue)" }}>
                         打开 →
                       </span>
                     </div>
+
+                    {/* Pending-edit banner — surfaces "suggested by X" so admin
+                        sees who needs review without opening the card. */}
+                    {t.pending_edits && t.pending_edits.count > 0 && (
+                      <div style={{
+                        background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6,
+                        padding: "8px 10px", marginBottom: 10, fontSize: 12,
+                        color: "#78350f", display: "flex", alignItems: "center", gap: 8,
+                      }}>
+                        <Sparkles className="h-3.5 w-3.5" style={{ flexShrink: 0 }} />
+                        <span>
+                          {t.pending_edits.latest_submitter ?? "Someone"} 提议改{" "}
+                          <span style={{ fontFamily: "monospace", fontWeight: 500 }}>
+                            {t.pending_edits.latest_slot
+                              ? (SLOT_LABEL[t.pending_edits.latest_slot] ?? t.pending_edits.latest_slot)
+                              : "(unknown slot)"}
+                          </span>
+                          {t.pending_edits.count > 1 && (
+                            <span style={{ color: "#92400e" }}> + {t.pending_edits.count - 1} more</span>
+                          )}
+                        </span>
+                        {t.pending_edits.latest_verdict && (
+                          <span style={{
+                            fontSize: 10, padding: "1px 6px", borderRadius: 8,
+                            background: t.pending_edits.latest_verdict === "pass"
+                              ? "#d1fae5" : t.pending_edits.latest_verdict === "reject"
+                                ? "#fee2e2" : "#fef3c7",
+                            color: t.pending_edits.latest_verdict === "pass"
+                              ? "#065f46" : t.pending_edits.latest_verdict === "reject"
+                                ? "#991b1b" : "#92400e",
+                            fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em",
+                          }}>
+                            gate: {t.pending_edits.latest_verdict}
+                          </span>
+                        )}
+                        <span style={{ marginLeft: "auto", color: "#b45309", fontWeight: 600 }}>
+                          Review →
+                        </span>
+                      </div>
+                    )}
 
                     {/* Reason (proposal/approved_draft/archived only — active templates don't have a 'reason') */}
                     {t.proposed_reason && (

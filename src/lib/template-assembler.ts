@@ -144,6 +144,25 @@ function sanitizePersonalizedIntro(text: string): string {
   return t;
 }
 
+/**
+ * Resolve `{{title}}` / `{{abstract}}` inside an intro_prompt + the
+ * back-compat header for legacy prompts that don't reference {{title}}.
+ * Pure string substitution — no LLM call. Exported so smoke tests +
+ * tooling can verify "did this prompt edit make it through" without
+ * needing the LLM proxy reachable.
+ */
+export function resolveIntroPrompt(introPrompt: string, title: string, abstract: string): string {
+  const prompt = introPrompt
+    .replace("{{title}}", title)
+    .replace("{{abstract}}", abstract.slice(0, 1000));
+  return prompt.includes(title) ? prompt : `根据论文写一句个性化开头（1句话）。
+
+标题: ${title}
+摘要: ${abstract.slice(0, 1000)}
+
+${prompt}`;
+}
+
 async function generatePersonalizedIntro(
   introPrompt: string,
   title: string,

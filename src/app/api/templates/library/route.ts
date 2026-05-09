@@ -36,5 +36,55 @@ export async function GET(req: NextRequest) {
     .order("updated_at", { ascending: false });
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  return NextResponse.json({ rows: data ?? [] });
+  const rows = data ?? [];
+
+  // Join pending template_edits per row so each card can show
+  // "Suggested by Yujie — review →". Only count status='pending'
+  // (superseded/approved/rejected don't need a banner). Cheap because
+  // partial index template_edits_pending_idx covers the WHERE.
+  const pendingByTpl = new Map<string, { count: number; latest_submitter: string | null; latest_slot: string | null; latest_verdict: string | null }>();
+  if (rows.length > 0) {
+    const ids = rows.map((r) => r.id as string);
+    const { data: pending } = await supabase
+      .from("template_edits")
+      .select("template_id, slot_key, gate_verdict, submitted_by_rep_id, submitted_at")
+      .eq("status", "pending")
+      .in("template_id", ids)
+      .order("submitted_at", { ascending: false });
+    const repIds = new Set<number>();
+    for (const e of pending ?? []) repIds.add(e.submitted_by_rep_id as number);
+    const repName = new Map<number, string>();
+    if (repIds.size > 0) {
+      const { data: reps } = await supabase
+        .from("sales_reps")
+        .select("id, sender_name, name")
+        .in("id", [...repIds]);
+      for (const r of reps ?? []) {
+        repName.set(r.id as number, ((r.sender_name as string | null) ?? (r.name as string | null) ?? `rep#${r.id}`));
+      }
+    }
+    for (const e of pending ?? []) {
+      const tplId = e.template_id as string;
+      const cur = pendingByTpl.get(tplId);
+      if (cur) {
+        cur.count++;
+      } else {
+        pendingByTpl.set(tplId, {
+          count: 1,
+          // First entry (newest, since we ordered desc) becomes the
+          // "latest" attribution shown on the banner.
+          latest_submitter: repName.get(e.submitted_by_rep_id as number) ?? null,
+          latest_slot: (e.slot_key as string) ?? null,
+          latest_verdict: (e.gate_verdict as string | null) ?? null,
+        });
+      }
+    }
+  }
+
+  const enriched = rows.map((r) => ({
+    ...r,
+    pending_edits: pendingByTpl.get(r.id as string) ?? null,
+  }));
+
+  return NextResponse.json({ rows: enriched });
 }

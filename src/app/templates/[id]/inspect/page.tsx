@@ -41,6 +41,9 @@ interface RenderingLead {
   school_tier: number | null;
   matched_directions: string[];
   assigned_rep: { name: string; wechat: string };
+  /** True if this lead has never received an email — i.e. would be a
+   *  real prospect for this template tomorrow morning. False = backfill. */
+  is_unsent: boolean;
 }
 
 interface Rendering {
@@ -54,6 +57,7 @@ interface Rendering {
 
 interface InspectResponse {
   template: { id: string; name: string; status: string; segment_default: string | null };
+  audience?: { segment_used: string; n_unsent: number; n_sent_backfill: number };
   renderings: Rendering[];
 }
 
@@ -74,7 +78,10 @@ const SLOT_LABEL: Record<string, string> = {
   signature: "Signature",
 };
 
-const SEGMENT_LABEL = { all: "All", cn: "CN (.cn)", overseas: "Overseas", edu: "EDU" } as const;
+// 'auto' = use the template's own segment_default (server-side resolves it).
+// This is the default because most reps want to see "the audience this
+// template would actually email", not random leads from all segments.
+const SEGMENT_LABEL = { auto: "Auto (template segment)", all: "All", cn: "CN (.cn)", overseas: "Overseas", edu: "EDU" } as const;
 type Segment = keyof typeof SEGMENT_LABEL;
 
 export default function TemplateInspectPage({ params }: { params: Promise<{ id: string }> }) {
@@ -84,7 +91,7 @@ export default function TemplateInspectPage({ params }: { params: Promise<{ id: 
   const [authError, setAuthError] = useState(false);
   const [openPart, setOpenPart] = useState<Part | null>(null);
   const [activeIdx, setActiveIdx] = useState(0);
-  const [segment, setSegment] = useState<Segment>("all");
+  const [segment, setSegment] = useState<Segment>("auto");
   const [n, setN] = useState(5);
 
   const load = async (params: { segment?: Segment; n?: number } = {}) => {
@@ -177,6 +184,28 @@ export default function TemplateInspectPage({ params }: { params: Promise<{ id: 
         </div>
       </div>
 
+      {/* Audience strip — explains who these leads are */}
+      {data.audience && (
+        <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 rounded text-xs text-emerald-900 flex items-center gap-3">
+          <span className="font-medium">Audience:</span>
+          <span>
+            <span className="font-mono font-medium">{data.audience.segment_used}</span> segment
+          </span>
+          <span className="text-emerald-700">·</span>
+          <span>
+            <span className="font-bold">{data.audience.n_unsent}</span> never-sent (real preview)
+          </span>
+          {data.audience.n_sent_backfill > 0 && (
+            <>
+              <span className="text-emerald-700">·</span>
+              <span className="text-emerald-800/80">
+                <span className="font-bold">{data.audience.n_sent_backfill}</span> backfill (already-sent leads, for variety)
+              </span>
+            </>
+          )}
+        </div>
+      )}
+
       <div className="grid grid-cols-[280px_1fr] gap-4">
         {/* Lead sidebar */}
         <aside className="space-y-2">
@@ -196,8 +225,29 @@ export default function TemplateInspectPage({ params }: { params: Promise<{ id: 
                       : "bg-white border-slate-200 hover:bg-slate-50"
                 }`}
               >
-                <div className="text-[11px] font-mono opacity-70 truncate">
-                  {r.lead.author_email}
+                <div className="flex items-center gap-1.5">
+                  <div className="text-[11px] font-mono opacity-70 truncate flex-1">
+                    {r.lead.author_email}
+                  </div>
+                  {r.lead.is_unsent ? (
+                    <span
+                      title="Never emailed yet — would be a real prospect for this template"
+                      className={`text-[9px] font-bold uppercase px-1 py-0.5 rounded ${
+                        isActive ? "bg-emerald-400 text-emerald-900" : "bg-emerald-100 text-emerald-700"
+                      }`}
+                    >
+                      FRESH
+                    </span>
+                  ) : (
+                    <span
+                      title="Already emailed before — shown as backfill so you have variety"
+                      className={`text-[9px] font-bold uppercase px-1 py-0.5 rounded ${
+                        isActive ? "bg-slate-400 text-slate-100" : "bg-slate-200 text-slate-600"
+                      }`}
+                    >
+                      SENT
+                    </span>
+                  )}
                 </div>
                 <div className="text-xs leading-snug mt-0.5 line-clamp-2">
                   {r.lead.title}

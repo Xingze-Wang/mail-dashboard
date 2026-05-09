@@ -10,20 +10,28 @@ export const maxDuration = 60;
  *   ?lead_ids=<uuid,uuid,uuid>  — render against specific leads
  *   ?n=<int 1..10>              — count of "golden" leads to load
  *                                 (default 5; ignored if lead_ids set)
- *   ?segment=cn|overseas|edu|all (default 'all')
+ *   ?segment=cn|overseas|edu|all|auto  — default 'auto' = use the
+ *     template's segment_default (or all if it has none). Override
+ *     to all/specific via query.
  *
- * Renders one template against N real leads AND returns per-part
- * provenance for each rendering. Per user feedback: 'inspect should
- * load against many real leads, not just one'.
+ * Renders one template against N real leads. Lead selection is
+ * "the audience this template would actually go to":
  *
- * The golden set is the most-recent N leads with assigned_rep_id, in
- * the chosen segment. This way inspect shows variety (different schools,
- * different paper topics) without admin having to pick leads.
+ *   1. Filter to the template's own segment (segment_default), unless
+ *      caller overrode it via ?segment=
+ *   2. Prefer leads that haven't been emailed yet — these are the
+ *      template's actual prospective audience. The same leads are
+ *      what would be picked tomorrow morning if this template went
+ *      live, so the preview matches future reality.
+ *   3. If we don't have enough never-sent leads (early-morning before
+ *      the cron, or a fresh segment with no inventory), top up with
+ *      already-emailed leads from the same segment so the page still
+ *      shows variety.
  *
  * Each rendering call to assembleDraft is wrapped in try/catch — one
  * Gemini failure doesn't 500 the whole response. Per-cell errors
- * surface as `error` fields in the lead's render payload so the UI
- * can show "this lead failed; here's why" without losing the others.
+ * surface as `error` fields so the UI can show "this lead failed;
+ * here's why" without losing the others.
  *
  * Auth: admin only.
  */
@@ -84,7 +92,7 @@ export async function GET(
   const url = new URL(req.url);
   const leadIdsParam = url.searchParams.get("lead_ids");
   const n = Math.max(1, Math.min(10, Number(url.searchParams.get("n") ?? 5)));
-  const segment = url.searchParams.get("segment") ?? "all";
+  const segmentParam = url.searchParams.get("segment") ?? "auto";
 
   const { data: tpl } = await supabase
     .from("email_templates")
@@ -93,11 +101,23 @@ export async function GET(
     .maybeSingle();
   if (!tpl) return NextResponse.json({ error: "Template not found" }, { status: 404 });
 
+  // segment 'auto' resolves to the template's own segment_default.
+  // If the template has no segment_default (it's a global fallback),
+  // 'auto' means 'all' — show variety across segments.
+  const segment = segmentParam === "auto"
+    ? ((tpl.segment_default as string | null) ?? "all")
+    : segmentParam;
+
   // ─── Pick leads ────────────────────────────────────────────────────
   // If lead_ids is supplied, use exactly those. Otherwise pull a
   // golden set: most-recent N leads with assigned_rep_id, optionally
   // filtered by segment via author_email TLD.
   let leads: LeadRow[] = [];
+  // Track which selected leads have never been emailed yet — this
+  // gets surfaced to the UI so reps can tell at a glance whether a
+  // preview is showing the template against a real prospect or a
+  // backfilled-already-sent lead.
+  const unsentIds = new Set<string>();
   if (leadIdsParam) {
     const ids = leadIdsParam.split(",").map((s) => s.trim()).filter(Boolean).slice(0, 10);
     const { data } = await supabase
@@ -108,7 +128,9 @@ export async function GET(
       .in("id", ids);
     leads = (data ?? []) as LeadRow[];
   } else {
-    // Pull more than n to allow segment filtering in JS.
+    // Pull a wide candidate set. We over-fetch (n * 8) so after
+    // segment-filtering AND splitting into unsent/sent buckets we
+    // still have ≥ n leads to render.
     const { data } = await supabase
       .from("pipeline_leads")
       .select(
@@ -118,7 +140,7 @@ export async function GET(
       .not("title", "is", null)
       .not("abstract", "is", null)
       .order("created_at", { ascending: false })
-      .limit(n * 4);
+      .limit(n * 8);
     const all = (data ?? []) as LeadRow[];
     const inSegment = (l: LeadRow): boolean => {
       if (segment === "all") return true;
@@ -130,7 +152,44 @@ export async function GET(
       }
       return true;
     };
-    leads = all.filter(inSegment).slice(0, n);
+    const segmentMatched = all.filter(inSegment);
+
+    // Bucket into 'never sent' (no row in emails) and 'already sent'.
+    // 'never sent' is what this template would actually email tomorrow,
+    // so we prefer those. We chunk the IN() query because Supabase has
+    // a URL-length cap that blows up around 200 ids.
+    const sentSet = new Set<string>();
+    if (segmentMatched.length > 0) {
+      const candIds = segmentMatched.map((l) => l.id);
+      const CHUNK = 150;
+      for (let i = 0; i < candIds.length; i += CHUNK) {
+        const slice = candIds.slice(i, i + CHUNK);
+        const { data: sentRows } = await supabase
+          .from("emails")
+          .select("lead_id")
+          .in("lead_id", slice);
+        for (const r of sentRows ?? []) {
+          if (r.lead_id) sentSet.add(r.lead_id as string);
+        }
+      }
+    }
+    const unsent = segmentMatched.filter((l) => !sentSet.has(l.id));
+    const sent = segmentMatched.filter((l) => sentSet.has(l.id));
+    // Take unsent first, then top up with sent. If both buckets are
+    // empty (rare — segment has 0 leads at all), leads stays empty
+    // and the 404 below handles it.
+    leads = [...unsent, ...sent].slice(0, n);
+    for (const l of unsent) unsentIds.add(l.id);
+  }
+  // For lead_ids branch: also compute unsent flag so the UI is
+  // consistent regardless of which path produced the lead set.
+  if (leadIdsParam && leads.length > 0) {
+    const { data: sentRows } = await supabase
+      .from("emails")
+      .select("lead_id")
+      .in("lead_id", leads.map((l) => l.id));
+    const sentSet = new Set((sentRows ?? []).map((r) => r.lead_id as string));
+    for (const l of leads) if (!sentSet.has(l.id)) unsentIds.add(l.id);
   }
   if (leads.length === 0) {
     return NextResponse.json({ error: "No leads available" }, { status: 404 });
@@ -183,6 +242,7 @@ export async function GET(
             school_tier: lead.school_tier,
             matched_directions: parseDirections(lead.matched_directions),
             assigned_rep: { name: repName, wechat: repWechat },
+            is_unsent: unsentIds.has(lead.id),
           },
           rendered: { subject: draft.subject, html: draft.html },
           parts: draft.parts,
@@ -201,6 +261,7 @@ export async function GET(
             school_tier: lead.school_tier,
             matched_directions: parseDirections(lead.matched_directions),
             assigned_rep: { name: repName, wechat: repWechat },
+            is_unsent: unsentIds.has(lead.id),
           },
           rendered: null,
           parts: null,
@@ -218,6 +279,15 @@ export async function GET(
       name: tpl.name,
       status: tpl.status,
       segment_default: tpl.segment_default,
+    },
+    audience: {
+      // Effective segment used to pick leads (after 'auto' resolution).
+      segment_used: segment,
+      // How many of the rendered leads are never-sent prospects vs
+      // backfill from already-emailed pool. UI uses this to show a
+      // "showing 3 fresh + 2 already-sent" hint.
+      n_unsent: leads.filter((l) => unsentIds.has(l.id)).length,
+      n_sent_backfill: leads.filter((l) => !unsentIds.has(l.id)).length,
     },
     renderings,
   });
