@@ -45,8 +45,18 @@ interface TplBucket {
   name: string;
   status: string;
   segment: string | null;
+  rep_id: number | null;
   sent: number;
   clicked: number;
+}
+
+/** Composite group key for the auto-promote decision pass.
+ *  Per-rep templates bucket separately from org-wide templates so a
+ *  per-rep approved_draft is compared against its rep's active, not
+ *  against the global template. */
+function groupKey(b: TplBucket): string {
+  if (b.rep_id != null) return `rep:${b.rep_id}`;
+  return `seg:${b.segment ?? "__GLOBAL__"}`;
 }
 
 /**
@@ -91,7 +101,7 @@ export async function GET(req: NextRequest) {
   // also report on proposals that have data).
   const { data: tpls } = await supabase
     .from("email_templates")
-    .select("id, name, status, segment_default")
+    .select("id, name, status, segment_default, rep_id")
     .in("status", ["active", "approved_draft", "proposal"])
     .eq("active", true);
 
@@ -129,6 +139,7 @@ export async function GET(req: NextRequest) {
       name: t.name as string,
       status: t.status as string,
       segment: (t.segment_default as string | null) ?? null,
+      rep_id: (t.rep_id as number | null) ?? null,
       sent: 0,
       clicked: 0,
     });
@@ -140,12 +151,17 @@ export async function GET(req: NextRequest) {
     if (clickedSet.has(e.id as string)) b.clicked++;
   }
 
-  // Group by segment so we can compare active vs approved_draft within
-  // the same routing rule. NULL segment treated as its own bucket
-  // (the global template lives there).
+  // Group by composite key (rep_id OR segment_default) so:
+  //   - org-wide templates (rep_id IS NULL) compare within their
+  //     segment_default group; "global" (no segment) sits in its own
+  //     __GLOBAL__ bucket.
+  //   - per-rep templates compare ONLY against their own rep's other
+  //     templates. A per-rep approved_draft for rep#3 should be
+  //     measured against rep#3's per-rep active, never against
+  //     'global'. Different rep populations have different baselines.
   const bySegment = new Map<string, TplBucket[]>();
   for (const b of buckets.values()) {
-    const key = b.segment ?? "__GLOBAL__";
+    const key = groupKey(b);
     const list = bySegment.get(key) ?? [];
     list.push(b);
     bySegment.set(key, list);
@@ -162,6 +178,15 @@ export async function GET(req: NextRequest) {
     n_b?: number;
     reason?: string;
   }> = [];
+
+  // Renders a human-readable group label for admin_inbox messages.
+  // Example: "rep:3" → "rep #3"; "seg:cn" → "segment 'cn'";
+  // "seg:__GLOBAL__" → "global (all reps, no segment)".
+  const labelGroup = (key: string): string => {
+    if (key.startsWith("rep:")) return `rep #${key.slice(4)}`;
+    if (key === "seg:__GLOBAL__") return "global (all reps, no segment)";
+    return `segment '${key.slice(4)}'`;
+  };
 
   for (const [segment, list] of bySegment) {
     const active = list.find((t) => t.status === "active");
@@ -208,7 +233,7 @@ export async function GET(req: NextRequest) {
       }).eq("id", active.id);
       await supabase.from("admin_inbox").upsert({
         kind: "observation",
-        headline: `Auto-promoted template for segment '${segment}': ${draft.name}`,
+        headline: `Auto-promoted template for ${labelGroup(segment)}: ${draft.name}`,
         body: `Approved-draft '${draft.name}' beat active '${active.name}' on click rate with non-overlapping 95% CIs:\n${ciSummary}\nn_draft=${draft.sent}, n_active=${active.sent}. Auto-archived '${active.name}' for the swap. Visit /templates/${draft.id}/inspect to review the new active.`,
         evidence: {
           source: "template-auto-promote",
@@ -239,7 +264,7 @@ export async function GET(req: NextRequest) {
       }).eq("id", draft.id);
       await supabase.from("admin_inbox").upsert({
         kind: "observation",
-        headline: `Refuted template proposal for segment '${segment}': ${draft.name}`,
+        headline: `Refuted template proposal for ${labelGroup(segment)}: ${draft.name}`,
         body: `Approved-draft '${draft.name}' lost to active '${active.name}' on click rate with non-overlapping 95% CIs:\n${ciSummary}\nn_draft=${draft.sent}, n_active=${active.sent}. Auto-archived. The hypothesis behind this proposal was wrong; the next congress round will see this outcome.`,
         evidence: {
           source: "template-auto-promote",
