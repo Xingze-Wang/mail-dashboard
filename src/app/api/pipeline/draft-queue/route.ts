@@ -122,6 +122,9 @@ async function processOne(row: Record<string, unknown>): Promise<boolean> {
       repName: rep?.sender_name,
       repWechatId: rep?.wechat_id,
       assignedRepId: newRepId,
+      // Pass lead.id so loadEffectiveTemplate can do deterministic
+      // A/B routing (active vs approved_draft).
+      leadId: id,
     });
 
     await supabase

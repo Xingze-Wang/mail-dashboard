@@ -337,11 +337,17 @@ export async function POST(req: NextRequest) {
       // assigned_rep_id (canonical, migration 014) so scope-by-rep
       // queries can later swap off the fragile `from ilike
       // sender_email` proxy filter.
-      // Cache template lookup per repId across the batch — same rep
-      // means same active template.
+      // Per-lead lookup so the A/B split between active and
+      // approved_draft is deterministic-by-lead (same lead → same
+      // template assignment across regenerates). The cache-by-repId
+      // optimization is gone here — it'd defeat the per-lead
+      // bucketing — but the lookup is one cheap DB read so it's fine.
       let templateId: string | null = null;
       try {
-        const tpl = await loadEffectiveTemplate(lead.assigned_rep_id ?? null);
+        const tpl = await loadEffectiveTemplate(
+          lead.assigned_rep_id ?? null,
+          lead.id as string,
+        );
         templateId = tpl?.id ?? null;
       } catch {
         // best-effort

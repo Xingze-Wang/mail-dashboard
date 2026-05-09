@@ -379,7 +379,13 @@ export async function POST(req: NextRequest) {
     // is fine if loadEffectiveTemplate fails or no template exists.
     let templateId: string | null = null;
     try {
-      const tpl = await loadEffectiveTemplate(lead.assigned_rep_id ?? null);
+      // Pass lead.id so the A/B split (active vs approved_draft) is
+      // deterministic-by-lead. A regenerate on the same lead always
+      // hits the same template assignment.
+      const tpl = await loadEffectiveTemplate(
+        lead.assigned_rep_id ?? null,
+        lead.id as string,
+      );
       templateId = tpl?.id ?? null;
     } catch {
       // best-effort — template_id is for analytics, not delivery

@@ -238,6 +238,12 @@ export async function generateDraft(lead: {
   // don't have repId (legacy code paths) still work: they just skip
   // per-rep overrides.
   assignedRepId?: number | null;
+  // Pipeline lead id — used for deterministic A/B traffic splitting
+  // in loadEffectiveTemplate. Without it, all rendering uses the
+  // active template; with it, ~APPROVED_DRAFT_TRAFFIC_PCT% of leads
+  // hit any active approved_draft template instead. Stable per-lead
+  // so regenerates produce the same template assignment.
+  leadId?: string | null;
 }): Promise<{
   subject: string;
   html: string;
@@ -255,7 +261,7 @@ export async function generateDraft(lead: {
   const repName = lead.repName || "Leo";
   const repWechat = lead.repWechatId || "Lorenserus1";
   try {
-    const tpl = await loadEffectiveTemplate(lead.assignedRepId ?? null);
+    const tpl = await loadEffectiveTemplate(lead.assignedRepId ?? null, lead.leadId ?? null);
     if (tpl) {
       const draft = await assembleDraft(tpl, {
         title: lead.title,

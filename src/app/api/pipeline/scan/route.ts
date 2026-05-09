@@ -186,6 +186,11 @@ async function runScan() {
         repName: rep?.sender_name,
         repWechatId: rep?.wechat_id,
         assignedRepId: repId,
+        // arxivId is stable across re-scans (deterministic A/B
+        // bucketing: same paper always assigned to same template
+        // variant). Pre-insert (no DB id yet), so this is the only
+        // natural key available here.
+        leadId: lead.arxivId,
       });
     } catch (err) {
       stats.errors.push(`draft ${lead.arxivId}: ${err instanceof Error ? err.message : String(err)}`);

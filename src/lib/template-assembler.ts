@@ -194,19 +194,56 @@ ${prompt}`;
 }
 
 // ── Template loading ─────────────────────────────────────────────────
+
 /**
- * Load the effective template for a rep:
- *   1. Per-rep template (name like "rep_<repname>") if active.
- *   2. Global template (name "global") otherwise.
- * Returns null if neither exists (caller should fall back to legacy
- * hardcoded generator).
+ * Percentage of production traffic that gets routed through an
+ * approved_draft template (when one exists for the same segment).
+ * 20% means ~1 in 5 sends in that segment go through the draft, the
+ * rest through the active. Deterministic by lead id: a single lead
+ * always gets the same template, so a regenerate-draft action stays
+ * stable.
+ *
+ * Bumping this above 30% gets statistically faster signal but exposes
+ * more recipients to an untested variant; below 10% almost never
+ * accumulates the n needed for auto-promote (30 sends per template).
  */
-export async function loadEffectiveTemplate(repId: number | null): Promise<EmailTemplate | null> {
-  // status='active' filter (migration 061) excludes proposal + archived
-  // rows. Without this guard, a congress-generated proposal that hadn't
-  // been reviewed yet could leak into production sends. The constraint
-  // in migration 061 + this filter together guarantee a 'proposal' row
-  // is never the effective template, regardless of how the row got there.
+const APPROVED_DRAFT_TRAFFIC_PCT = 20;
+
+/**
+ * Deterministic hash → bucket assignment. Same lead always falls into
+ * the same bucket so a regenerate-draft / preview-on-pipeline action
+ * doesn't flip the lead between active and draft. djb2-style.
+ */
+function hashToBucket(leadId: string | null | undefined, modulo: number): number {
+  if (!leadId) return 0;
+  let h = 5381;
+  for (let i = 0; i < leadId.length; i++) {
+    h = ((h << 5) + h + leadId.charCodeAt(i)) >>> 0;
+  }
+  return h % modulo;
+}
+
+/**
+ * Load the effective template for a rep + lead pair.
+ *
+ *   1. Per-rep template (rep_id matches) if active.
+ *   2. Otherwise the global active template, OPTIONALLY split between
+ *      active and approved_draft for A/B-style traffic routing.
+ *
+ * The second arg `leadId` enables A/B splitting: when an active AND
+ * an approved_draft both exist for the same segment_default, the lead
+ * is hashed and ~APPROVED_DRAFT_TRAFFIC_PCT% land on the draft. This
+ * gives the auto-promote cron the data it needs to decide.
+ *
+ * If `leadId` is null (e.g. preview / inspect), always returns the
+ * active template — drafts only get exposed to actual production sends.
+ */
+export async function loadEffectiveTemplate(
+  repId: number | null,
+  leadId?: string | null,
+): Promise<EmailTemplate | null> {
+  // Per-rep template wins over everything else. No A/B split here —
+  // per-rep is a small population and admins manage it directly.
   if (repId !== null) {
     const { data: perRep } = await supabase
       .from("email_templates")
@@ -217,6 +254,8 @@ export async function loadEffectiveTemplate(repId: number | null): Promise<Email
       .maybeSingle();
     if (perRep) return perRep as EmailTemplate;
   }
+
+  // Global active template (the baseline).
   const { data: global } = await supabase
     .from("email_templates")
     .select("*")
@@ -224,7 +263,31 @@ export async function loadEffectiveTemplate(repId: number | null): Promise<Email
     .eq("active", true)
     .eq("status", "active")
     .maybeSingle();
-  return (global as EmailTemplate | null) ?? null;
+  const activeTpl = (global as EmailTemplate | null) ?? null;
+  if (!activeTpl || !leadId) return activeTpl;
+
+  // A/B split: if there's an approved_draft with no rep_id (org-wide),
+  // route APPROVED_DRAFT_TRAFFIC_PCT% of leads through it. This is
+  // how draft proposals accumulate the click data the auto-promote
+  // cron needs. Per-lead-deterministic so re-renders are stable.
+  const { data: drafts } = await supabase
+    .from("email_templates")
+    .select("*")
+    .eq("status", "approved_draft")
+    .eq("active", true)
+    .is("rep_id", null);
+  const eligibleDrafts = (drafts ?? []) as EmailTemplate[];
+  if (eligibleDrafts.length === 0) return activeTpl;
+
+  // Bucket the lead. With APPROVED_DRAFT_TRAFFIC_PCT=20 and N drafts,
+  // each draft gets 20/N% of traffic; the rest stays on active.
+  const bucket = hashToBucket(leadId, 100);
+  if (bucket >= APPROVED_DRAFT_TRAFFIC_PCT) return activeTpl;
+
+  // Pick which draft — round-robin via second hash (so leads spread
+  // across drafts evenly when there are multiple).
+  const draftIdx = hashToBucket(leadId + "draft", eligibleDrafts.length);
+  return eligibleDrafts[draftIdx];
 }
 
 // ── String substitution ──────────────────────────────────────────────
