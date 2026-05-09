@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { Plus, Pencil, Trash2, FileText, X, Eye, Zap, Loader2 } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 import { sanitizeHtml } from "@/lib/sanitize";
@@ -61,15 +62,16 @@ const DEFAULT_INTRO_PROMPT = `根据论文写一句个性化开头（1句话）�
 
 const PIPELINE_PROMPT_NAME = "pipeline_intro_prompt";
 
-// Wrapper page: Editor / Performance tabs. Editor is the original
-// templates UI; Performance embeds the analysis page which lives at
-// src/app/analysis/page.tsx (kept as a route for direct linking).
+// Wrapper page: Library / Editor / Performance tabs. Library is the
+// new email_templates system (proposals, segment routing, hypotheses);
+// Editor is the legacy singular-templates table (intro_prompt edits);
+// Performance embeds the analysis page.
 export default function TemplatesPage() {
-  const [tab, setTab] = useState<"editor" | "performance">("editor");
+  const [tab, setTab] = useState<"library" | "editor" | "performance">("library");
   return (
     <div>
       <div style={{ display: "flex", gap: 0, marginBottom: 20, borderBottom: "1px solid var(--border-light)" }}>
-        {(["editor", "performance"] as const).map((t) => {
+        {(["library", "editor", "performance"] as const).map((t) => {
           const active = tab === t;
           return (
             <button
@@ -93,7 +95,129 @@ export default function TemplatesPage() {
           );
         })}
       </div>
-      {tab === "editor" ? <TemplatesEditor /> : <AnalysisPage />}
+      {tab === "library" ? <TemplateLibrary /> : tab === "editor" ? <TemplatesEditor /> : <AnalysisPage />}
+    </div>
+  );
+}
+
+interface EmailTemplateRow {
+  id: string;
+  name: string;
+  status: "active" | "approved_draft" | "proposal" | "archived";
+  segment_default: string | null;
+  rep_id: number | null;
+  proposed_by: string | null;
+  proposed_reason: string | null;
+  proposed_evidence: Record<string, unknown> | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+function TemplateLibrary() {
+  const [rows, setRows] = useState<EmailTemplateRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "approved_draft" | "proposal" | "archived">("all");
+
+  useEffect(() => {
+    setLoading(true);
+    fetch("/api/templates/library", { credentials: "include" })
+      .then((r) => r.json())
+      .then((d) => setRows(d.rows ?? []))
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, []);
+
+  const filtered = statusFilter === "all" ? rows : rows.filter((r) => r.status === statusFilter);
+  const counts = {
+    active: rows.filter((r) => r.status === "active").length,
+    approved_draft: rows.filter((r) => r.status === "approved_draft").length,
+    proposal: rows.filter((r) => r.status === "proposal").length,
+    archived: rows.filter((r) => r.status === "archived").length,
+  };
+
+  return (
+    <div>
+      <div style={{ marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+        <div>
+          <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>Email templates (new system)</h2>
+          <p style={{ fontSize: 12, color: "var(--text-tertiary)", margin: "4px 0 0" }}>
+            Multi-paragraph templates with segment routing + hypothesis-driven proposals.
+            Use <Link href="/templates/bench" style={{ color: "var(--blue)" }}>/templates/bench</Link> to compare side-by-side,
+            or <Link href="/congress" style={{ color: "var(--blue)" }}>/congress</Link> to see hypotheses in flight.
+          </p>
+        </div>
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
+          style={{ fontSize: 13, padding: "6px 10px", border: "1px solid var(--border-light)", borderRadius: 4 }}
+        >
+          <option value="all">All ({rows.length})</option>
+          <option value="active">Active ({counts.active})</option>
+          <option value="approved_draft">Approved draft ({counts.approved_draft})</option>
+          <option value="proposal">Proposal ({counts.proposal})</option>
+          <option value="archived">Archived ({counts.archived})</option>
+        </select>
+      </div>
+
+      {loading && <p style={{ fontSize: 13, color: "var(--text-tertiary)" }}>Loading…</p>}
+      {!loading && filtered.length === 0 && (
+        <div className="section-card" style={{ padding: 16 }}>
+          <p style={{ fontSize: 13, color: "var(--text-tertiary)", margin: 0 }}>
+            No templates with status={statusFilter}. {statusFilter === "proposal" && "Run /api/cron/congress-hypothesis to generate some."}
+          </p>
+        </div>
+      )}
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {filtered.map((t) => {
+          const statusStyle = {
+            active: { bg: "#d1fae5", color: "#059669", border: "#6ee7b7" },
+            approved_draft: { bg: "#dbeafe", color: "#1d4ed8", border: "#93c5fd" },
+            proposal: { bg: "#fff7ed", color: "#b45309", border: "#fcd34d" },
+            archived: { bg: "#f1f5f9", color: "#64748b", border: "#cbd5e1" },
+          }[t.status];
+          return (
+            <div key={t.id} className="section-card" style={{ padding: 12 }}>
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 4 }}>
+                <span style={{
+                  fontSize: 10, fontWeight: 700, textTransform: "uppercase",
+                  letterSpacing: "0.06em", padding: "2px 6px", borderRadius: 3,
+                  background: statusStyle.bg, color: statusStyle.color, border: `1px solid ${statusStyle.border}`,
+                  flexShrink: 0,
+                }}>
+                  {t.status.replace("_", " ")}
+                </span>
+                <span style={{ fontSize: 13, fontFamily: "monospace", fontWeight: 500 }}>{t.name}</span>
+                {t.segment_default && (
+                  <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+                    seg=<b>{t.segment_default}</b>
+                  </span>
+                )}
+                {t.rep_id != null && (
+                  <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>rep_id={t.rep_id}</span>
+                )}
+                {t.proposed_by && (
+                  <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>via <b>{t.proposed_by}</b></span>
+                )}
+                <span style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+                  <Link href={`/templates/${t.id}/inspect`} style={{ fontSize: 12, color: "var(--blue)" }}>
+                    Inspect →
+                  </Link>
+                </span>
+              </div>
+              {t.proposed_reason && (
+                <p style={{ fontSize: 12, lineHeight: 1.5, margin: "4px 0 0", color: "var(--text-secondary)", whiteSpace: "pre-wrap" }}>
+                  {t.proposed_reason.length > 240 ? t.proposed_reason.slice(0, 240) + "…" : t.proposed_reason}
+                </p>
+              )}
+              {t.notes && !t.proposed_reason && (
+                <p style={{ fontSize: 11, color: "var(--text-tertiary)", margin: "4px 0 0" }}>{t.notes}</p>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
