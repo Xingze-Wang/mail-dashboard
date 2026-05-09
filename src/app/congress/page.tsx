@@ -96,12 +96,13 @@ export default async function CongressWeeklyPage() {
         )}
       </Section>
 
-      {/* Hypothesis stream — congress-hypothesis runner output.
-          Migration 065. Active proposed/testing first, then recently
+      {/* Hypothesis stream — written by weekly congress when its
+          synthesizer outputs a template-related change_spec. Migration
+          065 table. Active proposed/testing first, then recently
           decided (confirmed/refuted) for context. */}
       <Section title="Hypotheses in flight" count={hypotheses.filter((h) => h.status === "proposed" || h.status === "testing").length}>
         {hypotheses.length === 0 ? (
-          <Empty text="No hypotheses yet — runner fires daily at noon Beijing." />
+          <Empty text="No hypotheses yet — weekly congress writes them when it proposes template changes." />
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {hypotheses.map((h) => <HypothesisRowCmp key={h.id} h={h} />)}

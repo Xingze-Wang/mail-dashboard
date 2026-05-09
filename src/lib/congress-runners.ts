@@ -157,6 +157,57 @@ export async function runWeeklyCongress(opts: RunOpts = {}): Promise<WeeklyResul
   }).select().single();
   if (!row) return { outcome: "skipped" };
 
+  // ─── Template-prose fan-out ─────────────────────────────────────────
+  // If the synthesizer's change_spec is a template-paragraph kind, run
+  // it through the strategist + editor pipeline to produce actual
+  // Chinese prose, then insert into email_templates as status='proposal'.
+  // The tactical_proposals row is the deliberation/history record;
+  // the email_templates row is the renderable, A/B-testable artifact.
+  // Linked via tactical_proposal_id in proposed_evidence.
+  let templateProposalId: string | null = null;
+  let templateProposalNote = "";
+  const spec = synthJson.change_spec as { kind?: string; details?: Record<string, unknown> } | undefined;
+  const isTemplateKind =
+    spec?.kind === "template_phrase_swap" ||
+    spec?.kind === "subject_line_test" ||
+    spec?.kind === "subject_line" ||
+    spec?.kind === "email_content" ||
+    spec?.kind === "copy_edit";
+  if (isTemplateKind) {
+    try {
+      const { craftAndGateProposal, inferSlotFromDescription } = await import("@/lib/template-prose-pipeline");
+      const detailsStr = JSON.stringify(spec?.details ?? {});
+      const segmentRaw = (spec?.details as { segment?: string } | undefined)?.segment;
+      const segment = typeof segmentRaw === "string" ? segmentRaw : null;
+      // For subject_line kinds, force the subject_format slot.
+      const slot = (spec?.kind === "subject_line" || spec?.kind === "subject_line_test")
+        ? "subject_format" as const
+        : inferSlotFromDescription(`${synthJson.title} ${detailsStr}`);
+      const crafted = await craftAndGateProposal({
+        hypothesis: synthJson.title!,
+        reasoning: detailsStr,
+        proposed_test: detailsStr,
+        segment,
+        slot,
+        proposedBy: "congress",
+        evidence: {
+          source: "weekly_congress",
+          adversary_take: (personas.adversary ?? "").slice(0, 400),
+          psychologist_take: (personas.psychologist ?? "").slice(0, 400),
+        },
+        tacticalProposalId: row.id as string,
+      });
+      if (crafted.ok) {
+        templateProposalId = crafted.templateId;
+        templateProposalNote = `\n📝 Template proposal drafted: ${crafted.name}`;
+      } else {
+        templateProposalNote = `\n⚠️ Template prose draft blocked: ${crafted.error}`;
+      }
+    } catch (e) {
+      templateProposalNote = `\n⚠️ Template prose pipeline errored: ${(e as Error).message.slice(0, 200)}`;
+    }
+  }
+
   await notifyAdminText([
     `📋 Weekly Tactical Congress proposal`,
     ``,
@@ -168,10 +219,12 @@ export async function runWeeklyCongress(opts: RunOpts = {}): Promise<WeeklyResul
     ``,
     `Adversary: "${(personas.adversary || "").slice(0, 200)}"`,
     `Psychologist: "${(personas.psychologist || "").slice(0, 200)}"`,
+    templateProposalNote,
     ``,
     `Approve: /api/tactical/${row.id}/decide?approved=1`,
     `Reject:  /api/tactical/${row.id}/decide?approved=0`,
-  ].join("\n"));
+    templateProposalId ? `Preview prose: /templates/${templateProposalId}/inspect` : "",
+  ].filter(Boolean).join("\n"));
   return { outcome: "proposal", proposalId: row.id, title: synthJson.title };
 }
 

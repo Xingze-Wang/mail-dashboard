@@ -10,7 +10,8 @@
  * you what's available", not "sales team trying to convince you."
  *
  * Used by:
- *   - src/lib/congress-hypothesis.ts (analyst, strategist, editor)
+ *   - src/lib/template-prose-pipeline.ts (strategist + editor)
+ *   - src/lib/congress-runners.ts (weekly multi-persona congress)
  *   - src/lib/lark-agent.ts (Leon system prompt)
  *   - any new generative path
  */
