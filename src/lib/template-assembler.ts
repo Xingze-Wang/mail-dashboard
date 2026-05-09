@@ -170,12 +170,22 @@ ${prompt}`;
   // The proxy supports the Gemini family via "gemini-3-flash" /
   // "gemini-2.5-flash" aliases — see src/lib/llm-proxy.ts:KNOWN_MODELS.
   const { llmChat } = await import("@/lib/llm-proxy");
+  // gemini-3-flash (preview) has no implicit reasoning tokens; the
+  // 2.5-flash variant on this proxy was burning 990+ tokens on
+  // internal "thinking" before emitting visible output, leading to
+  // finish_reason: length truncation at 55 chars. 3-flash is also
+  // cheaper + faster for this paragraph-shape task.
   const r = await llmChat({
-    model: "gemini-2.5-flash",
+    model: "gemini-3-flash",
     user: finalPrompt,
     temperature: 0.5,
-    max_tokens: 500,
-    timeoutMs: 20_000,
+    // 2500 because gemini-flash variants on this proxy use internal
+    // reasoning tokens that count against max_tokens. With the
+    // hardened 1735-char system prompt + 1000-char abstract, smaller
+    // budgets get truncated mid-output (finish_reason: length). 2500
+    // gave ~1984 output tokens for full 3-clause Chinese intro.
+    max_tokens: 2500,
+    timeoutMs: 30_000,
   });
   return {
     output: sanitizePersonalizedIntro(r.text),
