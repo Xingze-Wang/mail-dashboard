@@ -182,14 +182,85 @@ geo_split 是 org 最关键的切片之一. 如果数据足够, 你应该**主�
 
 返回严格 JSON, schema 跟 rep view 一样.`;
 
-export async function GET(req: NextRequest) {
-  const session = await requireSession(req);
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+// Daily cache layer (mig 077). The /analysis page reads from this
+// table on every visit so the LLM call doesn't happen interactively.
+// The 06:15 UTC cron pre-warms it for every rep before they log in.
+// Cache miss falls through to live compute + write-through.
+async function readCache(scope: "rep" | "admin", repId: number | null): Promise<InsightsPayload | null> {
+  const { supabase } = await import("@/lib/db");
+  const today = new Date().toISOString().slice(0, 10);
+  let q = supabase
+    .from("insights_llm_cache")
+    .select("payload")
+    .eq("role_view", scope)
+    .eq("effective_date", today);
+  // Two partial indexes (mig 077): one for NULL rep_id, one for non-null.
+  // .is() vs .eq() picks the right one.
+  q = repId === null ? q.is("rep_id", null) : q.eq("rep_id", repId);
+  const { data, error } = await q.maybeSingle();
+  if (error || !data) return null;
+  return data.payload as InsightsPayload;
+}
 
-  const isAdmin = session.role === "admin";
+async function writeCache(
+  scope: "rep" | "admin",
+  repId: number | null,
+  payload: InsightsPayload,
+  decidedBy: "cron" | "live" | "admin",
+): Promise<void> {
+  try {
+    const { supabase } = await import("@/lib/db");
+    const today = new Date().toISOString().slice(0, 10);
+    // upsert on the two partial indexes — we have to do existence-check
+    // + branch insert/update because Postgres can't ON CONFLICT a
+    // partial index target. Same pattern as the insights-realign cron
+    // (mig 075 → 6a1592d).
+    let existing = supabase
+      .from("insights_llm_cache")
+      .select("id")
+      .eq("role_view", scope)
+      .eq("effective_date", today);
+    existing = repId === null ? existing.is("rep_id", null) : existing.eq("rep_id", repId);
+    const { data: hit } = await existing.maybeSingle();
+    if (hit) {
+      await supabase.from("insights_llm_cache").update({
+        payload,
+        computed_at: new Date().toISOString(),
+        decided_by: decidedBy,
+        decision_model: MODEL,
+      }).eq("id", hit.id);
+    } else {
+      await supabase.from("insights_llm_cache").insert({
+        rep_id: repId,
+        role_view: scope,
+        payload,
+        decided_by: decidedBy,
+        decision_model: MODEL,
+        effective_date: today,
+      });
+    }
+  } catch (err) {
+    // Cache write is best-effort — never block the response on it.
+    console.error("[insights] cache write-through failed", err);
+  }
+}
+
+/**
+ * The actual compute. Extracted so it can be called both from the
+ * interactive GET (cache miss) and from the daily prewarm cron.
+ *
+ * Sparkline + geo + LLM all live here. Returns the same payload
+ * shape we eventually send to the client.
+ */
+export async function computeInsightsPayload(args: {
+  repId: number;
+  repName: string | null;
+  role: "admin" | "senior" | "sales";
+}): Promise<InsightsPayload> {
+  const { repId, repName, role } = args;
+  const isAdmin = role === "admin";
   const scope: "rep" | "admin" = isAdmin ? "admin" : "rep";
 
-  // Gather primitives in parallel via the existing helper read tools.
   const calls = isAdmin
     ? [
         { tool: "get_admin_alerts", args: {} },
@@ -204,25 +275,21 @@ export async function GET(req: NextRequest) {
       ];
 
   const sessionLite = {
-    repId: session.repId,
-    role: session.role,
-    repName: session.repName,
-    email: session.email,
+    repId,
+    role,
+    repName: repName ?? undefined,
+    email: undefined,
   };
 
   const toolResults = await Promise.all(calls.map((c) => runReadTool(sessionLite, c).catch((err) => ({ tool: c.tool, result: { error: String(err) } }))));
 
-  // Pull memory entries that are insights prefs.
   const memTool = toolResults.find((t) => t.tool === "get_my_memory");
   const memArr = (asObj(memTool?.result).memory as Array<{ kind: string; body: string }>) ?? [];
   const prefs = extractInsightsPrefs(memArr);
 
-  // Sparkline + headline + geo split come from DB, not LLM (cheap, deterministic).
   const [weekly, geoSplit] = await Promise.all([
-    isAdmin
-      ? getWeeklyConversionsOrgWide(8)
-      : getWeeklyConversionsForRep(session.repId, 8),
-    computeGeoSplit(isAdmin ? null : session.repId),
+    isAdmin ? getWeeklyConversionsOrgWide(8) : getWeeklyConversionsForRep(repId, 8),
+    computeGeoSplit(isAdmin ? null : repId),
   ]);
   const sparkline = buildSparkline(weekly);
   const lastTwo = sparkline.slice(-2);
@@ -230,11 +297,10 @@ export async function GET(req: NextRequest) {
   const lastWeek = lastTwo[0] ?? 0;
   const delta = thisWeek - lastWeek;
 
-  // Build LLM prompt.
   const userPayload = {
     scope,
-    rep_name: session.repName ?? null,
-    rep_role: session.role,
+    rep_name: repName ?? null,
+    rep_role: role,
     today: new Date().toISOString().slice(0, 10),
     user_preferences_for_insights: prefs,
     headline_metric: { this_week_conversions: thisWeek, last_week_conversions: lastWeek, delta },
@@ -255,14 +321,19 @@ export async function GET(req: NextRequest) {
       temperature: 0.3,
       timeoutMs: 45_000,
     });
-    parsed = JSON.parse(out.text) as LlmShape;
+    // Models sometimes wrap JSON in ```json fences even with json:true
+    // mode set. Strip them defensively — congress-runners.ts uses the
+    // same regex on synth output. Without this, every cache miss
+    // produces empty FALLBACK cards instead of the real LLM output.
+    const cleaned = out.text.trim().replace(/^```(?:json)?\s*\n?/, "").replace(/\n?```\s*$/, "").trim();
+    parsed = JSON.parse(cleaned) as LlmShape;
   } catch (err) {
     console.error("[insights] LLM call failed", err);
   }
 
-  const payload: InsightsPayload = {
+  return {
     scope,
-    rep_name: session.repName ?? null,
+    rep_name: repName ?? null,
     headline: {
       value: thisWeek,
       label: parsed?.headline_label ?? (scope === "admin" ? "Org WeChat conversions" : "Your conversions"),
@@ -276,6 +347,34 @@ export async function GET(req: NextRequest) {
     prefs_seen: prefs,
     generated_at: new Date().toISOString(),
   };
+}
 
-  return NextResponse.json(payload);
+export async function GET(req: NextRequest) {
+  const session = await requireSession(req);
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const isAdmin = session.role === "admin";
+  const scope: "rep" | "admin" = isAdmin ? "admin" : "rep";
+  // Admins read the org-wide row (rep_id NULL); non-admins read their own.
+  const cacheRepId = isAdmin ? null : session.repId;
+
+  // Cache-first. If today's row exists, the user gets sub-100ms.
+  const cached = await readCache(scope, cacheRepId);
+  if (cached) {
+    return NextResponse.json({ ...cached, _cache: "hit" });
+  }
+
+  // Cache miss → live compute. This is the slow path (5-15s) but
+  // ALSO writes the cache so the next visitor that day is fast.
+  // The daily prewarm cron should make this rare in practice.
+  const payload = await computeInsightsPayload({
+    repId: session.repId,
+    repName: session.repName ?? null,
+    role: session.role,
+  });
+
+  // Fire-and-forget cache write. Don't block the response.
+  writeCache(scope, cacheRepId, payload, "live").catch(() => {});
+
+  return NextResponse.json({ ...payload, _cache: "miss" });
 }

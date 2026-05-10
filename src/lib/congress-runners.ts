@@ -256,6 +256,30 @@ export async function buildWeeklyEvidence(): Promise<string> {
     }
   }
 
+  // ─── Sales rep reactions to last week's proposals ──────────────────
+  // /api/cron/congress-chime pushes a chime-in to every rep on Monday
+  // 07:30 UTC asking "Congress proposed X — does this match what you've
+  // seen?" When the rep replies via POST /api/help/chime-in {reply}, the
+  // text lands in helper_chime_in_log.payload.reply_text. Surfacing those
+  // here gives the synthesizer ground-truth from people doing the work,
+  // not just the LLM personas debating in a vacuum.
+  const { data: repFeedback } = await supabase
+    .from("helper_chime_in_log")
+    .select("rep_id, payload, pushed_at")
+    .eq("kind", "congress_proposal_review")
+    .eq("outcome", "replied")
+    .gte("pushed_at", since30)
+    .order("pushed_at", { ascending: false })
+    .limit(15);
+  if (repFeedback && repFeedback.length > 0) {
+    lines.push(`\n## 💬 Sales rep feedback on last week's proposals`);
+    lines.push(`Reps were asked "does this proposal match what you've seen?" These are their actual replies. Trust them — they're the ones writing emails. If a rep says "I tried this and it didn't work", weight that heavier than persona speculation.`);
+    for (const r of repFeedback) {
+      const p = r.payload as { top_title?: string; reply_text?: string };
+      lines.push(`  • Rep ${r.rep_id} on "${p.top_title ?? '?'}": ${(p.reply_text ?? '').slice(0, 300)}`);
+    }
+  }
+
   return lines.join("\n");
 }
 
