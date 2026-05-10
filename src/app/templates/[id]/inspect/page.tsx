@@ -184,6 +184,13 @@ export default function TemplateInspectPage({ params }: { params: Promise<{ id: 
         </div>
       </div>
 
+      {/* Approval actions bar — visible for proposal/approved_draft.
+          Two-stage approval: approve-draft (sign off prose) →
+          activate (sign off routing). Per migration 066. */}
+      {(data.template.status === "proposal" || data.template.status === "approved_draft") && (
+        <ApprovalBar template={data.template} onChanged={() => void load()} />
+      )}
+
       {/* Audience strip — explains who these leads are */}
       {data.audience && (
         <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 rounded text-xs text-emerald-900 flex items-center gap-3">
@@ -402,6 +409,132 @@ export default function TemplateInspectPage({ params }: { params: Promise<{ id: 
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Two-stage approval bar (migration 066):
+ *
+ *   proposal → [Approve prose] → approved_draft → [Activate] → active
+ *
+ * Visible only when template.status is proposal or approved_draft.
+ * Activate requires picking a segment (cn / overseas / edu / null).
+ * On success, parent's load() is called to refresh the data.
+ *
+ * Why two stages: admin should be able to sign off on the WORDS
+ * separately from the routing rule. Sometimes the prose is great
+ * but it's the wrong segment to ship to.
+ */
+function ApprovalBar({
+  template,
+  onChanged,
+}: {
+  template: { id: string; name: string; status: string; segment_default: string | null };
+  onChanged: () => void;
+}) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [segment, setSegment] = useState<string>(template.segment_default ?? "cn");
+
+  const approveDraft = async () => {
+    if (busy) return;
+    setBusy("approve");
+    try {
+      const res = await fetch(`/api/templates/${template.id}/approve-draft`, { method: "POST", credentials: "include" });
+      if (!res.ok) { const j = await res.json().catch(() => ({})); alert(`Failed: ${j.error ?? res.status}`); return; }
+      onChanged();
+    } finally { setBusy(null); }
+  };
+
+  const activate = async () => {
+    if (busy) return;
+    if (!confirm(`Activate this template for segment '${segment}'? It will replace the current active template for that segment.`)) return;
+    setBusy("activate");
+    try {
+      const res = await fetch(`/api/templates/${template.id}/activate`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ segment_default: segment === "global" ? null : segment }),
+      });
+      if (!res.ok) { const j = await res.json().catch(() => ({})); alert(`Failed: ${j.error ?? res.status}`); return; }
+      onChanged();
+    } finally { setBusy(null); }
+  };
+
+  const reject = async () => {
+    if (busy) return;
+    if (!confirm(`Archive this proposal? It won't be considered for production.`)) return;
+    setBusy("reject");
+    try {
+      // Re-using PATCH on slots route would be wrong (that's for prose
+      // edits). Direct status flip via the same approve-draft endpoint
+      // pattern but to 'archived' — there's no such endpoint, so do
+      // the supabase write inline via /api/templates (existing legacy
+      // delete handler is gentle here).
+      // For now: send PUT to /api/templates with id + status=archived
+      // would require building that. Simpler: use the activate path
+      // backwards — admin removes via /templates list page DELETE.
+      // Punt on reject for this round; user can ignore the proposal.
+      alert("Reject flow not yet wired — leave as-is or contact admin to delete from DB.");
+    } finally { setBusy(null); }
+  };
+
+  return (
+    <div className="mb-4 p-4 bg-amber-50 border border-amber-300 rounded-lg">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <div className="text-xs font-bold uppercase tracking-wide text-amber-700 mb-1">
+            {template.status === "proposal" ? "审核 — 第一步" : "激活 — 第二步"}
+          </div>
+          <div className="text-sm text-amber-900">
+            {template.status === "proposal"
+              ? "Congress 起草. 看一遍 prose, 觉得 OK 就 approve. Approve 不会让 production 用 — 只是说文字过关."
+              : "Prose 已 approved. 选一个 segment 然后 activate, 现有的 segment 老 template 会自动 archive."}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {template.status === "proposal" && (
+            <button
+              onClick={() => void approveDraft()}
+              disabled={busy !== null}
+              className="px-3 py-1.5 bg-amber-600 text-white text-sm rounded font-medium disabled:opacity-50"
+            >
+              {busy === "approve" ? "..." : "Approve prose"}
+            </button>
+          )}
+          {template.status === "approved_draft" && (
+            <>
+              <select
+                value={segment}
+                onChange={(e) => setSegment(e.target.value)}
+                className="text-sm border border-amber-300 rounded px-2 py-1.5"
+                disabled={busy !== null}
+              >
+                <option value="cn">cn</option>
+                <option value="overseas">overseas</option>
+                <option value="edu">edu</option>
+                <option value="global">global (no segment)</option>
+              </select>
+              <button
+                onClick={() => void activate()}
+                disabled={busy !== null}
+                className="px-3 py-1.5 bg-emerald-600 text-white text-sm rounded font-medium disabled:opacity-50"
+              >
+                {busy === "activate" ? "..." : "Activate"}
+              </button>
+            </>
+          )}
+          <button
+            onClick={() => void reject()}
+            disabled={busy !== null}
+            className="px-3 py-1.5 bg-white border border-slate-300 text-slate-700 text-sm rounded disabled:opacity-50"
+          >
+            Reject
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
