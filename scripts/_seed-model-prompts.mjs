@@ -68,17 +68,17 @@ const SEED = [
   // ─── Persona recipient prompts × archetypes × 3 models ─────────────
   ...Object.entries(PERSONA_PROMPTS).flatMap(([archetype, sysPrompt]) => [
     { kind: "persona_recipient", name: `${archetype}_v1_gemini`, persona_archetype: archetype, system_prompt: sysPrompt, llm_model: "gemini-2.5-flash" },
-    { kind: "persona_recipient", name: `${archetype}_v1_claude`, persona_archetype: archetype, system_prompt: sysPrompt, llm_model: "claude-haiku-4-5-20251001" },
+    { kind: "persona_recipient", name: `${archetype}_v1_claude`, persona_archetype: archetype, system_prompt: sysPrompt, llm_model: "claude-sonnet-4" },
   ]),
 
   // ─── Email quality judge × 3 models ────────────────────────────────
   { kind: "email_quality_judge", name: "quality_v1_gemini", system_prompt: QUALITY_JUDGE_SYSTEM, llm_model: "gemini-2.5-flash" },
-  { kind: "email_quality_judge", name: "quality_v1_claude", system_prompt: QUALITY_JUDGE_SYSTEM, llm_model: "claude-haiku-4-5-20251001" },
+  { kind: "email_quality_judge", name: "quality_v1_claude", system_prompt: QUALITY_JUDGE_SYSTEM, llm_model: "claude-sonnet-4" },
   { kind: "email_quality_judge", name: "quality_v1_sonnet", system_prompt: QUALITY_JUDGE_SYSTEM, llm_model: "claude-sonnet-4.6" },
 
   // ─── CTR regressor × 3 models ──────────────────────────────────────
   { kind: "ctr_regressor", name: "ctr_v1_gemini", system_prompt: CTR_REGRESSOR_SYSTEM, llm_model: "gemini-2.5-flash" },
-  { kind: "ctr_regressor", name: "ctr_v1_claude", system_prompt: CTR_REGRESSOR_SYSTEM, llm_model: "claude-haiku-4-5-20251001" },
+  { kind: "ctr_regressor", name: "ctr_v1_claude", system_prompt: CTR_REGRESSOR_SYSTEM, llm_model: "claude-sonnet-4" },
   { kind: "ctr_regressor", name: "ctr_v1_sonnet", system_prompt: CTR_REGRESSOR_SYSTEM, llm_model: "claude-sonnet-4.6" },
 ];
 
