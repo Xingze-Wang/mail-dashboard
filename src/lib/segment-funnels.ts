@@ -101,13 +101,19 @@ function schoolTierLabel(t: number | null): string {
 }
 
 function firstDirection(raw: string | string[] | null): string {
-  if (!raw) return "(none)";
-  if (Array.isArray(raw)) return raw[0] || "(none)";
+  if (!raw) return "(no direction)";
+  if (Array.isArray(raw)) return raw[0] || "(no direction)";
+  // Empty-array literal "[]" stored as a string — common from older
+  // Python writers. Without this guard we'd return the bare "[]" as
+  // a bucket key and 10+ leads ended up there as a useless segment.
+  const trimmed = String(raw).trim();
+  if (trimmed === "[]" || trimmed === "") return "(no direction)";
   try {
-    const p = JSON.parse(raw);
+    const p = JSON.parse(trimmed);
     if (Array.isArray(p) && p.length > 0) return String(p[0]);
-  } catch { /* not JSON */ }
-  return String(raw).split(",")[0].trim() || "(none)";
+    if (Array.isArray(p)) return "(no direction)";
+  } catch { /* not JSON, try CSV */ }
+  return trimmed.split(",")[0].trim() || "(no direction)";
 }
 
 interface LoadOpts {
@@ -174,40 +180,83 @@ export async function computeSegmentFunnels(opts: LoadOpts = {}): Promise<Segmen
     if (q.includes("@")) wechatRecipients.add(q);
   }
 
-  // 3. Load lead features keyed by lowercased author_email — for cross-axis
-  // dimensions (school tier, h-index, etc) the features come from
-  // pipeline_leads, joined to emails by recipient address.
+  // 3. Load lead features. Two complementary indices:
+  //   (a) by lowercased author_email — direct match for primary authors
+  //   (b) by person_id — for the persons-fallback (covers co-authors)
   //
   // CRITICAL: Supabase silently caps a single .select() at 1000 rows.
   // Before pagination, this dropped 30%+ of leads (1443 in DB → only
-  // first 1000 in the join Map), causing every emailed-recipient whose
-  // lead happened to be in rows 1001-1443 to bucket as "(no lead data)"
-  // instead of their actual h_index/school_tier. The H-index slice
-  // showed ~148 emails when the real number was 1000+.
+  // first 1000 in the join Map). Now paginated.
+  //
+  // ALSO CRITICAL: 78% of email recipients are NOT matched by
+  // pipeline_leads.author_email — they're co-authors / late-sent
+  // recipients whose lead row uses a different primary email. The
+  // persons table tracks ALL known emails per person via persons.emails[],
+  // and pipeline_leads.person_id links the lead to that person. Using
+  // BOTH indices we resolve 99.86% of recipients (1421 of 1423 unique
+  // recipients in prod — was 313 before this fix).
   const featureByEmail = new Map<string, LeadFeatures>();
+  const featureByPersonId = new Map<string, LeadFeatures>();
   let leadCursor = 0;
   while (true) {
     const { data: leadsRaw, error } = await supabase
       .from("pipeline_leads")
-      .select("author_email, school_tier, lead_tier, h_index, citation_count, matched_directions, assigned_rep_id")
+      .select("author_email, school_tier, lead_tier, h_index, citation_count, matched_directions, assigned_rep_id, person_id")
       .range(leadCursor, leadCursor + 999);
     if (error || !leadsRaw || leadsRaw.length === 0) break;
     for (const l of leadsRaw) {
       const em = (l.author_email as string | null)?.toLowerCase().trim();
-      if (!em) continue;
-      featureByEmail.set(em, {
-        email: em,
+      const feat: LeadFeatures = {
+        email: em ?? "",
         school_tier: l.school_tier as number | null,
         lead_tier: l.lead_tier as string | null,
         h_index: l.h_index as number | null,
         citation_count: l.citation_count as number | null,
         matched_directions: l.matched_directions as string | string[] | null,
         assigned_rep_id: l.assigned_rep_id as number | null,
-      });
+      };
+      if (em) featureByEmail.set(em, feat);
+      const pid = l.person_id as string | null;
+      if (pid) {
+        // If multiple leads point to the same person_id, prefer the
+        // one with richer enrichment (h_index populated wins).
+        const cur = featureByPersonId.get(pid);
+        if (!cur || (cur.h_index == null && feat.h_index != null)) {
+          featureByPersonId.set(pid, feat);
+        }
+      }
     }
     if (leadsRaw.length < 1000) break;
     leadCursor += 1000;
     if (leadCursor > 100_000) break;  // sanity stop, same as emails loop
+  }
+
+  // 3b. Load persons.emails[] → person_id mapping. This is the fallback
+  // path when the recipient's email isn't in pipeline_leads.author_email
+  // directly. Each person can have multiple known emails (academic +
+  // gmail + university), all stored in the persons.emails text[] column.
+  const emailToPersonId = new Map<string, string>();
+  let personCursor = 0;
+  while (true) {
+    const { data: personsRaw, error } = await supabase
+      .from("persons")
+      .select("id, emails")
+      .range(personCursor, personCursor + 999);
+    if (error || !personsRaw || personsRaw.length === 0) break;
+    for (const p of personsRaw) {
+      const emails = p.emails as string[] | null;
+      if (!Array.isArray(emails)) continue;
+      for (const em of emails) {
+        const norm = (em || "").toLowerCase().trim();
+        if (!norm.includes("@")) continue;
+        // First-write wins; persons rows are roughly stable so this
+        // doesn't matter much in practice.
+        if (!emailToPersonId.has(norm)) emailToPersonId.set(norm, p.id as string);
+      }
+    }
+    if (personsRaw.length < 1000) break;
+    personCursor += 1000;
+    if (personCursor > 100_000) break;
   }
 
   // 4. Build per-recipient state. We dedupe by recipient because click
@@ -220,6 +269,21 @@ export async function computeSegmentFunnels(opts: LoadOpts = {}): Promise<Segmen
     feat: LeadFeatures | null;
   };
   const byRecipient = new Map<string, RecipientState>();
+  // Resolve each recipient's lead features via two paths:
+  //   1. direct: pipeline_leads.author_email == recipient (fast path,
+  //      covers primary authors)
+  //   2. fallback: recipient appears in persons.emails[] → person_id →
+  //      lead with that person_id. Covers co-authors and people whose
+  //      lead row records a different primary email than the address
+  //      we sent to.
+  // In prod (Q2 2026 scale): direct = ~22%, fallback = ~78%, no-match = ~0.14%.
+  const resolveFeat = (em: string): LeadFeatures | null => {
+    const direct = featureByEmail.get(em);
+    if (direct) return direct;
+    const pid = emailToPersonId.get(em);
+    if (pid) return featureByPersonId.get(pid) ?? null;
+    return null;
+  };
   for (const e of allEmails) {
     if (!e.to || !e.status) continue;
     if (!REACHABLE_STATUSES.has(e.status)) continue;
@@ -227,7 +291,7 @@ export async function computeSegmentFunnels(opts: LoadOpts = {}): Promise<Segmen
     if (!em.includes("@")) continue;
     const cur = byRecipient.get(em) ?? {
       email: em, delivered: false, clicked: false, wechat: false,
-      feat: featureByEmail.get(em) ?? null,
+      feat: resolveFeat(em),
     };
     if (DELIVERED_STATUSES.has(e.status)) cur.delivered = true;
     if (e.status === "clicked") cur.clicked = true;

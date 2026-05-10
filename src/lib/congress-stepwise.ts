@@ -321,6 +321,103 @@ export async function finalizeRun(runId: string): Promise<void> {
           templateNote = `\n⚠️ Template prose pipeline errored: ${(e as Error).message.slice(0, 200)}`;
         }
       }
+      // Mission system: persist team_focus + weekly_missions as proposed.
+      // Missing from this stepwise path (smoke 2026-05-10 #2) — ad-hoc
+      // /congress/[id]/live runs were silently no-op for the mission half
+      // even though the synchronous cron path persisted them. Inline rather
+      // than imported because the two paths handle errors differently.
+      let missionNote = "";
+      try {
+        const synthAny = synthJson as Record<string, unknown>;
+        const focus = synthAny.team_focus as { theme?: string; rationale?: string } | null | undefined;
+        const missions = (synthAny.weekly_missions as Array<{
+          rep_kind?: string; kind?: string; daily_target?: number;
+          scope?: Record<string, unknown>; description?: string;
+        }> | undefined) ?? [];
+
+        const now = new Date();
+        const daysUntilNextMonday = ((1 - now.getUTCDay() + 7) % 7) || 7;
+        const nextMonday = new Date(now);
+        nextMonday.setUTCDate(now.getUTCDate() + daysUntilNextMonday);
+        const weekStarting = nextMonday.toISOString().slice(0, 10);
+
+        let focusId: string | null = null;
+        if (focus?.theme) {
+          const { data: focusRow } = await supabase
+            .from("team_focus")
+            .insert({
+              week_starting: weekStarting,
+              theme: focus.theme,
+              rationale: focus.rationale ?? null,
+              set_by: "congress",
+              status: "proposed",
+              congress_run_id: runId,
+            })
+            .select("id")
+            .single();
+          focusId = focusRow?.id as string | null;
+        }
+
+        const { data: reps } = await supabase
+          .from("sales_reps")
+          .select("id, role, active")
+          .eq("active", true);
+        const salesIds = (reps ?? []).filter((rr) => rr.role === "sales").map((rr) => rr.id as number);
+        const adminIds = (reps ?? []).filter((rr) => rr.role === "admin").map((rr) => rr.id as number);
+
+        const resolveRepKind = (k: string): number[] => {
+          if (k === "all_sales") return salesIds;
+          if (k === "admin") return adminIds;
+          const m = /^rep:(\d+)$/.exec(k);
+          if (m) return [parseInt(m[1], 10)];
+          return [];
+        };
+
+        const VALID_KINDS = new Set([
+          "send", "reply", "mark_wechat",
+          "review_proposals", "review_template_edits", "custom",
+        ]);
+        const missionRows: Array<Record<string, unknown>> = [];
+        for (const m of missions) {
+          if (!m.kind || !VALID_KINDS.has(m.kind)) continue;
+          const target = m.daily_target;
+          if (typeof target !== "number" || target <= 0) continue;
+          const repIds = resolveRepKind(m.rep_kind ?? "all_sales");
+          for (const rid of repIds) {
+            for (let d = 0; d < 5; d++) {
+              const due = new Date(nextMonday);
+              due.setUTCDate(nextMonday.getUTCDate() + d);
+              missionRows.push({
+                rep_id: rid,
+                due_date: due.toISOString().slice(0, 10),
+                kind: m.kind,
+                target,
+                scope: m.scope ?? {},
+                description: m.description ?? null,
+                generated_by: "congress",
+                congress_run_id: runId,
+                team_focus_id: focusId,
+                status: "proposed",
+              });
+            }
+          }
+        }
+
+        if (missionRows.length > 0) {
+          const { error: insErr } = await supabase.from("missions").insert(missionRows);
+          if (insErr) {
+            missionNote = `\n⚠️ Mission persist failed: ${insErr.message.slice(0, 100)}`;
+          } else {
+            const repCount = new Set(missionRows.map((rr) => rr.rep_id)).size;
+            missionNote = `\n📅 Proposed week ${weekStarting}: ${missionRows.length} missions across ${repCount} reps`;
+          }
+        } else if (focusId) {
+          missionNote = `\n📅 Proposed week ${weekStarting} team_focus only (no per-rep missions emitted)`;
+        }
+      } catch (e) {
+        missionNote = `\n⚠️ Mission system errored: ${(e as Error).message.slice(0, 200)}`;
+      }
+
       await notifyAdminText([
         `📋 Weekly Tactical Congress proposal (live deliberation, run=${runId.slice(0, 8)})`,
         ``,
@@ -329,9 +426,11 @@ export async function finalizeRun(runId: string): Promise<void> {
         ``,
         `Adversary: "${(r.personas_completed.adversary || "").slice(0, 200)}"`,
         templateNote,
+        missionNote,
         ``,
         tacticalId ? `Approve: /api/tactical/${tacticalId}/decide?approved=1` : "",
         templateId ? `Preview prose: /templates/${templateId}/inspect` : "",
+        missionNote ? `Approve missions: /admin/missions` : "",
         `Live transcript: /congress/${runId}/live`,
       ].filter(Boolean).join("\n"));
     }

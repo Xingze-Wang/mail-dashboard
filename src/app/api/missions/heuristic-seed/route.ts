@@ -57,11 +57,15 @@ export async function POST(req: NextRequest) {
 
   const today = todayIso();
 
+  // Only target sales reps. Admins (role='admin') don't have email
+  // sending queues — they review proposals/edits, not send. Without
+  // this filter the heuristic seeded send=5 missions for admin
+  // accounts that had nothing to send (smoke 2026-05-10 #3).
   const { data: reps } = await supabase
     .from("sales_reps")
     .select("id, sender_name, name, role, active")
     .eq("active", true)
-    .neq("role", "service");
+    .eq("role", "sales");
   if (!reps || reps.length === 0) {
     return NextResponse.json({ error: "No active reps" }, { status: 404 });
   }
