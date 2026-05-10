@@ -359,6 +359,45 @@ export async function POST(req: NextRequest) {
           .update({ status: newStatus, updated_at: new Date().toISOString() })
           .eq("id", emailId);
 
+        // Click-count signal (mig 078). Multiple clicks on the same
+        // email is real interest, but the existing 'latest event wins'
+        // status flag flattens it. Bump the lead's click_count and
+        // stamp last_click_at every time we see email.clicked. Dedup
+        // is handled upstream — duplicate webhook deliveries are
+        // short-circuited before this branch runs.
+        if (type === "email.clicked") {
+          try {
+            const { data: emailLink } = await supabase
+              .from("emails")
+              .select("thread_id")
+              .eq("id", emailId)
+              .maybeSingle();
+            const threadId = emailLink?.thread_id as string | null;
+            if (threadId) {
+              // Read-modify-write — Supabase REST has no atomic
+              // increment, but the click rate is low enough (~tens
+              // per day) that contention is not a concern. If we ever
+              // need it, switch to a Postgres function via _exec_sql.
+              const { data: leadRow } = await supabase
+                .from("pipeline_leads")
+                .select("id, click_count")
+                .eq("thread_id", threadId)
+                .maybeSingle();
+              if (leadRow) {
+                await supabase
+                  .from("pipeline_leads")
+                  .update({
+                    click_count: (leadRow.click_count ?? 0) + 1,
+                    last_click_at: new Date().toISOString(),
+                  })
+                  .eq("id", leadRow.id);
+              }
+            }
+          } catch (err) {
+            console.error("[webhook] click_count bump failed", err);
+          }
+        }
+
         // Propagate delivery-status signals to pipeline_leads so the
         // lead-level view stays in sync with the email-level truth.
         // Previously the webhook only touched `emails`, leaving
