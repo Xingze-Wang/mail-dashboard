@@ -77,6 +77,14 @@ export async function GET(req: NextRequest) {
         role: t.role,
       });
 
+      // Skip cache write if the LLM half failed — caching empty
+      // cards is worse than no cache, see GET /api/insights gate.
+      const llmOk = (payload as { _llm_ok?: boolean })._llm_ok !== false;
+      if (!llmOk) {
+        results.push({ repId: t.repId, viewAs: t.viewAs, ok: false, ms: Date.now() - tStart, err: "llm_failed_skip_cache" });
+        continue;
+      }
+
       // For the org-wide cache row we store rep_id=NULL.
       const cacheRepId = t.viewAs === "admin" ? null : t.repId;
 

@@ -319,19 +319,25 @@ export async function computeInsightsPayload(args: {
       json: true,
       max_tokens: 1500,
       temperature: 0.3,
-      timeoutMs: 45_000,
+      timeoutMs: 60_000,                         // was 45s — observed
+                                                  // 50-70s typical for the
+                                                  // bigger admin payloads.
     });
     // Models sometimes wrap JSON in ```json fences even with json:true
     // mode set. Strip them defensively — congress-runners.ts uses the
-    // same regex on synth output. Without this, every cache miss
-    // produces empty FALLBACK cards instead of the real LLM output.
-    const cleaned = out.text.trim().replace(/^```(?:json)?\s*\n?/, "").replace(/\n?```\s*$/, "").trim();
+    // same regex on synth output. Then fix common JSON malformations
+    // the model occasionally emits (trailing comma before } or ]).
+    let cleaned = out.text.trim()
+      .replace(/^```(?:json)?\s*\n?/, "")
+      .replace(/\n?```\s*$/, "")
+      .trim();
+    cleaned = cleaned.replace(/,\s*([}\]])/g, "$1");  // trailing-comma fix
     parsed = JSON.parse(cleaned) as LlmShape;
   } catch (err) {
-    console.error("[insights] LLM call failed", err);
+    console.error("[insights] LLM call failed — parsed=null, caller can decide whether to cache", err);
   }
 
-  return {
+  const payload: InsightsPayload = {
     scope,
     rep_name: repName ?? null,
     headline: {
@@ -347,6 +353,13 @@ export async function computeInsightsPayload(args: {
     prefs_seen: prefs,
     generated_at: new Date().toISOString(),
   };
+  // Tag the payload with whether the LLM half succeeded — callers
+  // (prewarm cron, interactive write-through) check this before
+  // persisting. Caching a 0-cards FALLBACK is worse than no cache:
+  // the page would read it and render empty instead of falling
+  // through to live recompute, which might succeed on retry.
+  (payload as InsightsPayload & { _llm_ok: boolean })._llm_ok = parsed !== null;
+  return payload;
 }
 
 export async function GET(req: NextRequest) {
@@ -373,8 +386,16 @@ export async function GET(req: NextRequest) {
     role: session.role,
   });
 
-  // Fire-and-forget cache write. Don't block the response.
-  writeCache(scope, cacheRepId, payload, "live").catch(() => {});
+  // Only cache LLM-successful rows. A 0-cards FALLBACK in the cache
+  // means tomorrow's visitor sees empty cards forever; better to
+  // re-attempt live compute on the next visit.
+  const llmOk = (payload as InsightsPayload & { _llm_ok?: boolean })._llm_ok !== false;
+  if (llmOk) {
+    writeCache(scope, cacheRepId, payload, "live").catch(() => {});
+  }
 
-  return NextResponse.json({ ...payload, _cache: "miss" });
+  // Strip the internal _llm_ok flag before returning to client.
+  const { _llm_ok: _omit, ...clientPayload } = payload as InsightsPayload & { _llm_ok?: boolean };
+  void _omit;
+  return NextResponse.json({ ...clientPayload, _cache: llmOk ? "miss" : "miss-llm-failed" });
 }
