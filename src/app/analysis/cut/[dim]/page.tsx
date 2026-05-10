@@ -69,7 +69,22 @@ export default function CutPage({ params }: { params: Promise<{ dim: string }> }
     return <div style={{ padding: 24, fontSize: 13, color: "var(--text-secondary)" }}>Couldn&apos;t load this cut{err ? `: ${err}` : ""}.</div>;
   }
 
-  const segments = data.segments.filter((s) => s.segment !== "(no lead data)" && s.segment !== "(unknown)");
+  // Old behavior: filter out "(no lead data)" and "(unknown)" buckets.
+  // Problem: enrichment is sparse — H-index has signal for only ~12% of
+  // delivered recipients (148/1335). Hiding the unenriched bucket made
+  // the page look like there were 148 total emails; in reality there
+  // were 1335, but 1187 didn't have h-index lookup data.
+  //
+  // New behavior: keep them visible with a (lowN / unenriched) flag so
+  // the user sees the FULL population. The bucket is real signal —
+  // it's the "we don't have S2/lead enrichment for these recipients"
+  // bucket, and that's worth surfacing as a coverage gap.
+  const allSegments = data.segments;
+  const enrichedSegments = allSegments.filter((s) => s.segment !== "(no lead data)" && s.segment !== "(unknown)");
+  const unenrichedSegment = allSegments.find((s) => s.segment === "(no lead data)" || s.segment === "(unknown)");
+  const totalDelivered = allSegments.reduce((acc, s) => acc + s.delivered, 0);
+  const enrichedDelivered = enrichedSegments.reduce((acc, s) => acc + s.delivered, 0);
+  const segments = enrichedSegments;
 
   return (
     <div>
@@ -132,13 +147,40 @@ export default function CutPage({ params }: { params: Promise<{ dim: string }> }
         </div>
       )}
 
+      {/* Coverage banner — explains why some emails don't appear in
+          the cut. Shows BOTH numbers (full population vs enriched). */}
+      {totalDelivered > 0 && unenrichedSegment && unenrichedSegment.delivered > 0 && (
+        <div style={{
+          marginTop: 6, marginBottom: 16,
+          padding: "10px 14px",
+          background: "var(--bg-subtle, #f8fafc)",
+          border: "1px dashed var(--border-light, #e5e7eb)",
+          borderRadius: 8,
+          fontSize: 12, color: "var(--text-secondary)",
+          lineHeight: 1.55,
+        }}>
+          <div>
+            Showing <span style={{ fontFamily: "monospace", fontWeight: 600, color: "var(--text)" }}>{enrichedDelivered}</span>
+            {" "}of {totalDelivered} delivered emails. The remaining{" "}
+            <span style={{ fontFamily: "monospace", fontWeight: 600, color: "var(--coral)" }}>{unenrichedSegment.delivered}</span>
+            {" "}have no {data.slice_label} data (recipient never matched our enrichment lookup).
+          </div>
+          <div style={{ marginTop: 4, opacity: 0.85 }}>
+            CTR for those = <span style={{ fontFamily: "monospace" }}>
+              {unenrichedSegment.delivered > 0 ? (unenrichedSegment.ctr * 100).toFixed(1) + "%" : "—"}
+            </span>
+            {" "}({unenrichedSegment.clicked} clicks). They&apos;re bucketed below as &quot;{unenrichedSegment.segment}&quot; for transparency.
+          </div>
+        </div>
+      )}
+
       {/* Table */}
-      {segments.length === 0 ? (
+      {allSegments.length === 0 ? (
         <div className="section-card" style={{ padding: "20px 16px", textAlign: "center", fontSize: 13, color: "var(--text-tertiary)" }}>
           No data for this cut yet.
         </div>
       ) : (
-        <Table segments={segments} />
+        <Table segments={allSegments} />
       )}
 
       <div style={{
