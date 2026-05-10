@@ -500,18 +500,29 @@ async function gradeOverdueTacticals(): Promise<Array<{ id: string; title: strin
     if (!p.shipped_at) continue;
     const startISO = p.shipped_at;
     const endISO = new Date(new Date(startISO).getTime() + (p.weeks_to_evaluate ?? 4) * 7 * 24 * 3600 * 1000).toISOString();
-    const { data: postEmails } = await supabase.from("emails").select("status").gte("created_at", startISO).lt("created_at", endISO);
-    const sent = postEmails?.length ?? 0;
-    const opened = (postEmails ?? []).filter((e: { status: string }) => e.status === "opened" || e.status === "clicked").length;
-    const clicked = (postEmails ?? []).filter((e: { status: string }) => e.status === "clicked").length;
+    // Paginate past 1000-row cap. Even though 4-week windows are
+    // typically under 1000 emails today, larger weeks_to_evaluate
+    // values (8-12wks for slower-converting metrics) would silently
+    // truncate the historian's grading basis.
+    const { paginateAll: _pa1 } = await import("@/lib/supabase-paginate");
+    const postEmails = await _pa1<{ status: string }>(
+      (from, to) => supabase.from("emails").select("status")
+        .gte("created_at", startISO).lt("created_at", endISO).range(from, to),
+    );
+    const sent = postEmails.length;
+    const opened = postEmails.filter((e) => e.status === "opened" || e.status === "clicked").length;
+    const clicked = postEmails.filter((e) => e.status === "clicked").length;
     const exp = p.expected_lift as { metric?: string; delta_pp?: number } | null;
     let grade: "hit" | "partial" | "miss" | "inconclusive" = "inconclusive";
     if (sent < 30) grade = "inconclusive";
     else if (exp?.metric === "open_rate" && exp?.delta_pp != null) {
       const baseStart = new Date(new Date(startISO).getTime() - 28 * 24 * 3600 * 1000).toISOString();
-      const { data: baseEmails } = await supabase.from("emails").select("status").gte("created_at", baseStart).lt("created_at", startISO);
-      const baseSent = baseEmails?.length ?? 0;
-      const baseOpened = (baseEmails ?? []).filter((e: { status: string }) => e.status === "opened" || e.status === "clicked").length;
+      const baseEmails = await _pa1<{ status: string }>(
+        (from, to) => supabase.from("emails").select("status")
+          .gte("created_at", baseStart).lt("created_at", startISO).range(from, to),
+      );
+      const baseSent = baseEmails.length;
+      const baseOpened = baseEmails.filter((e) => e.status === "opened" || e.status === "clicked").length;
       const baseRate = baseSent > 0 ? baseOpened / baseSent : 0;
       const actualRate = sent > 0 ? opened / sent : 0;
       const actualDelta = (actualRate - baseRate) * 100;
@@ -555,13 +566,22 @@ async function buildMonthlyEvidence(graded: Array<{ id: string; title: string; e
   lines.push(`  wechat adds: ${wechatAdds ?? 0}`);
   if (emailsSent && wechatAdds) lines.push(`  send→wechat conversion: ${(100 * wechatAdds / emailsSent).toFixed(2)}%`);
 
-  const { data: leadsByDir } = await supabase.from("pipeline_leads").select("research_direction, status").gte("created_at", start90);
+  // Paginate past Supabase's silent 1000-row cap. At 1443+ leads in
+  // 90d (Q2 2026 scale) a single .select() under-counted directions
+  // by ~30%, leaking into monthly congress stats.
+  const { paginateAll: paginateLeadsByDir } = await import("@/lib/supabase-paginate");
+  const leadsByDir = await paginateLeadsByDir<{ research_direction: string | null; status: string }>(
+    (from, to) => supabase.from("pipeline_leads")
+      .select("research_direction, status")
+      .gte("created_at", start90)
+      .range(from, to),
+  );
   const dirTally = new Map<string, { sent: number; total: number }>();
-  for (const l of leadsByDir ?? []) {
-    const d = (l as { research_direction: string | null }).research_direction || "Other";
+  for (const l of leadsByDir) {
+    const d = l.research_direction || "Other";
     if (!dirTally.has(d)) dirTally.set(d, { sent: 0, total: 0 });
     dirTally.get(d)!.total++;
-    if ((l as { status: string }).status === "sent") dirTally.get(d)!.sent++;
+    if (l.status === "sent") dirTally.get(d)!.sent++;
   }
   lines.push(`\n## Per-direction send (last 90d, top 10)`);
   for (const [d, t] of [...dirTally].sort((a, b) => b[1].sent - a[1].sent).slice(0, 10)) lines.push(`  ${d}: sent=${t.sent}/${t.total}`);

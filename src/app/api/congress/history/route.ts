@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { requireSession } from "@/lib/auth-helpers";
+import { paginateAll } from "@/lib/supabase-paginate";
 
 export const dynamic = "force-dynamic";
 
@@ -21,9 +22,22 @@ export async function GET(req: NextRequest) {
 
   // Pull all emails + brief_lookups in window. Group in JS — keeps the
   // query simple and Supabase doesn't expose date_trunc nicely via PostgREST.
-  const [emailsRes, briefsRes, proposalsRes] = await Promise.all([
-    supabase.from("emails").select("id, to, created_at").gte("created_at", sinceISO),
-    supabase.from("brief_lookups").select("email, marked_at, marked_by_rep_id").gte("marked_at", sinceISO).not("marked_by_rep_id", "is", null),
+  // PAGINATED past Supabase's 1000-row cap. At 1436+ emails total in 90d,
+  // a single .select() under-counted weekly conversion rates by ~30%.
+  const [emails, briefs, proposalsRes] = await Promise.all([
+    paginateAll<{ id: string; to: string | null; created_at: string }>(
+      (from, to) => supabase.from("emails")
+        .select("id, to, created_at")
+        .gte("created_at", sinceISO)
+        .range(from, to),
+    ),
+    paginateAll<{ email: string | null; marked_at: string; marked_by_rep_id: number }>(
+      (from, to) => supabase.from("brief_lookups")
+        .select("email, marked_at, marked_by_rep_id")
+        .gte("marked_at", sinceISO)
+        .not("marked_by_rep_id", "is", null)
+        .range(from, to),
+    ),
     supabase.from("tactical_proposals")
       .select("id, title, proposed_at, ship_decision, shipped_at, decided_at, grade, expected_lift, actual_lift")
       .gte("proposed_at", sinceISO),
@@ -31,7 +45,7 @@ export async function GET(req: NextRequest) {
 
   // Bucket emails by week, count distinct recipients
   const emailsByWeek = new Map<number, Set<string>>();
-  for (const e of emailsRes.data ?? []) {
+  for (const e of emails) {
     const wk = isoWeek(new Date(e.created_at));
     const set = emailsByWeek.get(wk) ?? new Set();
     if (e.to) set.add(String(e.to).toLowerCase());
@@ -39,7 +53,7 @@ export async function GET(req: NextRequest) {
   }
   // Bucket brief_lookups by week (the conversion event's week)
   const briefsByWeek = new Map<number, Set<string>>();
-  for (const b of briefsRes.data ?? []) {
+  for (const b of briefs) {
     const wk = isoWeek(new Date(b.marked_at));
     const set = briefsByWeek.get(wk) ?? new Set();
     if (b.email) set.add(String(b.email).toLowerCase());
