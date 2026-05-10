@@ -230,6 +230,32 @@ export async function buildWeeklyEvidence(): Promise<string> {
     lines.push(`\n## Recent inbound replies (Academic Proxy + Psychologist fodder)`);
     for (const i of inbounds) lines.push(`  "${(i.subject || "").slice(0, 60)}" — ${(i.body_snippet || "").slice(0, 100)}`);
   }
+
+  // ─── Recent rejected proposals — DO NOT re-propose this kind ────
+  // When admin rejects a proposal with /api/templates/[id]/reject
+  // (mig 076), the reason gets stored. Surfacing those reasons here
+  // teaches synthesizer not to re-propose the same kind of change.
+  // Without this, congress would loop through the same rejected
+  // ideas every week.
+  const since30 = new Date(Date.now() - 30 * 86_400_000).toISOString();
+  const { data: rejected } = await supabase
+    .from("email_templates")
+    .select("name, proposed_evidence, rejection_reason, rejected_at")
+    .eq("status", "archived")
+    .not("rejection_reason", "is", null)
+    .gte("rejected_at", since30)
+    .order("rejected_at", { ascending: false })
+    .limit(15);
+  if (rejected && rejected.length > 0) {
+    lines.push(`\n## ⚠️ Recently rejected proposals (last 30d) — DO NOT re-propose this kind`);
+    lines.push(`Admin rejected these with explicit reasons. If the synthesizer is about to propose anything that looks like one of these, STOP and pivot — admin already said no with a specific reason.`);
+    for (const r of rejected) {
+      const slot = (r.proposed_evidence as { slot_swapped?: string } | null)?.slot_swapped;
+      lines.push(`  • [${r.rejected_at?.slice(0, 10) ?? '?'}] ${slot ? '(' + slot + ') ' : ''}${(r.name || '').slice(0, 50)}`);
+      lines.push(`    Why rejected: ${(r.rejection_reason || '').slice(0, 300)}`);
+    }
+  }
+
   return lines.join("\n");
 }
 

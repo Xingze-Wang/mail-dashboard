@@ -435,6 +435,8 @@ function ApprovalBar({
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [segment, setSegment] = useState<string>(template.segment_default ?? "cn");
+  const [rejectOpen, setRejectOpen] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
 
   const approveDraft = async () => {
     if (busy) return;
@@ -462,21 +464,25 @@ function ApprovalBar({
     } finally { setBusy(null); }
   };
 
-  const reject = async () => {
+  const submitReject = async () => {
     if (busy) return;
-    if (!confirm(`Archive this proposal? It won't be considered for production.`)) return;
+    const reason = rejectReason.trim();
+    if (reason.length < 10) {
+      alert("Reason needs to be at least 10 chars. This becomes congress evidence — be specific so the synthesizer doesn't re-propose the same kind of change.");
+      return;
+    }
     setBusy("reject");
     try {
-      // Re-using PATCH on slots route would be wrong (that's for prose
-      // edits). Direct status flip via the same approve-draft endpoint
-      // pattern but to 'archived' — there's no such endpoint, so do
-      // the supabase write inline via /api/templates (existing legacy
-      // delete handler is gentle here).
-      // For now: send PUT to /api/templates with id + status=archived
-      // would require building that. Simpler: use the activate path
-      // backwards — admin removes via /templates list page DELETE.
-      // Punt on reject for this round; user can ignore the proposal.
-      alert("Reject flow not yet wired — leave as-is or contact admin to delete from DB.");
+      const res = await fetch(`/api/templates/${template.id}/reject`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason }),
+      });
+      if (!res.ok) { const j = await res.json().catch(() => ({})); alert(`Failed: ${j.error ?? res.status}`); return; }
+      setRejectOpen(false);
+      setRejectReason("");
+      onChanged();
     } finally { setBusy(null); }
   };
 
@@ -527,7 +533,7 @@ function ApprovalBar({
             </>
           )}
           <button
-            onClick={() => void reject()}
+            onClick={() => setRejectOpen(true)}
             disabled={busy !== null}
             className="px-3 py-1.5 bg-white border border-slate-300 text-slate-700 text-sm rounded disabled:opacity-50"
           >
@@ -535,6 +541,58 @@ function ApprovalBar({
           </button>
         </div>
       </div>
+
+      {/* Reject modal — admin must give a reason. The reason becomes
+          congress evidence next week. Without specificity, congress
+          will re-propose the same kind of change. */}
+      {rejectOpen && (
+        <div
+          className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
+          onClick={() => !busy && setRejectOpen(false)}
+        >
+          <div
+            className="bg-white rounded-lg shadow-xl max-w-lg w-full p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-base font-semibold text-slate-900 mb-2">
+              Reject this proposal
+            </h2>
+            <p className="text-xs text-slate-500 mb-3 leading-relaxed">
+              你的理由会进 next congress 的 evidence pack —
+              synthesizer 看到 "上次提了类似 X, 被 admin 用 Y 理由拒了" 就不会再提同类的.
+              所以越具体越好 (e.g. "校园 tier3 cn group 转化率反而比 tier1 高,
+              不要按 tier 分人去推送" 比 "不好" 强 100 倍).
+            </p>
+            <textarea
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              placeholder="为什么拒? (≥10 字)"
+              rows={5}
+              className="w-full text-sm border border-slate-300 rounded p-2 focus:outline-none focus:ring-2 focus:ring-amber-300"
+              autoFocus
+            />
+            <div className="text-[10px] text-slate-400 mt-1">
+              {rejectReason.trim().length} / 1500 chars
+            </div>
+            <div className="flex justify-end gap-2 mt-4">
+              <button
+                onClick={() => { setRejectOpen(false); setRejectReason(""); }}
+                disabled={busy !== null}
+                className="px-3 py-1.5 text-sm rounded border border-slate-300 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void submitReject()}
+                disabled={busy !== null || rejectReason.trim().length < 10}
+                className="px-3 py-1.5 text-sm rounded bg-red-600 text-white disabled:opacity-50"
+              >
+                {busy === "reject" ? "Rejecting..." : "Reject + archive"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
