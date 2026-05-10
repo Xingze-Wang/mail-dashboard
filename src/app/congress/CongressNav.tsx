@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 const TABS: Array<{ href: string; label: string; match: (p: string) => boolean }> = [
   { href: "/congress",              label: "Weekly",       match: (p) => p === "/congress" },
   { href: "/congress/timeline",     label: "Timeline",     match: (p) => p.startsWith("/congress/timeline") },
+  { href: "/congress/discuss",      label: "Discuss",      match: (p) => p.startsWith("/congress/discuss") || /^\/congress\/[^/]+\/live/.test(p) },
   { href: "/congress/editor",       label: "Editor",       match: (p) => p.startsWith("/congress/editor") },
   { href: "/congress/architecture", label: "Architecture", match: (p) => p.startsWith("/congress/architecture") },
   { href: "/congress/about",        label: "About",        match: (p) => p.startsWith("/congress/about") },
