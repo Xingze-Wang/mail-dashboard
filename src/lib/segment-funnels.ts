@@ -19,6 +19,7 @@
 // audience differently.
 
 import { supabase } from "@/lib/db";
+import { getSchoolInfo } from "@/lib/template-assembler";
 
 const REACHABLE_STATUSES = new Set(["sent", "delivered", "clicked", "complained", "bounced", "replied"]);
 const DELIVERED_STATUSES = new Set(["delivered", "clicked", "complained"]);
@@ -269,20 +270,44 @@ export async function computeSegmentFunnels(opts: LoadOpts = {}): Promise<Segmen
     feat: LeadFeatures | null;
   };
   const byRecipient = new Map<string, RecipientState>();
-  // Resolve each recipient's lead features via two paths:
-  //   1. direct: pipeline_leads.author_email == recipient (fast path,
-  //      covers primary authors)
-  //   2. fallback: recipient appears in persons.emails[] → person_id →
-  //      lead with that person_id. Covers co-authors and people whose
-  //      lead row records a different primary email than the address
-  //      we sent to.
-  // In prod (Q2 2026 scale): direct = ~22%, fallback = ~78%, no-match = ~0.14%.
+  // Resolve each recipient's lead features via three paths:
+  //   1. direct: pipeline_leads.author_email == recipient (primary authors)
+  //   2. persons fallback: recipient ∈ persons.emails[] → person_id →
+  //      lead with that person_id (co-authors, alt-email people)
+  //   3. domain fallback: when 1+2 miss OR return null school_tier,
+  //      derive school_tier+name from the email's domain via
+  //      SCHOOL_DATA (covers anyone at a known university even if
+  //      their lead row was never enriched).
+  //
+  // The third path is what makes the "(no lead data)" bucket shrink
+  // dramatically — most orphan recipients are at known universities,
+  // so domain-level data is enough to bucket them by school_tier.
+  // It can't fill h_index (that's per-person, not per-domain), so
+  // those buckets still legitimately show "(no h_index)".
   const resolveFeat = (em: string): LeadFeatures | null => {
     const direct = featureByEmail.get(em);
-    if (direct) return direct;
+    if (direct && direct.school_tier != null) return direct;
     const pid = emailToPersonId.get(em);
-    if (pid) return featureByPersonId.get(pid) ?? null;
-    return null;
+    const viaPerson = pid ? featureByPersonId.get(pid) ?? null : null;
+    if (viaPerson && viaPerson.school_tier != null) return viaPerson;
+
+    // Domain-level fallback. Synthesize a minimal LeadFeatures from
+    // SCHOOL_DATA so school_tier-based cuts have signal.
+    const schoolInfo = getSchoolInfo(em);
+    if (schoolInfo) {
+      // Prefer the more complete row (direct/viaPerson) if it exists,
+      // else build a minimal one. Either way, fill missing school_tier.
+      const base = direct ?? viaPerson ?? {
+        email: em,
+        school_tier: null, lead_tier: null, h_index: null,
+        citation_count: null, matched_directions: null, assigned_rep_id: null,
+      };
+      return {
+        ...base,
+        school_tier: base.school_tier ?? schoolInfo.tier,
+      };
+    }
+    return direct ?? viaPerson ?? null;
   };
   for (const e of allEmails) {
     if (!e.to || !e.status) continue;
