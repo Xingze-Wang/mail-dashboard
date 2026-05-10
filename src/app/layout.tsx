@@ -4,6 +4,7 @@ import { headers } from "next/headers";
 import "./globals.css";
 import { Sidebar } from "@/components/sidebar";
 import { HelpBot } from "@/components/help-bot";
+import MissionsDot from "@/components/missions-dot";
 import { ToasterProvider } from "@/components/ui/toaster";
 
 const newsreader = Newsreader({
@@ -43,6 +44,7 @@ export default async function RootLayout({
                 <Sidebar />
                 <div className="app-content">{children}</div>
               </div>
+              <MissionsDot />
               <HelpBot />
             </>
           )}
