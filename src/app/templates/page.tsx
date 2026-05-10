@@ -401,10 +401,18 @@ function TemplateLibrary() {
                     )}
 
                     {/* Footnote — internal name + provenance, small + tertiary */}
-                    <div style={{ marginTop: 8, fontSize: 11, color: "var(--text-tertiary)", display: "flex", gap: 12 }}>
+                    <div style={{ marginTop: 8, fontSize: 11, color: "var(--text-tertiary)", display: "flex", gap: 12, alignItems: "center" }}>
                       <span style={{ fontFamily: "monospace" }}>{t.name}</span>
                       {t.proposed_by && <span>via {t.proposed_by}</span>}
                       <span>· updated {new Date(t.updated_at).toLocaleDateString()}</span>
+                      {/* Inline actions for proposal/approved_draft. The
+                          stopPropagation calls keep the surrounding <Link>
+                          from navigating when admin clicks an action. */}
+                      {(t.status === "proposal" || t.status === "approved_draft") && (
+                        <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+                          <InlineRejectButton templateId={t.id} templateName={t.name} />
+                        </span>
+                      )}
                     </div>
                   </Link>
                 );
@@ -414,6 +422,132 @@ function TemplateLibrary() {
         );
       })}
     </div>
+  );
+}
+
+/**
+ * Inline reject button for the library list. Opens a small modal
+ * that captures the admin's reason (≥10 chars) and calls
+ * /api/templates/[id]/reject. The reason becomes evidence in next
+ * Monday's congress (mig 076 + congress-runners.ts evidence pack).
+ *
+ * Uses stopPropagation so the surrounding <Link> doesn't navigate
+ * when the button is clicked.
+ */
+function InlineRejectButton({ templateId, templateName }: { templateId: string; templateName: string }) {
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const r = reason.trim();
+    if (r.length < 10) {
+      alert("Reason needs to be ≥10 chars. This becomes evidence the next congress reads, so be specific.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/templates/${templateId}/reject`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: r }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        alert(`Failed: ${j.error ?? res.status}`);
+        return;
+      }
+      setOpen(false);
+      setReason("");
+      // Reload the page so the rejected row falls out of the proposal group.
+      window.location.reload();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <button
+        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen(true); }}
+        style={{
+          fontSize: 11, padding: "2px 8px", borderRadius: 4,
+          background: "white", color: "#b91c1c", border: "1px solid #fca5a5",
+          cursor: "pointer", fontWeight: 500,
+        }}
+      >
+        Reject
+      </button>
+      {open && (
+        <div
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (!busy) setOpen(false); }}
+          style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)",
+            zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
+          }}
+        >
+          <div
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
+            style={{
+              background: "white", borderRadius: 8, padding: 20, maxWidth: 520, width: "100%",
+              boxShadow: "0 10px 30px rgba(0,0,0,0.15)",
+            }}
+          >
+            <h3 style={{ fontSize: 15, fontWeight: 600, margin: "0 0 6px" }}>
+              Reject proposal
+            </h3>
+            <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 4, fontFamily: "monospace" }}>
+              {templateName}
+            </div>
+            <p style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.55, margin: "0 0 10px" }}>
+              理由会进 next congress 的 evidence pack — synthesizer 看到&ldquo;上次提了 X 被 admin 用 Y 理由拒了&rdquo;就不会再提同类的. 越具体越好.
+            </p>
+            <textarea
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="为什么拒？(≥10 字)"
+              rows={4}
+              autoFocus
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                width: "100%", padding: 8, fontSize: 13, borderRadius: 4,
+                border: "1px solid #d4d4d8", boxSizing: "border-box", fontFamily: "inherit",
+              }}
+            />
+            <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 4 }}>
+              {reason.trim().length} / 1500 chars
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14 }}>
+              <button
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen(false); setReason(""); }}
+                disabled={busy}
+                style={{
+                  fontSize: 13, padding: "6px 12px", borderRadius: 4,
+                  background: "white", color: "var(--text-primary)",
+                  border: "1px solid #d4d4d8", cursor: "pointer",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={(e) => void submit(e)}
+                disabled={busy || reason.trim().length < 10}
+                style={{
+                  fontSize: 13, padding: "6px 12px", borderRadius: 4,
+                  background: "#dc2626", color: "white", border: "none",
+                  cursor: busy ? "wait" : "pointer", opacity: busy || reason.trim().length < 10 ? 0.5 : 1,
+                }}
+              >
+                {busy ? "Rejecting..." : "Reject + archive"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
