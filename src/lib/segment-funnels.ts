@@ -29,6 +29,7 @@ interface EmailRow {
   from: string | null;
   status: string | null;
   created_at: string | null;
+  paper_arxiv_id: string | null;
 }
 
 interface LeadFeatures {
@@ -154,7 +155,12 @@ export async function computeSegmentFunnels(opts: LoadOpts = {}): Promise<Segmen
   while (true) {
     let q = supabase
       .from("emails")
-      .select("to, from, status, created_at")
+      // paper_arxiv_id was backfilled by the agent fan-out (see
+      // /tmp/arxiv-backfill); 70%+ of emails now have it. Used as
+      // the THIRD join path below: recipient → paper_arxiv_id →
+      // pipeline_leads.arxiv_id, which works for co-authors and
+      // anyone else whose email never hit author_email or persons.
+      .select("to, from, status, created_at, paper_arxiv_id")
       .order("created_at", { ascending: false })
       .range(cursor, cursor + pageSize - 1);
     if (cutoff) q = q.gte("created_at", cutoff);
@@ -196,13 +202,19 @@ export async function computeSegmentFunnels(opts: LoadOpts = {}): Promise<Segmen
   // and pipeline_leads.person_id links the lead to that person. Using
   // BOTH indices we resolve 99.86% of recipients (1421 of 1423 unique
   // recipients in prod — was 313 before this fix).
+  // featureByArxiv is the THIRD join path. After the agent backfill
+  // pass populated emails.paper_arxiv_id for ~70% of rows, we can
+  // resolve a recipient's lead-level features by paper-they-were-mailed-
+  // about, regardless of whether they're the lead's primary author.
+  // Populated alongside the email/person indices below.
   const featureByEmail = new Map<string, LeadFeatures>();
   const featureByPersonId = new Map<string, LeadFeatures>();
+  const featureByArxiv = new Map<string, LeadFeatures>();
   let leadCursor = 0;
   while (true) {
     const { data: leadsRaw, error } = await supabase
       .from("pipeline_leads")
-      .select("author_email, school_tier, lead_tier, h_index, citation_count, matched_directions, assigned_rep_id, person_id")
+      .select("author_email, school_tier, lead_tier, h_index, citation_count, matched_directions, assigned_rep_id, person_id, arxiv_id")
       .range(leadCursor, leadCursor + 999);
     if (error || !leadsRaw || leadsRaw.length === 0) break;
     for (const l of leadsRaw) {
@@ -219,12 +231,15 @@ export async function computeSegmentFunnels(opts: LoadOpts = {}): Promise<Segmen
       if (em) featureByEmail.set(em, feat);
       const pid = l.person_id as string | null;
       if (pid) {
-        // If multiple leads point to the same person_id, prefer the
-        // one with richer enrichment (h_index populated wins).
         const cur = featureByPersonId.get(pid);
         if (!cur || (cur.h_index == null && feat.h_index != null)) {
           featureByPersonId.set(pid, feat);
         }
+      }
+      const aid = l.arxiv_id as string | null;
+      if (aid) {
+        // arxiv_id is UNIQUE on pipeline_leads, so this is one feat per paper.
+        featureByArxiv.set(aid, feat);
       }
     }
     if (leadsRaw.length < 1000) break;
@@ -284,7 +299,21 @@ export async function computeSegmentFunnels(opts: LoadOpts = {}): Promise<Segmen
   // so domain-level data is enough to bucket them by school_tier.
   // It can't fill h_index (that's per-person, not per-domain), so
   // those buckets still legitimately show "(no h_index)".
-  const resolveFeat = (em: string): LeadFeatures | null => {
+  // resolveFeat now considers FOUR signals, in this priority order:
+  //   1. paper_arxiv_id (from the email row itself) → featureByArxiv —
+  //      strongest signal: this email was specifically about that paper,
+  //      so the recipient is the right audience for those features
+  //   2. featureByEmail — recipient is the lead's primary author
+  //   3. featureByPersonId — recipient is in persons.emails[] for
+  //      a person who has a lead under another email
+  //   4. domain → school_tier — fallback covers anyone at known uni
+  //
+  // We escalate through the list, keeping the first match that has
+  // school_tier. This way an arxiv-matched feat with null tier still
+  // gets domain-fallback enrichment for the tier slot.
+  const resolveFeat = (em: string, arxivId: string | null): LeadFeatures | null => {
+    const viaArxiv = arxivId ? featureByArxiv.get(arxivId) ?? null : null;
+    if (viaArxiv && viaArxiv.school_tier != null) return viaArxiv;
     const direct = featureByEmail.get(em);
     if (direct && direct.school_tier != null) return direct;
     const pid = emailToPersonId.get(em);
@@ -295,9 +324,9 @@ export async function computeSegmentFunnels(opts: LoadOpts = {}): Promise<Segmen
     // SCHOOL_DATA so school_tier-based cuts have signal.
     const schoolInfo = getSchoolInfo(em);
     if (schoolInfo) {
-      // Prefer the more complete row (direct/viaPerson) if it exists,
-      // else build a minimal one. Either way, fill missing school_tier.
-      const base = direct ?? viaPerson ?? {
+      // Prefer the most-data-rich source we have. arxiv first because
+      // that's the most specific to "what we mailed them about".
+      const base = viaArxiv ?? direct ?? viaPerson ?? {
         email: em,
         school_tier: null, lead_tier: null, h_index: null,
         citation_count: null, matched_directions: null, assigned_rep_id: null,
@@ -307,16 +336,22 @@ export async function computeSegmentFunnels(opts: LoadOpts = {}): Promise<Segmen
         school_tier: base.school_tier ?? schoolInfo.tier,
       };
     }
-    return direct ?? viaPerson ?? null;
+    return viaArxiv ?? direct ?? viaPerson ?? null;
   };
+  // Track per-recipient the arxiv_id we'll use to resolve features.
+  // If a recipient appears on multiple emails for different papers,
+  // first email wins (consistent with the existing first-write-wins
+  // pattern for delivered/clicked accumulation).
+  const recipientArxiv = new Map<string, string | null>();
   for (const e of allEmails) {
     if (!e.to || !e.status) continue;
     if (!REACHABLE_STATUSES.has(e.status)) continue;
     const em = e.to.toLowerCase().trim();
     if (!em.includes("@")) continue;
+    if (!recipientArxiv.has(em)) recipientArxiv.set(em, e.paper_arxiv_id);
     const cur = byRecipient.get(em) ?? {
       email: em, delivered: false, clicked: false, wechat: false,
-      feat: resolveFeat(em),
+      feat: resolveFeat(em, e.paper_arxiv_id),
     };
     if (DELIVERED_STATUSES.has(e.status)) cur.delivered = true;
     if (e.status === "clicked") cur.clicked = true;
