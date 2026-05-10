@@ -130,25 +130,37 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // Persist bootstrap. Idempotent via the (dim, scope, date) unique
-  // index — if two requests race, second one no-ops on conflict.
+  // Persist bootstrap. The unique constraints are partial indexes
+  // (one for rep_id IS NULL, one for rep_id IS NOT NULL) which
+  // PostgREST upsert can't target directly, so do an existence check
+  // and branch update-vs-insert.
   const today = new Date().toISOString().slice(0, 10);
   const payload = {
     totals: funnels.totals,
     segments: dimension?.segments ?? [],
     summary,
   };
-  await supabase.from("insights_snapshots").upsert(
-    {
+  let existQ = supabase.from("insights_snapshots")
+    .select("id")
+    .eq("dimension", dim)
+    .eq("lookback_days", lookbackDays)
+    .eq("effective_date", today);
+  existQ = repId == null ? existQ.is("rep_id", null) : existQ.eq("rep_id", repId);
+  const { data: existing } = await existQ.maybeSingle();
+  if (existing) {
+    await supabase.from("insights_snapshots")
+      .update({ payload, decided_by: "bootstrap" })
+      .eq("id", existing.id);
+  } else {
+    await supabase.from("insights_snapshots").insert({
       dimension: dim,
       rep_id: repId,
       lookback_days: lookbackDays,
       payload,
       decided_by: "bootstrap",
       effective_date: today,
-    },
-    { onConflict: "dimension,rep_id,lookback_days,effective_date" },
-  );
+    });
+  }
 
   return NextResponse.json({
     dim,
