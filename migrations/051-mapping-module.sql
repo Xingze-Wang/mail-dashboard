@@ -22,6 +22,11 @@
 -- - lark bot: get_my_targets / get_pending_drafts read-tools
 -- - /mapping mailbox UI (a stripped /pipeline twin for mapping people)
 -- - congress mapping-loop runner
+--
+-- 4. BACKFILL FOR OLD ROWS
+-- (d) not applicable — all three tables are new. Existing sales_reps
+-- rows are not retroactively assigned a mapping role; the mapping
+-- people path explicitly opts in via api/mapping/target on first use.
 
 create table if not exists mapping_targets (
   id uuid primary key default gen_random_uuid(),

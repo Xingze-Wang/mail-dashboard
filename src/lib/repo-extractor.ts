@@ -8,7 +8,12 @@
 // "owner/name" (no protocol/host) so two papers pointing at the same project
 // produce identical strings — that's what the dedup gate compares.
 
-const HF_PATTERN = /(?:huggingface\.co\/(?:models?\/|datasets?\/|spaces\/)?)([\w-]+\/[\w.-]+)/gi;
+// The path-prefix group is REQUIRED, not optional. The previous version had
+// `(?:models?\/|datasets?\/|spaces\/)?` (trailing `?`) which made the prefix
+// optional, so URLs like huggingface.co/v1/production, huggingface.co/papers/2402.12345,
+// huggingface.co/blog/foo all matched as repos. CLAUDE.md flagged this; fixed
+// per SMOKE_TEST_REPORT_2026-05-09.md finding #11.
+const HF_PATTERN = /huggingface\.co\/(?:models?\/|datasets?\/|spaces\/)([\w-]+\/[\w.-]+)/gi;
 const GH_PATTERN = /github\.com\/([\w-]+\/[\w.-]+)/gi;
 
 function normalize(repo: string): string {

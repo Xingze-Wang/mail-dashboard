@@ -27,16 +27,16 @@ export async function POST(req: NextRequest) {
 
   if (remaining.length > 0) {
     res.cookies.set(AUTH_COOKIE, remaining[0].token, {
-      httpOnly: true, secure: true, sameSite: "lax",
+      httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax",
       maxAge: AUTH_COOKIE_MAX_AGE, path: "/",
     });
     res.cookies.set(AUTH_POOL_COOKIE, serializePool(remaining.slice(1).map((r) => r.token)), {
-      httpOnly: true, secure: true, sameSite: "lax",
+      httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax",
       maxAge: AUTH_COOKIE_MAX_AGE, path: "/",
     });
   } else {
-    res.cookies.set(AUTH_COOKIE, "", { httpOnly: true, secure: true, sameSite: "lax", maxAge: 0, path: "/" });
-    res.cookies.set(AUTH_POOL_COOKIE, "", { httpOnly: true, secure: true, sameSite: "lax", maxAge: 0, path: "/" });
+    res.cookies.set(AUTH_COOKIE, "", { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", maxAge: 0, path: "/" });
+    res.cookies.set(AUTH_POOL_COOKIE, "", { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", maxAge: 0, path: "/" });
   }
   return res;
 }

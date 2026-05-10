@@ -50,26 +50,60 @@ export async function recordPrediction(input: {
   targetLeadId?: string | null;
   targetRecipient?: string | null;
   targetDeadline: Date;
+  /**
+   * Idempotency key. If two POSTs land with the same requestId, the
+   * second is absorbed by the partial UNIQUE INDEX added in
+   * migration 072 and the existing row is returned. The caller
+   * (POST /api/help/predictions) passes either an Idempotency-Key
+   * header, a body.requestId, or a derived hash of the claim shape
+   * so a fast double-tap with no client key still dedups.
+   */
+  requestId?: string | null;
 }): Promise<PredictionRow | null> {
-  const { data, error } = await supabase
+  const reqId = input.requestId ?? null;
+
+  // Insert with ON CONFLICT DO NOTHING via upsert + ignoreDuplicates.
+  // On conflict the response is an empty array; we then SELECT the
+  // pre-existing row by request_id so the caller still gets a
+  // PredictionRow (idempotency means "same outcome, no new state").
+  const { data: inserted, error } = await supabase
     .from("helper_predictions")
-    .insert({
-      rep_id: input.repId,
-      conversation_id: input.conversationId ?? null,
-      message_id: input.messageId ?? null,
-      claim: input.claim.trim().slice(0, 500),
-      target_event: input.targetEvent,
-      target_lead_id: input.targetLeadId ?? null,
-      target_recipient: input.targetRecipient ?? null,
-      target_deadline: input.targetDeadline.toISOString(),
-    })
+    .upsert(
+      {
+        rep_id: input.repId,
+        conversation_id: input.conversationId ?? null,
+        message_id: input.messageId ?? null,
+        claim: input.claim.trim().slice(0, 500),
+        target_event: input.targetEvent,
+        target_lead_id: input.targetLeadId ?? null,
+        target_recipient: input.targetRecipient ?? null,
+        target_deadline: input.targetDeadline.toISOString(),
+        request_id: reqId,
+      },
+      reqId
+        ? { onConflict: "request_id", ignoreDuplicates: true }
+        : { ignoreDuplicates: false },
+    )
     .select()
-    .single();
+    .maybeSingle();
+
   if (error) {
     console.warn("recordPrediction failed:", error.message);
     return null;
   }
-  return data as PredictionRow;
+  if (inserted) return inserted as PredictionRow;
+
+  // Duplicate request_id — fetch the original row so the client gets
+  // back the same prediction it would have on the first call.
+  if (reqId) {
+    const { data: existing } = await supabase
+      .from("helper_predictions")
+      .select("*")
+      .eq("request_id", reqId)
+      .maybeSingle();
+    if (existing) return existing as PredictionRow;
+  }
+  return null;
 }
 
 async function evaluate(p: PredictionRow): Promise<{ correct: boolean; note: string }> {

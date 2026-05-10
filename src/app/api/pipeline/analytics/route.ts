@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { requireSession } from "@/lib/auth-helpers";
 import { beijingDaysAgoStartUtc } from "@/lib/override-quota";
-import { REACHABLE_EMAIL_STATUSES, CONTACTED_LEAD_STATUSES } from "@/lib/status";
+import { REACHABLE_EMAIL_STATUSES, CONTACTED_LEAD_STATUSES, REPLIED_LEAD_STATUSES } from "@/lib/status";
 
 // Analytics must always reflect the live DB — "This week" is time-sensitive
 // and drifts by a full day if cached. Force a fresh query on every hit.
@@ -165,7 +165,11 @@ export async function GET(req: NextRequest) {
     const sent = repRecipients.size;
 
     // `replied` is still pipeline-scoped (replied status only set there).
-    const replied = repLeads.filter((l) => l.status === "replied").length;
+    // Use the canonical set so replies that progressed to wechat_added
+    // still count — equality on 'replied' loses every conversion.
+    const replied = repLeads.filter((l) =>
+      (REPLIED_LEAD_STATUSES as readonly string[]).includes(l.status),
+    ).length;
 
     // WeChat conversions attributable to this rep = WeChat emails ∩ repRecipients.
     let repWechat = 0;
@@ -189,7 +193,9 @@ export async function GET(req: NextRequest) {
           if (wechatEmailSet.has(em)) tierWechat++;
         }
       }
-      const tierReplied = tierLeads.filter((l) => l.status === "replied").length;
+      const tierReplied = tierLeads.filter((l) =>
+        (REPLIED_LEAD_STATUSES as readonly string[]).includes(l.status),
+      ).length;
       return {
         tier,
         assigned: tierLeads.length,
@@ -401,7 +407,9 @@ function buildSourceBreakdown(
     const normal = total - strong;
     // `sent` = unique recipients in this channel that we actually delivered
     // an email to (intersect with sentEmails). `replied` stays pipeline-scoped.
-    const replied = channelLeads.filter((l) => l.status === "replied").length;
+    const replied = channelLeads.filter((l) =>
+      (REPLIED_LEAD_STATUSES as readonly string[]).includes(l.status),
+    ).length;
     const channelEmails = new Set(
       channelLeads
         .map((l) => (l.author_email ?? "").toLowerCase().trim())

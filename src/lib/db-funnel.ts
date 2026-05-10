@@ -51,10 +51,17 @@ function toLowerEmail(raw: string | null | undefined): string | null {
 }
 
 interface EmailRow {
+  id: string;
   to: string | null;
   from: string | null;
   status: string | null;
   created_at: string | null;
+}
+
+interface HistoryRow {
+  email_id: string;
+  was_clicked: boolean | null;
+  was_bounced: boolean | null;
 }
 
 export async function getDbFunnel(opts: FunnelOpts = {}): Promise<DbFunnel> {
@@ -69,7 +76,7 @@ export async function getDbFunnel(opts: FunnelOpts = {}): Promise<DbFunnel> {
   while (true) {
     let q = supabase
       .from("emails")
-      .select("to, from, status, created_at")
+      .select("id, to, from, status, created_at")
       .order("created_at", { ascending: false })
       .range(cursor, cursor + pageSize - 1);
     if (fromContains) q = q.ilike("from", `%${fromContains}%`);
@@ -79,6 +86,30 @@ export async function getDbFunnel(opts: FunnelOpts = {}): Promise<DbFunnel> {
     if (data.length < pageSize) break;
     cursor += pageSize;
     if (cursor > 100_000) break; // safety
+  }
+
+  // Click + bounce signals come from `email_history` — the Tier 2 view
+  // (migration 025) that joins emails to webhook_events. emails.status
+  // is latest-event-wins: a recipient who clicked then complained
+  // would otherwise drop from the click count, and a click that later
+  // moved to opened would also vanish. webhook_events is the canonical
+  // append-only log per docs/DATA_INTEGRITY_PLAN.md and CLAUDE.md.
+  // Chunk the .in() so URL length stays sane (postgrest silent-400s
+  // around 200-500 ids per the templates/performance route).
+  const clickedIds = new Set<string>();
+  const bouncedIds = new Set<string>();
+  const ids = all.map((e) => e.id).filter((v): v is string => !!v);
+  const CHUNK = 150;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const chunk = ids.slice(i, i + CHUNK);
+    const { data: history } = await supabase
+      .from("email_history")
+      .select("email_id, was_clicked, was_bounced")
+      .in("email_id", chunk);
+    for (const r of (history ?? []) as HistoryRow[]) {
+      if (r.was_clicked) clickedIds.add(r.email_id);
+      if (r.was_bounced) bouncedIds.add(r.email_id);
+    }
   }
 
   // Initialize 30-day daily bins anchored on Beijing day boundary.
@@ -108,13 +139,18 @@ export async function getDbFunnel(opts: FunnelOpts = {}): Promise<DbFunnel> {
   for (const e of all) {
     const status = (e.status ?? "sent").toLowerCase();
     const createdMs = e.created_at ? new Date(e.created_at).getTime() : 0;
+    // ever-clicked / ever-bounced come from email_history (Tier 2 view).
+    // Falling back to status-equality keeps very-old rows (pre-Tier-0,
+    // when webhook_events was broken) counted via the legacy signal.
+    const clicked = e.id ? clickedIds.has(e.id) : status === "clicked";
+    const bounced = e.id ? bouncedIds.has(e.id) : status === "bounced";
 
     if (status !== "queued") totalSent++;
     if ((DELIVERED_STATUSES as readonly string[]).includes(status)) totalDelivered++;
-    if (status === "clicked") totalClicked++;
-    if (status === "bounced") totalBounced++;
+    if (clicked) totalClicked++;
+    if (bounced) totalBounced++;
     if (status === "complained") totalComplained++;
-    if (status === "opened" || status === "clicked") totalOpened++;
+    if (status === "opened" || clicked) totalOpened++;
 
     if (createdMs >= sevenDaysAgo && status !== "queued") last7DaysSent++;
 
@@ -122,12 +158,12 @@ export async function getDbFunnel(opts: FunnelOpts = {}): Promise<DbFunnel> {
     if (dayKey && dailyMap[dayKey]) {
       if (status !== "queued") dailyMap[dayKey].sent++;
       if ((DELIVERED_STATUSES as readonly string[]).includes(status)) dailyMap[dayKey].delivered++;
-      if (status === "clicked") dailyMap[dayKey].clicked++;
-      if (status === "bounced") dailyMap[dayKey].bounced++;
+      if (clicked) dailyMap[dayKey].clicked++;
+      if (bounced) dailyMap[dayKey].bounced++;
     }
 
     // For conversion-rate denominators downstream.
-    if (status !== "queued" && status !== "bounced" && status !== "complained") {
+    if (status !== "queued" && !bounced && status !== "complained") {
       const to = toLowerEmail(e.to);
       if (to) deliveredRecipients.add(to);
     }

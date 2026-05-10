@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Webhook } from "svix";
 import { supabase } from "@/lib/db";
 import { requireSession } from "@/lib/auth-helpers";
 import { getRep } from "@/lib/assignment";
@@ -22,15 +23,37 @@ function cleanToField(to: string | null): string {
 
 export async function POST(req: NextRequest) {
   try {
+    // Svix HMAC verification — same shape as /api/webhook. The prior
+    // bearer-compare fell open when INBOUND_SECRET was unset (any POST
+    // could create fake inbound_emails rows and flip pipeline_leads to
+    // 'replied'). Read body raw so the signature can be verified before
+    // we parse JSON.
     const secret = process.env.INBOUND_SECRET;
-    if (secret) {
-      const auth = req.headers.get("authorization") || "";
-      const header = req.headers.get("x-inbound-secret") || "";
-      if (auth !== `Bearer ${secret}` && header !== secret) {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-      }
+    if (!secret) {
+      // Refuse rather than fail-open. Prior code silently accepted every
+      // POST in this state; that's how the spoofed-reply vector existed.
+      console.error("[inbound] INBOUND_SECRET not configured — refusing");
+      return NextResponse.json(
+        { error: "Inbound webhook not configured (INBOUND_SECRET unset)" },
+        { status: 503 },
+      );
     }
-    const body = await req.json();
+
+    const rawBody = await req.text();
+    const svixHeaders: Record<string, string> = {
+      "svix-id": req.headers.get("svix-id") || req.headers.get("webhook-id") || "",
+      "svix-timestamp": req.headers.get("svix-timestamp") || req.headers.get("webhook-timestamp") || "",
+      "svix-signature": req.headers.get("svix-signature") || req.headers.get("webhook-signature") || "",
+    };
+    try {
+      new Webhook(secret).verify(rawBody, svixHeaders);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "verification failed";
+      console.error("[inbound] signature rejected:", msg);
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const body = JSON.parse(rawBody);
     const { from, to, subject, html, text, message_id, in_reply_to, references, headers } = body;
 
     let threadId: string | null = null;

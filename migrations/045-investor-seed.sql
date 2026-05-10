@@ -1,6 +1,24 @@
 -- migrations/045-investor-seed.sql
--- Seed two more investor agents to compete with the Founder.
--- Each investor has a stable id so attribution is reproducible across envs.
+--
+-- 1. SCHEMA CHANGE
+-- No schema changes. This is a data-only seed migration: inserts two
+-- additional investor_agents rows (Atlas Capital, Bramble Holdings) and
+-- their initial investor_capital_ledger pool_topups so they can compete
+-- with the Founder investor seeded in migration 040.
+--
+-- 2. WHO WRITES
+-- This migration only. Subsequent updates to these rows happen via
+-- api/investor/* admin endpoints.
+--
+-- 3. WHO READS
+-- - api/investor/tick (weekly capital deployment loop)
+-- - /congress/timeline (investor lane on the timeline)
+-- - investor synthesizer prompt context (default_conviction, style)
+--
+-- 4. BACKFILL FOR OLD ROWS
+-- (d) not applicable — no pre-existing rows are touched. Both inserts
+-- are guarded by ON CONFLICT (id) DO NOTHING / NOT EXISTS so re-runs
+-- are no-ops on prod where the rows already exist.
 
 insert into investor_agents (id, name, style, system_prompt, default_conviction)
 values (

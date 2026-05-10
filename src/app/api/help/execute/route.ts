@@ -329,6 +329,19 @@ async function doTrackPrediction(
   const targetDeadline = new Date(Date.now() + horizonDays * 86_400_000);
 
   const { recordPrediction } = await import("@/lib/predictions");
+  // Derive an idempotency key from the request shape so a tool re-run
+  // (LLM retried the call, user double-clicked the bubble, etc.)
+  // collapses to one helper_predictions row. Migration 072 enforces
+  // uniqueness; this just produces the key.
+  const { createHash } = await import("node:crypto");
+  const seed = [
+    session.repId,
+    claim.trim(),
+    targetEvent,
+    typeof params.targetLeadId === "string" ? params.targetLeadId : "",
+    typeof params.targetRecipient === "string" ? params.targetRecipient : "",
+  ].join("");
+  const requestId = createHash("sha256").update(seed).digest("hex").slice(0, 32);
   const row = await recordPrediction({
     repId: session.repId,
     claim,
@@ -336,6 +349,7 @@ async function doTrackPrediction(
     targetLeadId: typeof params.targetLeadId === "string" ? params.targetLeadId : null,
     targetRecipient: typeof params.targetRecipient === "string" ? params.targetRecipient : null,
     targetDeadline,
+    requestId,
   });
   if (!row) return { ok: false, detail: { error: "insert failed — check server logs" } };
   return {

@@ -437,7 +437,32 @@ export function HelpBot() {
     };
   }, [open]);
 
-  // Don't show on login page (no auth, would float over the form ugly)
+  // Brand-typo alert — surfaces as a one-shot "alert" mood on the
+  // robot + a short toast. Listens for 'brand-typo' dispatched by
+  // ReviewPane's brand-lint watcher. Auto-clears after 3s so the
+  // robot returns to its prior mood.
+  // NOTE: this useState + its useEffect MUST sit above the early
+  // `return null` below. React requires a stable hook order across
+  // renders; an upstream cookie deletion that flips `pathname` to
+  // `/login` mid-session previously called these hooks on render N
+  // and skipped them on render N+1 → "Rendered fewer hooks than
+  // expected" crash logged at layout.tsx:46 in the 2026-05-09 smoke.
+  const [brandAlert, setBrandAlert] = useState<{ found: string; expected: string; note?: string } | null>(null);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onTypo = (e: Event) => {
+      const hit = (e as CustomEvent).detail as { found: string; expected: string; note?: string } | undefined;
+      if (!hit) return;
+      setBrandAlert({ found: hit.found, expected: hit.expected, note: hit.note });
+      setTimeout(() => setBrandAlert(null), 3500);
+    };
+    window.addEventListener("brand-typo", onTypo);
+    return () => window.removeEventListener("brand-typo", onTypo);
+  }, []);
+
+  // Don't show on login page (no auth, would float over the form ugly).
+  // Every hook used by this component must already have been called by
+  // this point — see the comment above the brandAlert useState.
   if (pathname.startsWith("/login")) return null;
 
   function clampPos(p: Pos): Pos {
@@ -481,23 +506,6 @@ export function HelpBot() {
       setOpen(true);
     }
   }
-
-  // Brand-typo alert — surfaces as a one-shot "alert" mood on the
-  // robot + a short toast. Listens for 'brand-typo' dispatched by
-  // ReviewPane's brand-lint watcher. Auto-clears after 3s so the
-  // robot returns to its prior mood.
-  const [brandAlert, setBrandAlert] = useState<{ found: string; expected: string; note?: string } | null>(null);
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const onTypo = (e: Event) => {
-      const hit = (e as CustomEvent).detail as { found: string; expected: string; note?: string } | undefined;
-      if (!hit) return;
-      setBrandAlert({ found: hit.found, expected: hit.expected, note: hit.note });
-      setTimeout(() => setBrandAlert(null), 3500);
-    };
-    window.addEventListener("brand-typo", onTypo);
-    return () => window.removeEventListener("brand-typo", onTypo);
-  }, []);
 
   // Robot mood drives the CSS animation. alert > peek > wave > idle.
   // Alert when a brand-typo was just dispatched (wave-and-warn).

@@ -3,6 +3,7 @@ import { supabase } from "@/lib/db";
 import { requireSession } from "@/lib/auth-helpers";
 import { llmChat } from "@/lib/llm-proxy";
 import { DAILY_OVERRIDE_CAP, countOverridesTodayByRep, beijingDayStartUtc } from "@/lib/override-quota";
+import { CONTACTED_LEAD_STATUSES } from "@/lib/status";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -51,10 +52,14 @@ export async function GET(req: NextRequest) {
   // Gather today/yesterday stats.
   const { data: rep } = await supabase.from("sales_reps").select("sender_email").eq("id", repId).maybeSingle();
 
+  // "sent today / yesterday" = leads contacted in that window. .eq('sent')
+  // alone drops anything that already flipped to replied / wechat_added,
+  // so a successful follow-up day under-reports. Use the canonical set.
+  const contacted = [...CONTACTED_LEAD_STATUSES];
   const [readyQ, sentTodayQ, sentYesterdayQ] = await Promise.all([
     supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).eq("status", "ready"),
-    supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).eq("status", "sent").gte("sent_at", todayStartIso),
-    supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).eq("status", "sent").gte("sent_at", yesterdayStartIso).lt("sent_at", todayStartIso),
+    supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).in("status", contacted).gte("sent_at", todayStartIso),
+    supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).in("status", contacted).gte("sent_at", yesterdayStartIso).lt("sent_at", todayStartIso),
   ]);
   const readyCount = readyQ.count ?? 0;
   const sentToday = sentTodayQ.count ?? 0;

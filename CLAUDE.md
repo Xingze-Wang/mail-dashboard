@@ -45,7 +45,7 @@ node scripts/test-dedup-gate.mjs                  # Replay every contact-history
 
 Numbered SQL files in `migrations/NNN-*.sql`, applied via matching `scripts/apply-NNN.mjs` runners (each runner POSTs the SQL to Supabase via service key). After adding migration `038-foo.sql`, write `scripts/apply-038.mjs` mirroring the prior runners. The migration file's header comment block (1. SCHEMA CHANGE / 2. WHO WRITES / 3. WHO READS / 4. BACKFILL) is mandatory — see `migrations/MIGRATION_TEMPLATE.md`.
 
-Order matters. Migration 037 is the latest; do not skip numbers, do not edit applied migrations.
+Order matters. Migration **069** is the latest; do not skip numbers, do not edit applied migrations.
 
 ## Architecture, the parts a fresh session won't infer
 

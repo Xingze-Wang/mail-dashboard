@@ -30,11 +30,11 @@ export async function POST(req: NextRequest) {
     if (remaining.length > 0) {
       // Promote first remaining to active.
       res.cookies.set(AUTH_COOKIE, remaining[0].token, {
-        httpOnly: true, secure: true, sameSite: "lax",
+        httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax",
         maxAge: AUTH_COOKIE_MAX_AGE, path: "/",
       });
       res.cookies.set(AUTH_POOL_COOKIE, serializePool(remaining.slice(1).map((r) => r.token)), {
-        httpOnly: true, secure: true, sameSite: "lax",
+        httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax",
         maxAge: AUTH_COOKIE_MAX_AGE, path: "/",
       });
     } else {
@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
   } else {
     // Active session untouched; just update the pool.
     res.cookies.set(AUTH_POOL_COOKIE, serializePool(remaining.map((r) => r.token)), {
-      httpOnly: true, secure: true, sameSite: "lax",
+      httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax",
       maxAge: AUTH_COOKIE_MAX_AGE, path: "/",
     });
   }

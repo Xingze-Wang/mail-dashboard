@@ -401,6 +401,21 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Mission progress — bump once with the full batch count. Same
+    // attribution rule as single-send: the actor (this session)
+    // gets credit, not the lead owner. Fire-and-forget; mission
+    // bookkeeping must never block the response.
+    if (sent > 0) {
+      try {
+        const { bumpMissionProgress } = await import("@/lib/missions");
+        bumpMissionProgress(session.repId, "send", sent).catch((e) => {
+          console.error("bumpMissionProgress failed (non-blocking)", e);
+        });
+      } catch (e) {
+        console.error("bumpMissionProgress sync throw (non-blocking)", e);
+      }
+    }
+
     return NextResponse.json({ sent, skipped, errors, blocks, overridesUsed: overridesUsedThisBatch });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Batch send failed";

@@ -106,15 +106,103 @@ export async function GET(req: NextRequest) {
   // ─── Layer 1: Search pipeline_leads (existing leads we've processed) ────
 
   if (email) {
+    // Two cases:
+    //  - full address: "alice@tsinghua.edu.cn" → exact (ilike, lower)
+    //  - domain only:  "tsinghua.edu.cn" or "@tsinghua.edu.cn" → wildcard
+    //    so anyone @ that institution lights up. The page UX advertises
+    //    "name OR email" and the smoke flagged that bare-domain queries
+    //    silently returned no matches (#27, 2026-05-09).
+    const lower = email.toLowerCase().replace(/^@/, "");
+    const isDomainOnly = !lower.includes("@");
+    const pattern = isDomainOnly ? `%@${lower}%` : lower;
     const { data } = await supabase
       .from("pipeline_leads")
       .select("*")
-      .ilike("author_email", email.toLowerCase())
+      .ilike("author_email", pattern)
       .order("created_at", { ascending: false })
-      .limit(10);
+      .limit(20);
 
     for (const l of data ?? []) {
       results.set(l.arxiv_id, buildFromLead(l, ["email"], email));
+    }
+
+    // For domain-only searches, also surface co-authors via paper_authors
+    // (the same fallback the name path takes). Without this, an inbound
+    // WeChat from `bob@tsinghua.edu.cn` finds rows we directly emailed
+    // but misses the 一作 we addressed at a different domain.
+    if (isDomainOnly) {
+      const { data: paByEmail } = await supabase
+        .from("paper_authors")
+        .select("arxiv_id, author_name, first_name, email, position")
+        .ilike("email", `%@${lower}%`)
+        .limit(20);
+
+      const paperAuthorHits = new Map<string, { authorName: string | null; firstName: string | null; position: number }>();
+      for (const pa of paByEmail ?? []) {
+        if (!results.has(pa.arxiv_id) && !paperAuthorHits.has(pa.arxiv_id)) {
+          paperAuthorHits.set(pa.arxiv_id, {
+            authorName: pa.author_name,
+            firstName: pa.first_name,
+            position: pa.position ?? 999,
+          });
+        }
+      }
+      if (paperAuthorHits.size > 0) {
+        const arxivIds = Array.from(paperAuthorHits.keys());
+        const [{ data: papers }, { data: leads }] = await Promise.all([
+          supabase.from("papers").select("*").in("arxiv_id", arxivIds),
+          supabase.from("pipeline_leads").select("*").in("arxiv_id", arxivIds),
+        ]);
+        const leadsByArxiv = new Map<string, Record<string, unknown>>();
+        for (const l of leads ?? []) leadsByArxiv.set(l.arxiv_id as string, l);
+        for (const p of papers ?? []) {
+          const hit = paperAuthorHits.get(p.arxiv_id as string);
+          const lead = leadsByArxiv.get(p.arxiv_id as string);
+          const personLabel = (hit?.authorName as string) || `someone at ${lower}`;
+          results.set(p.arxiv_id as string, {
+            id: (lead?.id as string) || (p.arxiv_id as string),
+            personName: personLabel,
+            firstName: (hit?.firstName as string) || null,
+            paper: {
+              title: p.title as string,
+              arxivId: p.arxiv_id as string,
+              pdfUrl: (p.pdf_url as string) || null,
+              abstract: (p.abstract as string) || null,
+              authors: (p.authors as string) || null,
+              publishedAt: (p.published_at as string) || null,
+            },
+            research: {
+              computeLevel: ((lead?.compute_level ?? p.compute_level) as string) || null,
+              computeConfidence: ((lead?.compute_confidence ?? p.compute_confidence) as number) || null,
+              computeReason: ((lead?.compute_reason ?? p.compute_reason) as string) || null,
+              directions: parseDirections(
+                ((lead?.matched_directions ?? p.matched_directions) as string) || null,
+              ),
+              schoolName: (lead?.school_name as string) || null,
+              schoolTier: (lead?.school_tier as number) || null,
+            },
+            outreach: lead
+              ? {
+                  emailedTo: lead.author_email as string,
+                  emailedName: lead.author_name as string | null,
+                  subject: lead.draft_subject as string | null,
+                  status: lead.status as string,
+                  sentAt: lead.sent_at as string | null,
+                }
+              : { emailedTo: null, emailedName: null, subject: null, status: null, sentAt: null },
+            authorMismatch: lead
+              ? {
+                  note: `We emailed ${lead.author_name || lead.author_email}; ${personLabel} is a co-author at @${lower}.`,
+                  emailedPerson: (lead.author_name || lead.author_email) as string,
+                  searchedPerson: personLabel,
+                }
+              : null,
+            matchTypes: ["paper_author_email"],
+            createdAt: (p.created_at as string) || new Date().toISOString(),
+            source: "paper_author",
+          });
+        }
+      }
     }
   }
 

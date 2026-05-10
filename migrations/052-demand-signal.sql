@@ -14,6 +14,11 @@
 -- - demand_lead_scores: api/scorer/demand/recompute (per-lead scorer)
 --
 -- 3. WHO READS   /scorer/demand UI
+--
+-- 4. BACKFILL FOR OLD ROWS
+-- (d) not applicable — both tables are new. demand_lead_scores is
+-- recomputed on demand by api/scorer/demand/recompute against the
+-- current definition; there is no per-row history to migrate.
 
 create table if not exists demand_signal_definitions (
   id uuid primary key default gen_random_uuid(),

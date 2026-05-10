@@ -12,10 +12,17 @@ interface LogEvent {
   subject?: string;
 }
 
+type RoleGate = "loading" | "allowed" | "denied";
+
 export default function LogsPage() {
   const [events, setEvents] = useState<LogEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
+  // Admin-only page: /api/metrics surfaces cross-rep recipient/subject,
+  // which sales reps shouldn't see (their own funnel comes from per-rep
+  // routes). Gate at mount via /api/auth/me; the API endpoint also adds
+  // its own admin check, so this is defense-in-depth, not the only line.
+  const [gate, setGate] = useState<RoleGate>("loading");
 
   const fetchLogs = () => {
     setLoading(true);
@@ -27,8 +34,41 @@ export default function LogsPage() {
   };
 
   useEffect(() => {
-    fetchLogs();
+    let cancelled = false;
+    fetch("/api/auth/me", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => {
+        if (cancelled) return;
+        if (d?.authenticated && d?.role === "admin") {
+          setGate("allowed");
+          fetchLogs();
+        } else {
+          setGate("denied");
+        }
+      })
+      .catch(() => { if (!cancelled) setGate("denied"); });
+    return () => { cancelled = true; };
   }, []);
+
+  if (gate === "loading") {
+    return (
+      <div style={{ padding: 40, fontSize: 13, color: "var(--text-tertiary)" }}>
+        Checking permissions…
+      </div>
+    );
+  }
+  if (gate === "denied") {
+    return (
+      <div style={{ padding: 40, maxWidth: 480 }}>
+        <h1 className="page-title" style={{ marginBottom: 8 }}>Logs</h1>
+        <p style={{ fontSize: 13, color: "var(--text-secondary)" }}>
+          Admin only — webhook event logs include cross-rep recipient and
+          subject lines. Ask an admin to share specific events if you need
+          them.
+        </p>
+      </div>
+    );
+  }
 
   const eventTypes = ["all", "email.sent", "email.delivered", "email.opened", "email.clicked", "email.bounced", "email.complained"];
 

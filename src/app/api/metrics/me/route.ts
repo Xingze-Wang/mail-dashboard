@@ -24,12 +24,13 @@ export async function GET(req: NextRequest) {
   const repId = session.repId;
 
   // `sent` = any CONTACTED_LEAD_STATUSES row assigned to this rep.
-  // Includes 'sent', 'replied', 'wechat_added' — a reply or wechat-add
-  // is a later phase of the same send, not a displacement. Previously
-  // reps saw their sent count drop when replies came in and wechat_added
-  // leads disappeared entirely from the "sent" tile. Now aligned with
-  // every other place in the app that answers "has this rep contacted
-  // this researcher?" via @/lib/status.ts.
+  // Includes 'sent' and 'replied' — a reply is a later phase of the
+  // same send, not a displacement. Previously reps saw their sent count
+  // drop when replies came in. Now aligned with every other place in
+  // the app that answers "has this rep contacted this researcher?"
+  // via @/lib/status.ts. (WeChat conversions live entirely in
+  // brief_lookups; see status.ts header note on the removed
+  // 'wechat_added' value.)
   const [
     { count: assigned },
     { count: ready },

@@ -94,18 +94,60 @@ function ClickHistory({ emailId }: { emailId: string }) {
   const [showLinks, setShowLinks] = useState(false);
 
   useEffect(() => {
-    let cancelled = false;
+    // Drop the stale state synchronously so the spinner always renders
+    // for the new emailId (otherwise switching between two emails could
+    // briefly show the OLD email's events while the new fetch is in
+    // flight, AND — more relevant to the 2026-05-09 smoke — a 200 body
+    // with events=[] used to leave loading=true forever in StrictMode
+    // because `cancelled` from the first effect blocked the only
+    // setLoading(false) call. Now we set loading directly here and use
+    // an AbortController for proper cleanup, no closure trickery.
     setLoading(true);
     setFetchError(null);
-    fetch(`/api/emails/${emailId}/clicks`)
-      .then((r) => {
-        if (!r.ok) { setFetchError(`HTTP ${r.status}`); return null; }
-        return r.json();
+    setData(null);
+
+    const ac = new AbortController();
+    let aborted = false;
+    fetch(`/api/emails/${emailId}/clicks`, { signal: ac.signal })
+      .then(async (r) => {
+        if (!r.ok) {
+          setFetchError(`HTTP ${r.status}`);
+          return null;
+        }
+        try {
+          return await r.json();
+        } catch {
+          setFetchError("Invalid JSON response");
+          return null;
+        }
       })
-      .then((d) => { if (!cancelled) setData(d); })
-      .catch((e) => { if (!cancelled) setFetchError(String(e)); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+      .then((d) => {
+        if (aborted) return;
+        // Always normalize so the render path can trust shape.
+        if (d && typeof d === "object") {
+          setData({
+            eventCount: typeof d.eventCount === "number" ? d.eventCount : (Array.isArray(d.events) ? d.events.length : 0),
+            clickCount: typeof d.clickCount === "number" ? d.clickCount : 0,
+            distinctLinkCount: typeof d.distinctLinkCount === "number" ? d.distinctLinkCount : 0,
+            events: Array.isArray(d.events) ? d.events : [],
+          });
+        }
+      })
+      .catch((e) => {
+        if (aborted) return;
+        if ((e as Error)?.name === "AbortError") return;
+        setFetchError(String(e));
+      })
+      .finally(() => {
+        // Setting loading=false unconditionally — the AbortController
+        // already prevented the stale fetch from racing, and leaving
+        // loading=true on cleanup was the original "spinner forever" bug.
+        if (!aborted) setLoading(false);
+      });
+    return () => {
+      aborted = true;
+      ac.abort();
+    };
   }, [emailId]);
 
   if (loading) return (
@@ -585,13 +627,22 @@ export default function EmailsPage() {
           }));
           setEmails(normalized);
         } else {
-          setEmails(data.emails);
+          // Defensive: API may return {error} on 4xx/5xx; coerce missing
+          // emails array to [] so the list pane settles to "no rows" UI
+          // instead of staying skeleton (one of the 2026-05-09 smoke
+          // findings was an 8s skeleton that resolved to no data).
+          setEmails(Array.isArray(data?.emails) ? data.emails : []);
         }
         setTotal(data.total ?? data.emails?.length ?? 0);
         setTruncated(!!data.truncated);
         setScannedTotal(typeof data.scannedTotal === "number" ? data.scannedTotal : null);
       })
-      .catch(console.error)
+      .catch((err) => {
+        console.error(err);
+        // Fail loudly in the UI instead of leaving stale data + spinner.
+        setEmails([]);
+        setTotal(0);
+      })
       .finally(() => setLoading(false));
   };
 
@@ -703,7 +754,11 @@ export default function EmailsPage() {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 28 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 14 }}>
           <h1 className="page-title">Emails</h1>
-          <span className="lead-count">{total} total</span>
+          {/* Render "—" while loading rather than a hard "0 total" — the
+              smoke flagged the contradiction between "0 total" in the
+              header and ~50 rows landing 8s later. The em-dash signals
+              "we don't know yet," not "there are zero." */}
+          <span className="lead-count">{loading ? "— total" : `${total} total`}</span>
         </div>
         <div style={{ display: "flex", gap: 10 }}>
           <button onClick={fetchEmails} className="btn">

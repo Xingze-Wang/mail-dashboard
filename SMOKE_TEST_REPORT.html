@@ -1,0 +1,472 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mail App — Smoke Test Report (2026-05-09)</title>
+<style>
+  :root {
+    --bg: #fafaf7;
+    --card: #fff;
+    --ink: #1a1a1a;
+    --muted: #6b6b6b;
+    --line: #e5e5e0;
+    --p0: #c0392b;
+    --p1: #e67e22;
+    --p2: #d4a017;
+    --p3: #7c8487;
+    --code-bg: #f3f1ec;
+    --accent: #1d4e89;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Helvetica Neue", "Segoe UI", system-ui, sans-serif;
+    padding-bottom: 80px;
+  }
+  header {
+    background: #fff;
+    border-bottom: 1px solid var(--line);
+    padding: 22px 32px 18px;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  h1 { margin: 0 0 4px; font-size: 22px; letter-spacing: -0.01em; }
+  header .meta { color: var(--muted); font-size: 13px; margin-bottom: 14px; }
+  .filterbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .filterbar label { font-size: 13px; color: var(--muted); margin-right: 4px; }
+  .chip {
+    background: #f3f1ec;
+    border: 1px solid var(--line);
+    color: var(--ink);
+    padding: 5px 12px;
+    border-radius: 999px;
+    font-size: 13px;
+    cursor: pointer;
+    user-select: none;
+    transition: all 0.12s ease;
+    font-family: inherit;
+  }
+  .chip:hover { border-color: var(--ink); }
+  .chip.active { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .chip[data-sev="P0"].active { background: var(--p0); border-color: var(--p0); }
+  .chip[data-sev="P1"].active { background: var(--p1); border-color: var(--p1); }
+  .chip[data-sev="P2"].active { background: var(--p2); border-color: var(--p2); }
+  .chip[data-sev="P3"].active { background: var(--p3); border-color: var(--p3); }
+  .chip .count { opacity: 0.7; margin-left: 5px; font-size: 11px; }
+  .search {
+    flex: 1;
+    min-width: 200px;
+    padding: 6px 12px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    font: inherit;
+    background: #fff;
+  }
+  main { padding: 24px 32px; max-width: 1100px; margin: 0 auto; }
+  .summary {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 20px 24px;
+    margin-bottom: 24px;
+  }
+  .summary h2 { margin: 0 0 10px; font-size: 16px; }
+  .summary p { margin: 6px 0; color: #2a2a2a; }
+  .summary ul { margin: 8px 0; padding-left: 20px; }
+  .summary li { margin: 3px 0; }
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-top: 14px;
+  }
+  .stat {
+    background: var(--code-bg);
+    padding: 10px 14px;
+    border-radius: 8px;
+    text-align: center;
+  }
+  .stat .n { font-size: 22px; font-weight: 600; }
+  .stat .lbl { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin-top: 2px; }
+  .stat[data-sev="P0"] { border-left: 3px solid var(--p0); }
+  .stat[data-sev="P1"] { border-left: 3px solid var(--p1); }
+  .stat[data-sev="P2"] { border-left: 3px solid var(--p2); }
+  .stat[data-sev="P3"] { border-left: 3px solid var(--p3); }
+
+  .finding {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-left-width: 4px;
+    border-radius: 8px;
+    padding: 18px 22px;
+    margin-bottom: 14px;
+    transition: opacity 0.12s ease;
+  }
+  .finding[data-sev="P0"] { border-left-color: var(--p0); }
+  .finding[data-sev="P1"] { border-left-color: var(--p1); }
+  .finding[data-sev="P2"] { border-left-color: var(--p2); }
+  .finding[data-sev="P3"] { border-left-color: var(--p3); }
+  .finding.hidden { display: none; }
+  .f-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+  .f-num { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 14px; }
+  .f-sev {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #fff;
+    letter-spacing: 0.04em;
+  }
+  .f-sev[data-sev="P0"] { background: var(--p0); }
+  .f-sev[data-sev="P1"] { background: var(--p1); }
+  .f-sev[data-sev="P2"] { background: var(--p2); }
+  .f-sev[data-sev="P3"] { background: var(--p3); }
+  .f-surface {
+    font-size: 11px;
+    color: var(--muted);
+    background: var(--code-bg);
+    padding: 2px 7px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .f-title { font-size: 16px; font-weight: 600; flex: 1; min-width: 250px; }
+  .f-row { display: grid; grid-template-columns: 100px 1fr; gap: 10px 16px; margin: 6px 0; font-size: 14px; }
+  .f-row .lbl { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; padding-top: 2px; }
+  .f-row .val { color: #2a2a2a; }
+  .f-row .val p { margin: 4px 0; }
+  code, .file {
+    font: 13px/1.4 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    background: var(--code-bg);
+    padding: 1px 6px;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: background 0.12s;
+  }
+  code:hover, .file:hover { background: #e8e6e0; }
+  code.copied, .file.copied { background: #b6e3b8; }
+  pre {
+    background: var(--code-bg);
+    padding: 10px 14px;
+    border-radius: 6px;
+    overflow-x: auto;
+    font: 13px/1.4 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    margin: 6px 0;
+    cursor: pointer;
+    white-space: pre-wrap;
+  }
+  .empty {
+    text-align: center;
+    color: var(--muted);
+    padding: 60px 20px;
+    font-style: italic;
+  }
+  .empty.hidden { display: none; }
+  footer {
+    text-align: center;
+    color: var(--muted);
+    font-size: 12px;
+    padding: 30px 20px 0;
+  }
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    background: var(--ink);
+    color: #fff;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 13px;
+    opacity: 0;
+    pointer-events: none;
+    transition: all 0.2s ease;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  @media (max-width: 700px) {
+    main { padding: 16px; }
+    header { padding: 16px; }
+    .stats { grid-template-columns: repeat(2, 1fr); }
+    .f-row { grid-template-columns: 1fr; gap: 2px; }
+    .f-row .lbl { padding-top: 8px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Mail App — Smoke Test Report</h1>
+  <div class="meta" id="header-meta"></div>
+  <div class="filterbar">
+    <label>Filter:</label>
+    <button class="chip active" data-sev="all" type="button">All <span class="count" id="count-all"></span></button>
+    <button class="chip" data-sev="P0" type="button">P0 <span class="count" id="count-P0"></span></button>
+    <button class="chip" data-sev="P1" type="button">P1 <span class="count" id="count-P1"></span></button>
+    <button class="chip" data-sev="P2" type="button">P2 <span class="count" id="count-P2"></span></button>
+    <button class="chip" data-sev="P3" type="button">P3 <span class="count" id="count-P3"></span></button>
+    <input class="search" id="q" type="search" placeholder="Search title, file, surface…">
+  </div>
+</header>
+
+<main>
+  <section class="summary" id="summary"></section>
+
+  <div id="findings"></div>
+  <div id="empty" class="empty hidden">No findings match. Reset filters above.</div>
+
+  <footer id="footer-text"></footer>
+</main>
+
+<div class="toast" id="toast">Copied</div>
+
+<script>
+"use strict";
+
+// All data lives here as plain JS objects; no HTML, no template literals reach innerHTML.
+const META = {
+  target: "~/Desktop/mail",
+  product: "Qiji Pipeline",
+  host: "localhost:3001",
+  agentCount: 16,
+  waveCount: 3,
+  modes: "static + dry-run + Playwright + API fuzz + live data integrity",
+  date: "2026-05-09",
+  inventory: "161 API routes · 35 pages · 86 lib modules · 66 SQL migrations · 10 Vercel crons",
+  baselines: "tsc, eslint, lint:integrity, lint:fetch all exit 0"
+};
+
+const SUMMARY_BULLETS = [
+  "One P0 production blocker — src/middleware.ts:57 crashes on non-ASCII rep names. 3 of 5 reps in the database cannot use any authenticated API right now, including 2 of 3 sales reps.",
+  "Family of analytics under-counts documented in DATA_INTEGRITY_PLAN.md is partially unfixed — 5 sites still single-state-equality on pipeline_leads.status, plus db-funnel reads lossy emails.status instead of joining through webhook_events.",
+  "/api/auth/me returns JWT-stale role; ghost-rep repId=999 returns {authenticated:true, role:\"admin\"}.",
+  "POST /api/scorer has no auth gate — model-registry poisoning vector with promote-latest.",
+  "webhook_events has no svix-id dedup — Resend retries double-count the \"canonical\" event log."
+];
+
+const findings = [
+  {n:1,sev:"P0",surface:"auth",title:"Middleware crashes on non-ASCII rep names",file:"src/middleware.ts:57",impact:"3 of 5 reps in DB right now (杜雨洁 id=2 sales, 曹鸿宇泽 id=3 sales, 王幸泽 id=5 admin) cannot use any authenticated API. They can log in (/api/auth/me is on the public-prefix bypass) but every authenticated request after that returns HTTP 500 with the dev HTML error page. 2 of 3 sales reps are silently locked out of /pipeline, /emails, everything.",repro:"curl -H 'Cookie: qiji_session=<jwt-with-chinese-name>' http://localhost:3001/api/pipeline?limit=3 → HTTP 500 with TypeError: Cannot convert argument to a ByteString because the character at index 0 has a value of 26460 which is greater than 255.",fix:"reqHeaders.set(\"x-rep-name\", encodeURIComponent(session.repName)) — one line."},
+  {n:2,sev:"P0",surface:"scorer",title:"POST /api/scorer has no auth gate",file:"src/app/api/scorer/route.ts:52",impact:"Anyone reachable can insert into scorer_runs. Combined with /api/scorer/promote-latest (bearer-only, picks newest by trained_at), a poisoned run with future timestamp + the bearer token = live model swap.",repro:"curl -X POST http://localhost:3001/api/scorer -H 'content-type: application/json' -d '{...}' succeeds without auth.",fix:"Add requireAdmin(req) to the POST handler."},
+  {n:3,sev:"P0",surface:"inbound",title:"/api/inbound fails open if INBOUND_SECRET unset",file:"src/app/api/inbound/route.ts:25-32",impact:"Static bearer compare, not HMAC. If env var is missing in any env, anyone can POST and create fake inbound_emails rows + flip pipeline_leads.status='replied'. Middleware also explicitly allowlists POSTs to /api/inbound as public.",repro:"With INBOUND_SECRET unset: POST /api/inbound with any body → 200, row inserted.",fix:"Require Svix HMAC like /api/webhook does, with timing-safe compare."},
+
+  {n:4,sev:"P1",surface:"analytics",title:"Conversion analytics single-state under-count (3 sites)",file:"src/app/api/metrics/route.ts:59",impact:".eq(\"status\",\"sent\") on pipeline_leads loses leads progressed to replied/wechat_added. Live: 312 vs 316 actual sent (4 lost today; grows linearly with replies). Same pattern in src/app/api/help/opening/route.ts:56,57 (daily opener) and src/app/api/pipeline/analytics/route.ts:168,192,404.",repro:"GET /api/metrics shows 312 'sent', live SQL count of pipeline_leads.sent_at IS NOT NULL = 316.",fix:"Use CONTACTED_LEAD_STATUSES set, or join through webhook_events per CLAUDE.md."},
+  {n:5,sev:"P1",surface:"analytics",title:"db-funnel reads emails.status (latest-event-wins)",file:"src/lib/db-funnel.ts:114-116",impact:"totalClicked / totalBounced read emails.status directly. CLAUDE.md says don't do this. Click-then-complain emails silently drop from click count. Only src/lib/diagnose-metric.ts follows the canonical email_history view.",repro:"Any email transitioning past 'clicked' (e.g. to 'complained') vanishes from click totals.",fix:"Join through email_history view or webhook_events for cumulative event counts."},
+  {n:6,sev:"P1",surface:"analytics",title:"pipeline_leads.status='wechat_added' is read-declared, write-orphaned",file:"src/lib/status.ts:97,125",impact:"Declared in TERMINAL_LEAD_STATUSES and CONTACTED_LEAD_STATUSES. Zero writers in src/. Live: 0 of 1443 leads. The moment any UI tile filters by it → silent 0% conversion forever. brief/wechat/route.ts has a comment explicitly refusing to set it.",repro:"grep -rn 'status.*wechat_added' src/ shows readers only.",fix:"Either remove from CONTACTED_LEAD_STATUSES (and accept replied is terminal), or add a writer in /api/brief/wechat where the conversion is recorded."},
+  {n:7,sev:"P1",surface:"auth",title:"/api/auth/me returns stale JWT role + ghost-rep variant",file:"src/app/api/auth/me/route.ts:5,21",impact:"Uses bare verifySession(...), never re-reads sales_reps.role from DB. A demoted admin keeps seeing role:\"admin\" in the response for up to 30 days. UI elements gated on me.role show admin chrome to non-admins. Fuzz agent confirmed ghost-rep variant: JWT with repId=999 (rep doesn't exist) returns {authenticated:true, role:\"admin\"}. Real APIs 401 it; /api/auth/me lies.",repro:"Mint a JWT with repId=999, role=admin → /api/auth/me 200; /api/pipeline 401.",fix:"Replace verifySession(...) with requireSession(req) in this route."},
+  {n:8,sev:"P1",surface:"webhook",title:"webhook_events has no svix-id dedup",file:"src/app/api/webhook/route.ts:201,253",impact:"INSERT on every event with no existence check. No UNIQUE(svix_id) constraint. svix-id isn't even stored. Resend retries → duplicate rows. CLAUDE.md says webhook_events is 'append-only and authoritative' — duplicates break that. attributeEventToContract (line 262-299) double-counts on retry.",repro:"POST same Svix-signed event twice → 2 rows in webhook_events.",fix:"Store svix-id, add unique index, ON CONFLICT DO NOTHING."},
+  {n:9,sev:"P1",surface:"discovery",title:"person-resolver is racey + non-atomic",file:"src/lib/person-resolver.ts",impact:"Concurrent first-touch creates duplicate persons (no UNIQUE on identifier columns — only GIN indexes). Multi-row merge spans 5+ statements with no transaction. Confidence parameter doesn't exist; the <0.85 → person_enrichment_candidates rule from migration 035 is honor-system-only.",repro:"Two concurrent POST /api/import calls with same email → 2 persons rows.",fix:"Wrap in PL/pgSQL RPC with row-level lock, or add UNIQUE constraint via partial index. Add explicit confidence param to resolvePerson()."},
+  {n:10,sev:"P1",surface:"pipeline",title:"/api/pipeline/batch-send skips checkBlocked",file:"src/app/api/pipeline/batch-send/route.ts",impact:"Single-send (src/app/api/pipeline/send/route.ts:159) calls checkBlocked; batch-send does not. A blocklisted recipient with a 'ready' lead created before the block can be batch-sent. checkSendAllowed does NOT consult blocked_contacts (it checks DNC via persons.outreach_status only).",repro:"Block recipient X. If a ready lead for X already existed: batch-send picks it up.",fix:"Mirror single-send: call checkBlocked(rawAuthorEmail) in the per-iteration loop before checkSendAllowed."},
+  {n:11,sev:"P1",surface:"discovery",title:"HF regex still buggy — captures HTML noise",file:"src/lib/repo-extractor.ts:11",impact:"The (?:models?\\/|datasets?\\/|spaces\\/)? group is optional, so it captures huggingface.co/v1/production, papers/2402.12345, api/v1/whoami, etc. as repos. CLAUDE.md flagged this as the reason 'HF link in arxiv abstract has 4% recall'; never fixed.",repro:"extractFromText('huggingface.co/v1/production') → 'v1/production' as captured repo.",fix:"Make the prefix mandatory: require /(models|datasets|spaces)\\/[\\w-]+\\/[\\w.-]+/ or maintain blocklist (api, v1, v2, papers, login, settings, posts, pricing)."},
+  {n:12,sev:"P1",surface:"discovery",title:"Discovery → Pipeline promotion silently drops signals",file:"src/app/api/discovery/[id]/promote/route.ts:168-184",impact:"Discovery row's rich signals JSONB (top_model, downloads, star_count, twitter, languages) is NOT copied to pipeline_leads. Also: person_id linkage is missing (resolvePerson never called) — bypasses dedup gate.",repro:"Promote any discovery_lead → pipeline_leads row has person_id=null and signals dropped.",fix:"Copy signals JSONB column; call resolvePerson({email, hf_user, github_user}) and set person_id."},
+  {n:13,sev:"P1",surface:"discovery",title:"Promote not idempotent — double-click creates two rows",file:"src/app/api/discovery/[id]/promote/route.ts",impact:"409 guard reads promoted_at IS NULL before the update. Fast double-tap, both reads see null, both inserts succeed (different synthetic arxiv_id because Date.now() differs by ms). pipeline_leads.author_email has no UNIQUE constraint.",repro:"Click Promote button twice quickly → 2 pipeline_leads rows for same person.",fix:"Use INSERT ... WHERE NOT EXISTS or move state flip into transaction with the insert."},
+
+  {n:14,sev:"P2",surface:"pipeline",title:"/api/pipeline?limit=1000 takes ~27s",file:"src/app/pipeline/page.tsx:412",impact:"Daily-driver fetch on /pipeline. No streaming/pagination. Page paints skeletons; user opens it dozens of times a day. Real QA observed 27s end-to-end.",repro:"Open /pipeline as senior/admin → time-to-interactive ~27s.",fix:"Server-paginate or virtualize the lead list. Comment at line 411 already acknowledges this."},
+  {n:15,sev:"P2",surface:"pipeline",title:"Send button fires immediately, no confirm/preview",file:"src/app/pipeline/ReviewPane.tsx",impact:"Click Send → POST /api/pipeline/send fires, no modal, no eligibility hint (age gate, override quota, blocklist). On error returns generic 'Unable to fetch data' red banner. Dangerous and uninformative.",repro:"Click Send on a ready lead → instant POST, no confirmation.",fix:"Add confirm modal showing recipient, draft preview, gate status."},
+  {n:16,sev:"P2",surface:"ux",title:"Polling storm from sidebar",file:"src/components/sidebar.tsx",impact:"/api/inbox/unread-count and /api/pipeline/ready-count fire ~2 reqs/sec on every page (>2400 in a 15-min session). No SWR/dedup, no clearInterval on unmount. DB connection budget hit in prod.",repro:"Open any page, observe Network panel: ~120 reqs/min to those endpoints.",fix:"Use SWR with dedupingInterval, or setInterval with 30s cadence + visibility check."},
+  {n:17,sev:"P2",surface:"templates",title:"Voice-template Preview shows 'Preview degraded — fetch failed'",file:"src/app/settings/voice-templates/page.tsx",impact:"/settings/voice-templates Preview modal can't reach the LLM proxy. Body literally says 'production sends would either succeed or surface this same error' — admin can't validate templates before activating.",repro:"Click Preview on global template → modal renders body lines but headline is 'Preview degraded: fetch failed'.",fix:"Surface the underlying fetch error to admin (which API failed, status code) and make 'production sends will fail too' a louder warning."},
+  {n:18,sev:"P2",surface:"auth",title:"/api/auth/debug is public",file:"src/app/api/auth/debug/route.ts:4",impact:"Leaks AUTH_SECRET length (43) and JWT prefix (first 30 chars) to anyone. Reachable via /api/auth middleware allowlist.",repro:"curl http://prod-host/api/auth/debug → JSON with auth_secret_len:43.",fix:"Gate with requireAdmin, or move under /api/admin/debug and remove from public prefix list."},
+  {n:19,sev:"P2",surface:"auth",title:"secure: true cookie on http://localhost",file:"src/app/api/auth/login/route.ts:53",impact:"Sets Secure flag unconditionally. Browsers silently drop the login cookie on HTTP localhost. Browser-driven QA had to inject JWTs manually because login from a real browser fails to persist session.",repro:"Open http://localhost:3001/login in browser, submit creds → 200 with Set-Cookie + Secure, browser ignores; subsequent requests have no cookie.",fix:"secure: process.env.NODE_ENV === 'production' — same pattern in logout, switch, remove."},
+  {n:20,sev:"P2",surface:"pipeline",title:"/api/pipeline accepts invalid limit silently",file:"src/app/api/pipeline/route.ts",impact:"?limit=abc returns 200 + empty leads. ?limit=99999 clamps to 1000 but echoes 99999 in response. Frontend that paginates by limit shows '0 results' for typo'd querystring.",repro:"GET /api/pipeline?limit=abc → 200 {leads:[],limit:null}.",fix:"400 on invalid input; echo effective applied limit (after clamping)."},
+  {n:21,sev:"P2",surface:"helper",title:"/api/help/predictions has no idempotency",file:"src/app/api/help/predictions/route.ts",impact:"10 concurrent identical POSTs created 10 distinct rows. Skews accuracy snapshot. If any client retry path exists, predictions log gets garbage.",repro:"for i in 1..10; do curl -X POST .../api/help/predictions -d '{\"claim\":\"X\",...}' & done — 10 rows in DB.",fix:"Dedup by hash(claim, repId, day) or by client-supplied idempotency key."},
+  {n:22,sev:"P2",surface:"ux",title:"Cookie deletion mid-session crashes React",file:"src/app/layout.tsx:46",impact:"Deleting qiji_session and clicking nav → Runtime Error: Rendered fewer hooks than expected at <HelpBot /> line. User sees error overlay instead of /login redirect.",repro:"DevTools → delete qiji_session cookie → click any nav → React crash.",fix:"Move auth fetches in HelpBot/Sidebar into try/catch with redirect on 401, instead of conditionally rendering hooks."},
+  {n:23,sev:"P2",surface:"admin",title:"/logs reachable by any logged-in rep",file:"src/app/logs/page.tsx:22",impact:"Consumes the global /api/metrics feed. Sales reps see cross-rep recipient/subject across the team. No client-side admin gate. Not in sidebar nav, but URL-discoverable.",repro:"Sign in as sales rep → navigate to /logs → see other reps' send activity.",fix:"Add admin precheck like /scorer or /settings, or scope /api/metrics for non-admins."},
+  {n:24,sev:"P2",surface:"emails",title:"Email click-history spinner never resolves",file:"src/app/emails/page.tsx",impact:"/emails detail view: GET /api/emails/{id}/clicks returns 200 with events, but the bottom panel sits in skeleton state forever. Pure client-side render bug.",repro:"Click any sent email in /emails → 'Loading events...' spinner permanent despite 200 response.",fix:"Check the .clicks page useEffect for stale-closure or missing dep."},
+  {n:25,sev:"P2",surface:"emails",title:"'Sending' tab skeleton ~8s with '0 total'",file:"src/app/emails/page.tsx",impact:"API returns ~50 emails but the list pane stays skeleton 8+ seconds before populating. Receiving tab has empty state — Sending does not. Looks broken.",repro:"Open /emails, default tab is Sending → 8s of skeleton.",fix:"Show empty state at first paint; stream rows in via Suspense or skeleton-with-rough-count."},
+  {n:26,sev:"P2",surface:"pipeline",title:"Ready-count three-way mismatch on /pipeline",file:"src/app/pipeline/page.tsx",impact:"Tile shows 'READY 142/156', sidebar shows '156', filter says 'Ready 142', banner says '123 ready to send'. Three different numbers for the same concept on the same page.",repro:"Open /pipeline, observe top-left tile vs sidebar vs filter button vs banner.",fix:"Single source of truth — pick one count and bind all four UIs to it."},
+  {n:27,sev:"P2",surface:"brief",title:"Brief search advertised 'name OR email' — only name works",file:"src/app/brief/page.tsx",impact:"Placeholder reads 'Enter first name, e.g. Jiahao'. Searching @tsinghua.edu.cn returns 'No matches found' even when matching authors exist.",repro:"GET /api/brief?name=@tsinghua.edu.cn → empty.",fix:"Either implement email search server-side, or update placeholder to 'first name only'."},
+
+  {n:28,sev:"P3",surface:"migrations",title:"Migration 038 is duplicated",file:"migrations/038-bench-sim.sql, migrations/038-jitr-offers.sql",impact:"Both files exist. Only apply-038.mjs exists and points at bench-sim. jitr_offers is read by app code (was hand-applied to prod). Fresh-DB rebuild via runners is broken.",repro:"ls migrations/038-*.sql shows two files; ls scripts/apply-038*.mjs shows one runner.",fix:"Rename to 038a/038b with separate runners, or renumber jitr-offers to 067."},
+  {n:29,sev:"P3",surface:"docs",title:"CLAUDE.md says latest migration = 037; actual = 066",file:"CLAUDE.md:48",impact:"29 migrations of drift. Will mislead the next migration author into picking 038 (already taken).",repro:"grep 'Migration 037' CLAUDE.md vs ls migrations/0*.sql | tail.",fix:"Update CLAUDE.md, or stop hardcoding the latest number."},
+  {n:30,sev:"P3",surface:"migrations",title:"~70% of recent migrations skip BACKFILL section",file:"migrations/MIGRATION_TEMPLATE.md",impact:"Template specifies 4 sections (SCHEMA / WHO WRITES / WHO READS / BACKFILL). Migrations 039,040,042-046,051-058,061-066 skip BACKFILL. Tier 4 backfill bug class is unguarded.",repro:"head migrations/065-*.sql — no BACKFILL section.",fix:"Add a CI check that grep '## 4. BACKFILL' migrations/*.sql passes for every file."},
+  {n:31,sev:"P3",surface:"cron",title:"/api/cron/proactive-signals is orphaned",file:"src/app/api/cron/proactive-signals/route.ts:22",impact:"File comment says 'Scheduled via Vercel cron (see vercel.json)' but the path is NOT in vercel.json. The voice_capture_offer chime-in feature is dark — reps with ≥5 heavy edits in 7 days are silently never offered the voice-capture path.",repro:"grep proactive-signals vercel.json — no match.",fix:"Add { path: '/api/cron/proactive-signals', schedule: '0 3 * * 1-5' } to vercel.json."},
+  {n:32,sev:"P3",surface:"cron",title:"template-proposals + congress-hypothesis crons don't 503 when CRON_SECRET unset",file:"src/app/api/cron/template-proposals/route.ts:64, src/app/api/cron/congress-hypothesis/route.ts:28",impact:"Every other cron has if (!secret) return 503 first. These compare directly: !== `Bearer ${process.env.CRON_SECRET}`. If env unset, comparison is !== 'Bearer undefined' — request with literal Bearer undefined would pass and trigger heavy work.",repro:"Unset CRON_SECRET → curl -H 'Authorization: Bearer undefined' /api/cron/template-proposals → fires.",fix:"Add the same secret-check guard the other crons have."},
+  {n:33,sev:"P3",surface:"lark",title:"Lark webhook silently drops events when Encrypt Key enabled",file:"src/app/api/lark/webhook/route.ts:39-41",impact:"Returns 200 with reason:'encrypt not supported'. No log, no admin alarm. Admin enables Encrypt Key in Lark console → bot goes dark, monitoring still says 200, no incident raised.",repro:"POST /api/lark/webhook with {\"encrypt\":\"...\"} → 200 ok:false silently.",fix:"console.error + 501 status, or implement decrypt."},
+  {n:34,sev:"P3",surface:"auth",title:"/api/auth/switch requires no re-auth",file:"src/app/api/auth/switch/route.ts:13",impact:"Stolen pool cookie = 30-day persistent access to all pooled accounts. No password re-check, no MFA, no audit log. By design per the comment, but worth a 2nd factor for admin-tier accounts.",repro:"Steal pool cookie → POST /api/auth/switch {repId:<any>} → become that account.",fix:"At minimum: log every switch to an audit_log table. Stretch: re-auth for switching to admin role."}
+];
+
+// ===== Helpers — DOM construction with textContent only =====
+
+function el(tag, opts) {
+  const node = document.createElement(tag);
+  if (!opts) return node;
+  if (opts.cls) node.className = opts.cls;
+  if (opts.text != null) node.textContent = opts.text;
+  if (opts.attrs) for (const k in opts.attrs) node.setAttribute(k, opts.attrs[k]);
+  if (opts.data) for (const k in opts.data) node.dataset[k] = opts.data[k];
+  if (opts.children) for (const c of opts.children) if (c) node.appendChild(c);
+  return node;
+}
+
+// ===== Header meta + summary + footer =====
+
+function renderHeaderMeta() {
+  const m = document.getElementById("header-meta");
+  m.textContent = "";
+  // Build via small spans so the file:line / target tokens are clickable
+  m.appendChild(document.createTextNode("Target: "));
+  m.appendChild(el("code", { text: META.target, attrs: { tabindex: "0" } }));
+  m.appendChild(document.createTextNode(" (" + META.product + ") at "));
+  m.appendChild(el("code", { text: META.host }));
+  m.appendChild(document.createTextNode(" · " + META.agentCount + " agents · " + META.waveCount + " waves · " + META.modes + " · Report " + META.date));
+}
+
+function renderSummary() {
+  const root = document.getElementById("summary");
+  root.textContent = "";
+  root.appendChild(el("h2", { text: "TL;DR" }));
+  const p = el("p");
+  p.appendChild(document.createTextNode("App passes all static checks ("));
+  p.appendChild(el("code", { text: "tsc" }));
+  p.appendChild(document.createTextNode(", "));
+  p.appendChild(el("code", { text: "eslint" }));
+  p.appendChild(document.createTextNode(", "));
+  p.appendChild(el("code", { text: "lint:integrity" }));
+  p.appendChild(document.createTextNode(", "));
+  p.appendChild(el("code", { text: "lint:fetch" }));
+  p.appendChild(document.createTextNode(" all exit 0). Real-QA found one production blocker the static review couldn't surface."));
+  root.appendChild(p);
+  const ul = el("ul");
+  for (const b of SUMMARY_BULLETS) ul.appendChild(el("li", { text: b }));
+  root.appendChild(ul);
+
+  const counts = { P0: 0, P1: 0, P2: 0, P3: 0 };
+  for (const f of findings) counts[f.sev]++;
+  const stats = el("div", { cls: "stats" });
+  for (const sev of ["P0", "P1", "P2", "P3"]) {
+    const labels = { P0: "P0 blockers", P1: "P1 silent bugs", P2: "P2 UX & ops", P3: "P3 hygiene" };
+    const stat = el("div", { cls: "stat", data: { sev } });
+    stat.appendChild(el("div", { cls: "n", text: String(counts[sev]) }));
+    stat.appendChild(el("div", { cls: "lbl", text: labels[sev] }));
+    stats.appendChild(stat);
+  }
+  root.appendChild(stats);
+}
+
+function renderFooter() {
+  const f = document.getElementById("footer-text");
+  f.textContent = "";
+  f.appendChild(document.createTextNode("Inventory: " + META.inventory + ". "));
+  f.appendChild(el("br"));
+  f.appendChild(document.createTextNode("Click any file:line or code chunk to copy. Markdown source: "));
+  f.appendChild(el("code", { text: "SMOKE_TEST_REPORT_2026-05-09.md" }));
+  f.appendChild(document.createTextNode(" in repo root."));
+}
+
+// ===== Findings render =====
+
+function renderFinding(f) {
+  const wrap = el("div", { cls: "finding", data: { sev: f.sev } });
+
+  const head = el("div", { cls: "f-head" });
+  head.appendChild(el("span", { cls: "f-num", text: "#" + f.n }));
+  head.appendChild(el("span", { cls: "f-sev", text: f.sev, data: { sev: f.sev } }));
+  head.appendChild(el("span", { cls: "f-surface", text: f.surface }));
+  head.appendChild(el("div", { cls: "f-title", text: f.title }));
+  wrap.appendChild(head);
+
+  function row(lbl, valNode) {
+    const r = el("div", { cls: "f-row" });
+    r.appendChild(el("div", { cls: "lbl", text: lbl }));
+    const v = el("div", { cls: "val" });
+    v.appendChild(valNode);
+    r.appendChild(v);
+    return r;
+  }
+
+  // File row — clickable copy
+  const fileSpan = el("span", { cls: "file", text: f.file, data: { copy: f.file } });
+  wrap.appendChild(row("File", fileSpan));
+
+  wrap.appendChild(row("Impact", document.createTextNode(f.impact)));
+
+  const reproPre = el("pre", { text: f.repro, data: { copy: f.repro } });
+  wrap.appendChild(row("Repro", reproPre));
+
+  wrap.appendChild(row("Fix", document.createTextNode(f.fix)));
+
+  return wrap;
+}
+
+const list = document.getElementById("findings");
+const empty = document.getElementById("empty");
+const search = document.getElementById("q");
+const chips = document.querySelectorAll(".chip");
+
+let activeSev = "all";
+let activeQ = "";
+
+function renderFindings() {
+  list.textContent = "";
+  const counts = { all: 0, P0: 0, P1: 0, P2: 0, P3: 0 };
+  let shown = 0;
+  for (const f of findings) {
+    counts.all++;
+    counts[f.sev]++;
+    const matchSev = activeSev === "all" || f.sev === activeSev;
+    const q = activeQ.trim().toLowerCase();
+    const matchQ = !q || (f.title + " " + f.file + " " + f.surface + " " + f.impact).toLowerCase().includes(q);
+    if (!matchSev || !matchQ) continue;
+    shown++;
+    list.appendChild(renderFinding(f));
+  }
+  empty.classList.toggle("hidden", shown > 0);
+  for (const sev of ["all", "P0", "P1", "P2", "P3"]) {
+    const c = document.getElementById("count-" + sev);
+    if (c) c.textContent = counts[sev];
+  }
+}
+
+chips.forEach(chip => {
+  chip.addEventListener("click", () => {
+    chips.forEach(c => c.classList.remove("active"));
+    chip.classList.add("active");
+    activeSev = chip.dataset.sev;
+    renderFindings();
+  });
+});
+
+search.addEventListener("input", e => {
+  activeQ = e.target.value;
+  renderFindings();
+});
+
+// ===== Copy on click =====
+
+const toast = document.getElementById("toast");
+let toastTimer = null;
+function showToast(msg) {
+  toast.textContent = msg;
+  toast.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove("show"), 1400);
+}
+
+document.addEventListener("click", e => {
+  const t = e.target.closest("[data-copy], code, .file, pre");
+  if (!t) return;
+  const text = t.dataset && t.dataset.copy ? t.dataset.copy : t.textContent;
+  if (!text) return;
+  if (!navigator.clipboard || !navigator.clipboard.writeText) {
+    showToast("Clipboard not available");
+    return;
+  }
+  navigator.clipboard.writeText(text).then(() => {
+    t.classList.add("copied");
+    setTimeout(() => t.classList.remove("copied"), 700);
+    const preview = text.length > 40 ? text.slice(0, 40) + "…" : text;
+    showToast("Copied: " + preview);
+  }).catch(() => showToast("Copy failed"));
+});
+
+// ===== Init =====
+
+renderHeaderMeta();
+renderSummary();
+renderFooter();
+renderFindings();
+</script>
+</body>
+</html>

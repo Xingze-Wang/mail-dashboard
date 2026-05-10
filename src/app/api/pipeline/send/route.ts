@@ -441,6 +441,18 @@ export async function POST(req: NextRequest) {
       console.error("recordContact sync throw (non-blocking)", e);
     }
 
+    // Mission progress — also fire-and-forget. The actor (whoever's
+    // session this is) gets credit, not the lead owner. Mirrors the
+    // actor-vs-owner attribution rule in CLAUDE.md.
+    try {
+      const { bumpMissionProgress } = await import("@/lib/missions");
+      bumpMissionProgress(actingRepId, "send", 1).catch((e) => {
+        console.error("bumpMissionProgress failed (non-blocking)", e);
+      });
+    } catch (e) {
+      console.error("bumpMissionProgress sync throw (non-blocking)", e);
+    }
+
     return NextResponse.json({
       success: true,
       emailId: email?.id ?? null,

@@ -50,7 +50,7 @@ export async function POST(req: NextRequest) {
   const res = NextResponse.json({ success: true, repId: rep.id, repName: rep.name, role });
   res.cookies.set(AUTH_COOKIE, token, {
     httpOnly: true,
-    secure: true,
+    secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     maxAge: AUTH_COOKIE_MAX_AGE,
     path: "/",
@@ -87,7 +87,7 @@ export async function POST(req: NextRequest) {
 
   res.cookies.set(AUTH_POOL_COOKIE, serializePool(pooledTokens), {
     httpOnly: true,
-    secure: true,
+    secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     maxAge: AUTH_COOKIE_MAX_AGE,
     path: "/",

@@ -86,6 +86,23 @@ export function mapResendEventToStatus(eventOrLastEvent: string | null | undefin
 
 // ── pipeline_leads.status (lead layer) ──────────────────────────────────
 
+// Note on `wechat_added` (removed 2026-05-09):
+// `wechat_added` used to be a declared lead-status value here and was
+// included in CONTACTED_LEAD_STATUSES / TERMINAL_LEAD_STATUSES /
+// REPLIED_LEAD_STATUSES. No code path ever wrote it (0 of 1443 prod
+// leads carried it). WeChat conversion lives entirely in `brief_lookups`
+// (one row with added_wechat=true per conversion); see the explicit
+// comment in src/app/api/brief/wechat/route.ts: "Do NOT touch
+// pipeline_leads.status here. ... Added on WeChat is a separate
+// conversion event tracked entirely in brief_lookups."
+//
+// Read-declared / write-orphaned was the SMOKE_TEST_REPORT-2026-05-09
+// finding #6 risk: any future analytics tile that filtered by it would
+// silently report 0% conversion. We chose option (b) — remove it from
+// the constants — over option (a) — wire a writer — because brief/wechat
+// is the canonical source-of-truth and mirroring it onto the lead would
+// duplicate state. If you re-introduce the concept, ALSO wire the writer
+// at the same commit.
 export const LEAD_STATUSES = [
   "new",
   "queued",
@@ -94,7 +111,6 @@ export const LEAD_STATUSES = [
   "sending",
   "sent",
   "replied",
-  "wechat_added",
   "skipped",
 ] as const;
 export type LeadStatus = (typeof LEAD_STATUSES)[number];
@@ -103,9 +119,7 @@ export type LeadStatus = (typeof LEAD_STATUSES)[number];
  * "An outbound email went out and the lead has been contacted."
  *
  * Includes `replied` because a reply is a LATER phase of the same send,
- * not a displacement of it — the outbound email still happened. Includes
- * `wechat_added` because once a researcher is on WeChat, the contact is
- * real even if the email never advanced past "sent" in our UI.
+ * not a displacement of it — the outbound email still happened.
  *
  * Use this anywhere you mean "this lead has been reached":
  *   - per-rep sent counts
@@ -116,13 +130,22 @@ export type LeadStatus = (typeof LEAD_STATUSES)[number];
  * Do NOT hand-roll `status in ('sent','replied',...)` arrays — import
  * this constant.
  */
-export const CONTACTED_LEAD_STATUSES = ["sent", "replied", "wechat_added"] as const;
+export const CONTACTED_LEAD_STATUSES = ["sent", "replied"] as const;
 
 /**
  * Terminal-ish lead states — the lead will not progress further without
- * external action. `skipped` is terminal. `wechat_added` is terminal-good.
+ * external action. `skipped` is terminal-bad.
  */
-export const TERMINAL_LEAD_STATUSES = ["wechat_added", "skipped"] as const;
+export const TERMINAL_LEAD_STATUSES = ["skipped"] as const;
+
+/**
+ * "The recipient has replied at least once."
+ *
+ * Use this whenever you mean "got a response", NOT `.eq('status','replied')`.
+ * Singleton today, but kept as a set so future "replied"-family states
+ * can be added in one place without churn at every call site.
+ */
+export const REPLIED_LEAD_STATUSES = ["replied"] as const;
 
 export function isContactedLeadStatus(status: string | null | undefined): status is (typeof CONTACTED_LEAD_STATUSES)[number] {
   return status !== null && status !== undefined && (CONTACTED_LEAD_STATUSES as readonly string[]).includes(status);

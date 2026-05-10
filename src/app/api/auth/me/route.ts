@@ -1,8 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
-import { verifySession, AUTH_COOKIE } from "@/lib/auth";
+import { requireSession } from "@/lib/auth-helpers";
 
+/**
+ * GET /api/auth/me
+ *
+ * Returns the current session's identity AND DB-fresh role.
+ *
+ * Why DB-fresh: the JWT cookie is 30 days. A demoted admin would
+ * otherwise keep seeing role:"admin" in the response (and the UI
+ * would keep showing admin chrome) for up to a month. requireSession
+ * re-reads sales_reps.role on every call, which is the contract
+ * CLAUDE.md mandates. It also rejects ghost-rep tokens (JWT
+ * referencing a deleted/deactivated rep) by returning null.
+ *
+ * Auth: any session, anonymous gets {authenticated: false}.
+ */
 export async function GET(req: NextRequest) {
-  const session = await verifySession(req.cookies.get(AUTH_COOKIE)?.value);
+  const session = await requireSession(req);
   if (!session) {
     // 401 is the right contract — clients treating status===200 as
     // "success" were getting false positives. Body still parses to

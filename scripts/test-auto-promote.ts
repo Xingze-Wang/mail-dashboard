@@ -7,17 +7,9 @@
  * Won't actually mutate anything — just shows what would happen.
  */
 import { supabase } from "../src/lib/db";
+import { wilsonCI } from "../src/lib/wilson";
 
 const MIN_SAMPLE = 30;
-
-function wilsonCI(clicked: number, sent: number, z = 1.96): [number, number] {
-  if (sent === 0) return [0, 1];
-  const p = clicked / sent;
-  const denom = 1 + (z * z) / sent;
-  const center = (p + (z * z) / (2 * sent)) / denom;
-  const margin = (z * Math.sqrt((p * (1 - p)) / sent + (z * z) / (4 * sent * sent))) / denom;
-  return [Math.max(0, center - margin), Math.min(1, center + margin)];
-}
 
 interface Bucket {
   id: string;

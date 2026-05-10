@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
+import { wilsonCI } from "@/lib/wilson";
 
 export const maxDuration = 120;
 export const dynamic = "force-dynamic";
@@ -72,14 +73,9 @@ function groupKey(b: TplBucket): string {
  * z=1.96 corresponds to two-tailed 95% CI. Returns [0, 1] for n=0
  * (zero info → infinite uncertainty, but clamped to valid range).
  */
-function wilsonCI(clicked: number, sent: number, z = 1.96): [number, number] {
-  if (sent === 0) return [0, 1];
-  const p = clicked / sent;
-  const denom = 1 + (z * z) / sent;
-  const center = (p + (z * z) / (2 * sent)) / denom;
-  const margin = (z * Math.sqrt((p * (1 - p)) / sent + (z * z) / (4 * sent * sent))) / denom;
-  return [Math.max(0, center - margin), Math.min(1, center + margin)];
-}
+// Wilson lives in src/lib/wilson.ts now — shared between this cron and
+// the congress evidence-pack annotator so they can never disagree on
+// what "20% [12%-31%]" means. (Imported at top of file.)
 
 // Statistical floor before considering any decision. With n<30
 // Wilson CIs are too wide to ever separate. (Threshold is a soft

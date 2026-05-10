@@ -19,6 +19,13 @@
 -- - /api/investor/* (capital balance + contract performance)
 -- - /analysis (rep view: which contract am I under right now)
 -- - reweighter (uses attribution rows as training data)
+--
+-- 4. BACKFILL FOR OLD ROWS
+-- (d) not applicable — all three tables are new; no pre-existing rows
+-- can carry the contract / attribution / capital concepts. Historical
+-- email events before this migration are intentionally not retro-
+-- attributed: contracts are weekly forward commitments and back-
+-- attribution would conflate planning periods.
 
 create table if not exists company_contracts (
   id uuid primary key default gen_random_uuid(),

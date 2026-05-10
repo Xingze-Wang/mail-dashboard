@@ -6,10 +6,14 @@
 import { llmChat } from "@/lib/llm-proxy";
 import { supabase } from "@/lib/db";
 import { notifyAdminText, buildConstraintsPreamble } from "@/lib/congress";
+import { formatRateWithCI, MIN_RELIABLE_N, compareProportions } from "@/lib/wilson";
 
 interface Persona { key: string; display: string; system: string; question: string; }
 
-const WEEKLY_ROSTER: Persona[] = [
+// Exported so the stepwise runner can pick the same roster and have
+// inspections show identical persona keys regardless of which path
+// drove the deliberation.
+export const WEEKLY_ROSTER: Persona[] = [
   { key: "data_analyst", display: "Data Analyst",
     system: "你是 Qiji 算力 program 的 data analyst. 简洁, 用数字, 不下判断, 只报告.",
     question: "Looking at the evidence pack, what's the single most actionable metric movement this week? (rate change, drift count, anything quantitative). Don't propose changes — just call out the signal." },
@@ -26,14 +30,41 @@ const WEEKLY_ROSTER: Persona[] = [
     system: "你是 psychologist. 你看 emotional/cognitive state. Status anxiety, imposter feelings, cold-outreach fatigue, rep burnout.",
     question: "Beyond what's read or clicked: what emotional response are we likely creating in the recipient? Any signs of script-fatigue or burnout in helper bot conversations / skip reasons? Cite specifics." },
   { key: "adversary", display: "Adversary",
-    system: "你的工作是 attack 任何提议的改动. 假设其他 panelist 都太乐观.",
-    question: "Read what others said. Pick the strongest implicit proposal and attack it: most likely reason it WON'T lift conversion?" },
+    system: `你是 evidence-bound adversary. 不是单纯反对 — 是 *用证据* 挑战 panel 的结论.
+
+规则:
+1. 看 panel 之前给出的每一个 numeric claim.
+2. 只挑战那些 *没有 statistical 支撑* 的 claim — 也就是 sample-size 太小 (n<${MIN_RELIABLE_N}) 或者两个 segment CI 重叠的判断.
+3. 做反例时一定 cite a specific counter-data point from the evidence pack (e.g. "你说 Fudan 转化 0%, 但 SJTU 在 same tier same geo 同样 volume 下转化是 X% [CI: ...] — 这两个 CI 不重叠, 那为什么 Fudan 是 systemic 问题, 而不是 sample 问题?").
+4. 如果你的反例需要 evidence pack 里没有的数据, 明确说 "我需要 X 数据来反驳但 pack 里没有, 这意味着 panel 这条 claim 本身也没有 cited evidence".
+
+不要做无 evidence 的纯反对. 没东西可挑战时, 直接说 "这 round 没有可挑战的 small-sample claim".`,
+    question: `Walk through the panel's numeric claims. Apply the rules above. Cite specific n / CI / similar-context comparisons from the evidence pack to support your challenges. Don't fabricate.` },
   { key: "synthesizer", display: "Synthesizer",
     system: "你 synthesizes the panel into a concrete shippable proposal. JSON output only.",
     question: `Produce JSON:
-{ "title":"one-line", "change_spec":{"kind":"subject_line_test"|"template_phrase_swap"|"routing_tweak"|"copy_edit","details":{}},
+{
+  "title":"one-line",
+  "change_spec":{"kind":"subject_line_test"|"template_phrase_swap"|"routing_tweak"|"copy_edit","details":{}},
   "expected_lift":{"metric":"open_rate"|"click_rate"|"wechat_rate","delta_pp":0.0,"rationale":""},
-  "weeks_to_evaluate":4, "skip_reason_if_no_proposal":null }
+  "weeks_to_evaluate":4,
+  "skip_reason_if_no_proposal":null,
+  "team_focus": {
+    "theme": "短句 e.g. '本周聚焦 cn-tier1 转化'",
+    "rationale": "1-2 句, 引用 evidence pack 里的具体数据"
+  },
+  "weekly_missions": [
+    {"rep_kind": "all_sales", "kind": "send", "daily_target": 8,
+     "scope": {"segment": "cn"}, "description": "短句"},
+    {"rep_kind": "all_sales", "kind": "reply", "daily_target": 3, "description": "回复 inbound"},
+    {"rep_kind": "admin",    "kind": "review_proposals", "daily_target": 1}
+  ]
+}
+weekly_missions 是给整个团队的本周 daily mission 模板. 系统会把它 instantiate 给每个 rep, 每个工作日一份.
+"rep_kind": "all_sales" = 所有 active 销售; "admin" = 管理员; "rep:N" = 特定 rep_id.
+"kind" 必须 ∈ ["send", "reply", "mark_wechat", "review_proposals", "review_template_edits", "custom"].
+daily_target 是每个工作日的目标, 不是一周总和.
+如果 evidence pack 里 sample 太少, team_focus 和 weekly_missions 都可以省略 (设成 null).
 If no shippable change, set skip_reason_if_no_proposal. JSON only.` },
 ];
 
@@ -63,10 +94,23 @@ ${runningContext ? "\n## What other panelists have said so far\n" + runningConte
 interface RunOpts { dryRun?: boolean; }
 interface WeeklyResult { proposalId?: string; title?: string; outcome: "proposal" | "skipped"; }
 
-async function buildWeeklyEvidence(): Promise<string> {
+export async function buildWeeklyEvidence(): Promise<string> {
   const lines: string[] = [];
   const constraints = await buildConstraintsPreamble();
   if (constraints) lines.push(constraints);
+
+  // ─── Sample-size discipline header ───────────────────────────────────
+  // Tells personas explicitly: don't draw conclusions from small samples.
+  // Every numeric line below this point gets a Wilson 95% CI annotation
+  // with a "too few to call" tag when n < MIN_RELIABLE_N. Personas should
+  // refuse to call something a problem when its CI is wide enough that
+  // 0% and the population mean both sit inside it.
+  lines.push(`## ⚠️ Sample-size discipline (READ FIRST)`);
+  lines.push(`所有 rate-style 数据都附了 95% Wilson CI 和 n. 规则:`);
+  lines.push(`  - 如果一个 segment 标了 "too few to call" (n<${MIN_RELIABLE_N}), 不要做"X 转化率 0%"或"X 表现差"的判断.`);
+  lines.push(`  - 两个 segment 比较时, 看他们 CI 是否 *不重叠*. 重叠就是 "可能一样, 可能不同, 没法确定".`);
+  lines.push(`  - "Fudan 0% 转化" 在 n=5 的时候和 "我们对 Fudan 还没数据" 是一回事.`);
+  lines.push(``);
 
   // Geo split — domestic .cn vs overseas. Same dataset surfaced on /analysis.
   // Two-stage funnel makes the audience-difference legible to every persona.
@@ -78,17 +122,27 @@ async function buildWeeklyEvidence(): Promise<string> {
     const ovs = dim?.segments.find((s) => s.segment === "Overseas");
     if (dom && ovs && dom.delivered + ovs.delivered > 0) {
       lines.push(`## Geo split (last 90d, domestic .cn vs overseas)`);
-      lines.push(`  Domestic .cn: delivered=${dom.delivered}, ctr=${(dom.ctr * 100).toFixed(1)}%, post-click conv=${(dom.postClickConv * 100).toFixed(1)}%`);
-      lines.push(`  Overseas    : delivered=${ovs.delivered}, ctr=${(ovs.ctr * 100).toFixed(1)}%, post-click conv=${(ovs.postClickConv * 100).toFixed(1)}%`);
-      const ctrRatio = dom.ctr > 0 ? ovs.ctr / dom.ctr : 0;
-      const convRatio = ovs.postClickConv > 0 ? dom.postClickConv / ovs.postClickConv : 0;
-      lines.push(`  Ratio: overseas clicks ${ctrRatio.toFixed(2)}× domestic, but domestic converts ${convRatio.toFixed(2)}× overseas once clicked.`);
+      // Treat ctr as clicks/delivered. Recover counts from rate*delivered
+      // since the funnel returns ratios. Round to nearest int (the funnel
+      // store rounds these already; this is just defensive).
+      const domClicks = Math.round(dom.ctr * dom.delivered);
+      const ovsClicks = Math.round(ovs.ctr * ovs.delivered);
+      lines.push(`  Domestic .cn: ctr = ${formatRateWithCI(domClicks, dom.delivered)}`);
+      lines.push(`  Overseas    : ctr = ${formatRateWithCI(ovsClicks, ovs.delivered)}`);
+      // Wilson-aware comparison: only declare a difference if the CIs
+      // don't overlap. This is what the adversary will look at.
+      const cmp = compareProportions(domClicks, dom.delivered, ovsClicks, ovs.delivered);
+      if (cmp.verdict === "inconclusive") {
+        lines.push(`  → 两边 CTR CI 重叠, 差异在 95% 置信下 *没有 statistical 支撑*.`);
+      } else {
+        lines.push(`  → ${cmp.verdict === "a_higher" ? "Domestic" : "Overseas"} ctr is statistically higher (CIs separate).`);
+      }
     }
   } catch (err) {
     console.error("[congress] geo split for evidence pack failed", err);
   }
 
-  lines.push(`## Week-over-week metrics (last 7d vs prior 7d)`);
+  lines.push(`\n## Week-over-week metrics (last 7d vs prior 7d)`);
   const now = Date.now(); const wk = 7 * 24 * 3600 * 1000;
   const cur7 = new Date(now - wk).toISOString();
   const prev14 = new Date(now - 2 * wk).toISOString();
@@ -99,7 +153,63 @@ async function buildWeeklyEvidence(): Promise<string> {
     const sent = data?.length ?? 0;
     const opened = (data ?? []).filter((e: { status: string }) => e.status === "opened" || e.status === "clicked").length;
     const clicked = (data ?? []).filter((e: { status: string }) => e.status === "clicked").length;
-    lines.push(`  ${label}: sent=${sent}, opened=${opened}, clicked=${clicked}`);
+    // Annotate open + click rates with CI so personas don't compare
+    // 5/100 vs 4/95 as if the difference were real.
+    lines.push(`  ${label}: sent=${sent}, open rate=${formatRateWithCI(opened, sent)}, click rate=${formatRateWithCI(clicked, sent)}`);
+  }
+
+  // ─── Per-school slice (adversary needs this) ─────────────────────────
+  // Pull top schools by send volume. Every school gets a Wilson CI on its
+  // ctr. We surface this slice so the adversary persona can call out
+  // "Fudan 0% but Tsinghua 5% with similar volume" when defensible, and
+  // refuse to make per-school claims when the CIs all overlap.
+  try {
+    const since90 = new Date(Date.now() - 90 * 86_400_000).toISOString();
+    const { data: emailsRaw } = await supabase
+      .from("emails")
+      .select("id, status, lead_id, created_at")
+      .gte("created_at", since90)
+      .limit(5000);
+    const emails = emailsRaw ?? [];
+    const leadIds = [...new Set(emails.map((e) => e.lead_id).filter(Boolean))] as string[];
+    const leadSchool = new Map<string, string>();
+    if (leadIds.length > 0) {
+      const CHUNK = 150;
+      for (let i = 0; i < leadIds.length; i += CHUNK) {
+        const slice = leadIds.slice(i, i + CHUNK);
+        const { data: leads } = await supabase
+          .from("pipeline_leads")
+          .select("id, school_name")
+          .in("id", slice);
+        for (const l of leads ?? []) {
+          if (l.school_name) leadSchool.set(l.id as string, l.school_name as string);
+        }
+      }
+    }
+    const bySchool = new Map<string, { sent: number; clicked: number }>();
+    for (const e of emails) {
+      const school = leadSchool.get(e.lead_id as string);
+      if (!school) continue;
+      const cur = bySchool.get(school) ?? { sent: 0, clicked: 0 };
+      cur.sent++;
+      if (e.status === "clicked") cur.clicked++;
+      bySchool.set(school, cur);
+    }
+    // Sort by send volume desc, take top 12. Personas can spot
+    // similar-volume pairs for cross-comparison without being
+    // overwhelmed by a long tail of n=1 rows.
+    const ranked = [...bySchool.entries()]
+      .sort((a, b) => b[1].sent - a[1].sent)
+      .slice(0, 12);
+    if (ranked.length > 0) {
+      lines.push(`\n## Per-school CTR slice (last 90d, top 12 by volume)`);
+      lines.push(`  注: 大部分 schools 的 n 不够大. 不要单独看一个 school 下结论. 看相似 volume 的 schools 之间 CI 是否分离.`);
+      for (const [school, s] of ranked) {
+        lines.push(`  ${school.padEnd(36)}: ${formatRateWithCI(s.clicked, s.sent)}`);
+      }
+    }
+  } catch (err) {
+    console.error("[congress] per-school slice failed", err);
   }
   const { data: drifts } = await supabase
     .from("prompt_drift_patterns")
@@ -133,7 +243,21 @@ export async function runWeeklyCongress(opts: RunOpts = {}): Promise<WeeklyResul
     runningContext += `\n\n### ${p.display}\n${text}`;
   }
 
-  let synthJson: { title?: string; change_spec?: object; expected_lift?: object; weeks_to_evaluate?: number; skip_reason_if_no_proposal?: string | null };
+  let synthJson: {
+    title?: string;
+    change_spec?: object;
+    expected_lift?: object;
+    weeks_to_evaluate?: number;
+    skip_reason_if_no_proposal?: string | null;
+    team_focus?: { theme?: string; rationale?: string } | null;
+    weekly_missions?: Array<{
+      rep_kind?: string;     // 'all_sales' | 'admin' | 'rep:N'
+      kind?: string;
+      daily_target?: number;
+      scope?: Record<string, unknown>;
+      description?: string;
+    }>;
+  };
   try {
     const raw = personas.synthesizer.trim().replace(/^```(?:json)?\s*\n?/, "").replace(/\n?```\s*$/, "").trim();
     synthJson = JSON.parse(raw);
@@ -208,6 +332,99 @@ export async function runWeeklyCongress(opts: RunOpts = {}): Promise<WeeklyResul
     }
   }
 
+  // ─── Mission system: persist team_focus + weekly_missions as proposed ─
+  // The synthesizer optionally emits these. Admin approves them via
+  // /admin/missions; only on approval do they go status=active and
+  // become visible to reps on /missions.
+  let missionNote = "";
+  try {
+    const focus = synthJson.team_focus;
+    const missions = synthJson.weekly_missions ?? [];
+
+    // Compute Monday of next week — we generate ahead so admin has
+    // the weekend to approve.
+    const now = new Date();
+    const daysUntilNextMonday = ((1 - now.getUTCDay() + 7) % 7) || 7;
+    const nextMonday = new Date(now);
+    nextMonday.setUTCDate(now.getUTCDate() + daysUntilNextMonday);
+    const weekStarting = nextMonday.toISOString().slice(0, 10);
+
+    let focusId: string | null = null;
+    if (focus?.theme) {
+      const { data: focusRow } = await supabase
+        .from("team_focus")
+        .insert({
+          week_starting: weekStarting,
+          theme: focus.theme,
+          rationale: focus.rationale ?? null,
+          set_by: "congress",
+          status: "proposed",
+        })
+        .select("id")
+        .single();
+      focusId = focusRow?.id as string | null;
+    }
+
+    const { data: reps } = await supabase
+      .from("sales_reps")
+      .select("id, role, active")
+      .eq("active", true);
+    const salesIds = (reps ?? []).filter((r) => r.role === "sales").map((r) => r.id as number);
+    const adminIds = (reps ?? []).filter((r) => r.role === "admin").map((r) => r.id as number);
+
+    const resolveRepKind = (kind: string): number[] => {
+      if (kind === "all_sales") return salesIds;
+      if (kind === "admin") return adminIds;
+      const m = /^rep:(\d+)$/.exec(kind);
+      if (m) return [parseInt(m[1], 10)];
+      return [];
+    };
+
+    const VALID_KINDS = new Set([
+      "send", "reply", "mark_wechat",
+      "review_proposals", "review_template_edits", "custom",
+    ]);
+    const missionRows: Array<Record<string, unknown>> = [];
+    for (const m of missions) {
+      if (!m.kind || !VALID_KINDS.has(m.kind)) continue;
+      const target = m.daily_target;
+      if (typeof target !== "number" || target <= 0) continue;
+      const repIds = resolveRepKind(m.rep_kind ?? "all_sales");
+      for (const rid of repIds) {
+        // Mon-Fri = 5 weekdays. Sat/Sun skipped (sales is M-F).
+        for (let d = 0; d < 5; d++) {
+          const due = new Date(nextMonday);
+          due.setUTCDate(nextMonday.getUTCDate() + d);
+          missionRows.push({
+            rep_id: rid,
+            due_date: due.toISOString().slice(0, 10),
+            kind: m.kind,
+            target,
+            scope: m.scope ?? {},
+            description: m.description ?? null,
+            generated_by: "congress",
+            team_focus_id: focusId,
+            status: "proposed",
+          });
+        }
+      }
+    }
+
+    if (missionRows.length > 0) {
+      const { error: insErr } = await supabase.from("missions").insert(missionRows);
+      if (insErr) {
+        missionNote = `\n⚠️ Mission persist failed: ${insErr.message.slice(0, 100)}`;
+      } else {
+        const repCount = new Set(missionRows.map((r) => r.rep_id)).size;
+        missionNote = `\n📅 Proposed week ${weekStarting}: ${missionRows.length} missions across ${repCount} reps`;
+      }
+    } else if (focusId) {
+      missionNote = `\n📅 Proposed week ${weekStarting} team_focus only (no per-rep missions emitted)`;
+    }
+  } catch (e) {
+    missionNote = `\n⚠️ Mission system errored: ${(e as Error).message.slice(0, 200)}`;
+  }
+
   await notifyAdminText([
     `📋 Weekly Tactical Congress proposal`,
     ``,
@@ -220,10 +437,12 @@ export async function runWeeklyCongress(opts: RunOpts = {}): Promise<WeeklyResul
     `Adversary: "${(personas.adversary || "").slice(0, 200)}"`,
     `Psychologist: "${(personas.psychologist || "").slice(0, 200)}"`,
     templateProposalNote,
+    missionNote,
     ``,
     `Approve: /api/tactical/${row.id}/decide?approved=1`,
     `Reject:  /api/tactical/${row.id}/decide?approved=0`,
     templateProposalId ? `Preview prose: /templates/${templateProposalId}/inspect` : "",
+    missionNote ? `Approve missions: /admin/missions` : "",
   ].filter(Boolean).join("\n"));
   return { outcome: "proposal", proposalId: row.id, title: synthJson.title };
 }
@@ -248,8 +467,16 @@ const MONTHLY_ROSTER: Persona[] = [
     system: "你是 psychologist. 在 strategic horizon 上你关心 long-term trust + emotional capital.",
     question: "Looking at 90 days: are we building or eroding emotional capital with the Chinese AI research community? Are reps showing sustainable engagement or signs of mechanical script-running? What structural change would address the deepest psychological friction?" },
   { key: "adversary", display: "Adversary",
-    system: "你 attack proposed STRATEGIC changes. Bigger swings, more skepticism.",
-    question: "If the panel proposes a structural change (new category, threshold redefinition, kill a distinction, hire a 6th rep), what's the most likely failure mode? What evidence is missing?" },
+    system: `你 attack proposed STRATEGIC changes — bigger swings, more skepticism — but 仍然是 evidence-bound.
+
+规则:
+1. 看 panel 提议的 structural change. 找它依赖的 numeric claims.
+2. 只挑战那些没有 statistical 支撑 (n<${MIN_RELIABLE_N}) 或者 CIs overlap 的 claim. Strategic 决定如果 sample 不够大就不该做.
+3. Cite a specific counter-data point or counter-example. e.g. "panel 提议 kill tier-3 schools 因为 0% 转化, 但 evidence pack 里 tier-3 的 n=12, CI 是 [0%, 26%], 这等于'我们对 tier-3 没数据', 不等于 '0%'."
+4. 如果反例需要 pack 里没的数据, 明确指出, 这意味着 panel 也没有 cited evidence.
+
+不做无证据的纯反对. 没东西可挑战时直接说 "这 round 没有可挑战的 unsupported strategic claim".`,
+    question: `Walk through the panel's structural proposal. Apply the rules above. Cite n / CI / similar-context comparisons. Don't fabricate.` },
   { key: "synthesizer", display: "Synthesizer",
     system: "你 synthesize the panel into a strategic decision. JSON output only.",
     question: `Produce JSON:

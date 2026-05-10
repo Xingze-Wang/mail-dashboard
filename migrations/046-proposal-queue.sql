@@ -20,6 +20,13 @@
 -- - /congress/timeline (proposal lifecycle dots per company)
 -- - investor tick (counts as outcome signal: did the proposal land?)
 -- - reweighter (not directly — proposals are upstream of events)
+--
+-- 4. BACKFILL FOR OLD ROWS
+-- (d) not applicable — new table. Pre-existing direct writes to
+-- pipeline_leads / emails / email_templates were not made through any
+-- proposal record; they remain unattributed historical changes and
+-- readers must treat "no proposal" as legacy admin action rather than
+-- a missing row.
 
 create table if not exists company_proposals (
   id uuid primary key default gen_random_uuid(),

@@ -18,6 +18,13 @@
 -- - All three: company synthesizer at start of weekly deliberation (the company "remembers")
 -- - episodic + procedural: investor (reading résumé before allocating capital)
 -- - rep_operating_profile: companies during territory bidding
+--
+-- 4. BACKFILL FOR OLD ROWS
+-- (d) not applicable — episodic and procedural memory are new tables that
+-- start writing from this migration forward. rep_operating_profile is
+-- (b) backfilled lazily: the nightly recompute job populates a row per
+-- rep on first run; consumers must tolerate "no profile row yet" by
+-- falling back to defaults rather than crashing.
 
 create table if not exists company_episodic_memory (
   id uuid primary key default gen_random_uuid(),

@@ -9,6 +9,17 @@ export async function POST(req: NextRequest) {
   try {
     const rawBody = await req.text();
 
+    // svix-id is the canonical Resend dedup key. We persist it on
+    // webhook_events so retries (Resend re-fires on any 5xx or network
+    // hiccup) collapse to a single row via the partial unique index
+    // added in migration 071. CLAUDE.md treats webhook_events as the
+    // append-only canonical history; without dedup, every retry
+    // double-counted in attributeEventToContract below.
+    const svixId =
+      req.headers.get("svix-id") ||
+      req.headers.get("webhook-id") ||
+      null;
+
     // Resend uses Svix webhook signing. Headers: svix-id, svix-timestamp,
     // svix-signature (or webhook-* aliases). Signature is HMAC-SHA256 of
     // `${id}.${ts}.${rawBody}` base64-encoded as `v1,<sig>`.
@@ -26,7 +37,7 @@ export async function POST(req: NextRequest) {
     let verified = false;
     if (secret) {
       const headers: Record<string, string> = {
-        "svix-id": req.headers.get("svix-id") || req.headers.get("webhook-id") || "",
+        "svix-id": svixId || "",
         "svix-timestamp": req.headers.get("svix-timestamp") || req.headers.get("webhook-timestamp") || "",
         "svix-signature": req.headers.get("svix-signature") || req.headers.get("webhook-signature") || "",
       };
@@ -197,11 +208,26 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // Store webhook event (no email_id FK for inbound)
-      await supabase.from("webhook_events").insert({
-        type,
-        payload: rawBody,
-      });
+      // Store webhook event (no email_id FK for inbound).
+      // Upsert by svix_id so a Resend retry collapses to one row.
+      // ignoreDuplicates=true returns an empty result on conflict; we
+      // don't branch on that here because the inbound side effects
+      // above (inbound_emails insert, lead flip) are already gated on
+      // their own existence checks (see `existing` lookup at the top
+      // of email.received) and idempotent under retry.
+      if (svixId) {
+        await supabase
+          .from("webhook_events")
+          .upsert(
+            { type, payload: rawBody, svix_id: svixId },
+            { onConflict: "svix_id", ignoreDuplicates: true },
+          );
+      } else {
+        await supabase.from("webhook_events").insert({
+          type,
+          payload: rawBody,
+        });
+      }
 
       return NextResponse.json({ received: true });
     }
@@ -249,12 +275,38 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Store webhook event
-    await supabase.from("webhook_events").insert({
-      email_id: emailId,
-      type,
-      payload: rawBody,
-    });
+    // Store webhook event. Upsert by svix_id so Resend retries collapse
+    // to one row. We need to know whether this row was newly inserted
+    // or absorbed as a duplicate, because the contract-attribution +
+    // status-update side effects below MUST NOT re-run on a retry
+    // (would double-count points and re-flip statuses). When we
+    // upsert with `ignoreDuplicates: true` and select, Supabase returns
+    // an empty array on conflict and the inserted row on first write —
+    // that's our dedup signal.
+    let isDuplicateEvent = false;
+    if (svixId) {
+      const { data: upserted } = await supabase
+        .from("webhook_events")
+        .upsert(
+          { email_id: emailId, type, payload: rawBody, svix_id: svixId },
+          { onConflict: "svix_id", ignoreDuplicates: true },
+        )
+        .select("id");
+      isDuplicateEvent = !upserted || upserted.length === 0;
+    } else {
+      await supabase.from("webhook_events").insert({
+        email_id: emailId,
+        type,
+        payload: rawBody,
+      });
+    }
+
+    // Resend retried this event — webhook_events already had it; skip
+    // the side effects so we don't double-count contract points or
+    // re-write status from a stale event.
+    if (isDuplicateEvent) {
+      return NextResponse.json({ received: true, deduped: true });
+    }
 
     // ── Contract attribution: every funnel event gets pointed-counted into
     //    whichever company contract was active over (rep, segment) at this

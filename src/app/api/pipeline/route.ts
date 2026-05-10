@@ -72,8 +72,31 @@ function mapLead(l: Record<string, unknown>) {
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
-  const page = parseInt(searchParams.get("page") || "1");
-  const limit = parseInt(searchParams.get("limit") || "50");
+  // ?limit=abc previously slipped through (parseInt → NaN → range(0, -1)
+  // returned 0 rows with status 200) and ?limit=99999 echoed the bogus
+  // value back to the client even though we silently clamped at 1000.
+  // Both surface as "empty list looks fine" bugs. Validate up front:
+  //   - reject NaN / negative / zero with HTTP 400
+  //   - clamp at 1000 and echo the CLAMPED value, never the raw input.
+  const MAX_LIMIT = 1000;
+  const rawLimit = searchParams.get("limit");
+  const rawPage = searchParams.get("page");
+  const limitNum = rawLimit === null ? 50 : Number(rawLimit);
+  const pageNum = rawPage === null ? 1 : Number(rawPage);
+  if (!Number.isFinite(limitNum) || limitNum <= 0) {
+    return NextResponse.json(
+      { error: `Invalid limit '${rawLimit}': must be a positive number` },
+      { status: 400 },
+    );
+  }
+  if (!Number.isFinite(pageNum) || pageNum <= 0) {
+    return NextResponse.json(
+      { error: `Invalid page '${rawPage}': must be a positive number` },
+      { status: 400 },
+    );
+  }
+  const page = Math.floor(pageNum);
+  const limit = Math.min(MAX_LIMIT, Math.floor(limitNum));
   const status = searchParams.get("status");
   const tier = searchParams.get("tier");
   const repIdParam = searchParams.get("rep_id");

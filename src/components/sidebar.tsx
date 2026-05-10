@@ -294,15 +294,34 @@ export function Sidebar() {
   useEffect(() => {
     let cancelled = false;
     let intervalId: ReturnType<typeof setInterval> | null = null;
+    // Throttle on-demand reloads (focus/auth/inbox:read fire in bursts —
+    // a smoke test recorded ~2 req/s because each tab focus + auth event
+    // triggered an immediate fetch with no floor). 5s floor keeps the
+    // badges responsive without flooding the API.
+    let lastLoad = 0;
+    const MIN_LOAD_GAP_MS = 5_000;
 
     const load = () => {
+      const now = Date.now();
+      if (now - lastLoad < MIN_LOAD_GAP_MS) return;
+      lastLoad = now;
       fetch("/api/inbox/unread-count")
         .then((r) => r.json())
         .then((d) => { if (!cancelled) setUnread(d.count ?? 0); })
         .catch(() => { /* keep last known */ });
       fetch("/api/pipeline/ready-count")
         .then((r) => r.json())
-        .then((d) => { if (!cancelled) setReady(d.count ?? 0); })
+        .then((d) => {
+          // Use `readyNow` (ready AND past the 7-day cooldown) — the
+          // same number the pipeline page header and the status filter
+          // chip show. Previously we set `count` (which includes
+          // ripening leads), making the sidebar show "156" while the
+          // page header said "142". Single canonical number now: ready
+          // AND sendable. See src/lib/policy.ts:isReadyToSend.
+          if (cancelled) return;
+          const readyNow = typeof d.readyNow === "number" ? d.readyNow : (d.count ?? 0);
+          setReady(readyNow);
+        })
         .catch(() => { /* keep last known */ });
     };
 
@@ -312,11 +331,18 @@ export function Sidebar() {
     };
 
     load();
-    start(30_000);
+    // 60s default — these are non-critical badges (unread inbox, ready
+    // queue). Sales told us they look at the queue when they sit down,
+    // not second-by-second; the previous 30s cadence + a buggy on-demand
+    // path recorded >2400 req/15min in the 2026-05-09 smoke. 60s baseline
+    // + 5s on-demand throttle (above) keeps the side traffic low.
+    start(60_000);
 
-    // Pages can ask for tighter polling while they're mounted.
-    const fastOn  = () => start(10_000);
-    const fastOff = () => start(30_000);
+    // Pages can ask for tighter polling while they're mounted (e.g. the
+    // inbox while waiting for a fresh reply). Tighter still bottoms out
+    // at the 5s on-demand floor.
+    const fastOn  = () => start(15_000);
+    const fastOff = () => start(60_000);
     const onRead  = () => load();
 
     window.addEventListener("inbox:fast-poll-on",  fastOn);
@@ -329,7 +355,7 @@ export function Sidebar() {
 
     return () => {
       cancelled = true;
-      if (intervalId) clearInterval(intervalId);
+      if (intervalId) { clearInterval(intervalId); intervalId = null; }
       window.removeEventListener("inbox:fast-poll-on",  fastOn);
       window.removeEventListener("inbox:fast-poll-off", fastOff);
       window.removeEventListener("inbox:read",          onRead);

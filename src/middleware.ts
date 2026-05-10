@@ -54,7 +54,12 @@ export async function middleware(req: NextRequest) {
   console.log("[middleware] session:", session ? `repId=${session.repId}` : "null");
   if (session) {
     reqHeaders.set("x-rep-id", String(session.repId));
-    reqHeaders.set("x-rep-name", session.repName);
+    // HTTP/1.1 headers are Latin-1 (RFC 7230). Chinese rep names contain
+    // chars > U+00FF and would throw `TypeError: Cannot convert argument
+    // to a ByteString` at this Headers.set call, taking down every
+    // authed API for that rep. encodeURIComponent percent-encodes to
+    // ASCII, which is header-safe; readers must decodeURIComponent.
+    reqHeaders.set("x-rep-name", encodeURIComponent(session.repName));
     reqHeaders.set("x-rep-email", session.email);
     // NOTE: x-rep-role from the JWT may be stale (30-day cookie). Handlers
     // MUST NOT trust this header for authorization — use requireSession(),

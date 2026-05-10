@@ -1,4 +1,10 @@
--- migrations/038-jitr-offers.sql
+-- migrations/073-jitr-offers.sql
+--
+-- Renumbered from 038-jitr-offers.sql to resolve a number collision with
+-- 038-bench-sim.sql. The original 038-jitr-offers was hand-applied to prod
+-- (jitr_offers is already used by app code), so this re-run must be a no-op
+-- on prod and only meaningful for fresh-DB rebuilds.
+-- See SMOKE_TEST_REPORT_2026-05-09.md finding #28.
 --
 -- 1. SCHEMA CHANGE
 -- New table jitr_offers: tracks Just-In-Time Rep Ratifier offers sent
@@ -19,7 +25,10 @@
 -- offered within last 14 days). Future admin dashboard for audit.
 --
 -- 4. BACKFILL FOR OLD ROWS
--- (d) not applicable — new table, history starts now.
+-- (d) not applicable — new table, history starts now. Re-running this
+-- migration on prod (where the table already exists from the original
+-- hand-applied 038) is a no-op thanks to CREATE TABLE IF NOT EXISTS
+-- and CREATE [UNIQUE] INDEX IF NOT EXISTS guards below.
 --
 -- Reference: docs/EXTERNAL_BRIEF.md "Minimum Viable Congress"
 

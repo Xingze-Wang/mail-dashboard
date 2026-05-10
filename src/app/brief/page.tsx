@@ -576,14 +576,25 @@ export default function BriefPage() {
 
   async function handleSearch(e: React.FormEvent) {
     e.preventDefault();
-    if (!query.trim() || query.trim().length < 2) return;
+    const q = query.trim();
+    if (!q || q.length < 2) return;
+
+    // Auto-route the query: anything that looks like an email (contains
+    // '@') OR a domain (starts with '@', or is just a bare TLD-style
+    // hostname like 'tsinghua.edu.cn') goes to the `email=` parameter
+    // so the API ilike-matches author_email. The page placeholder
+    // advertises "name OR email" and the smoke flagged that searching
+    // `@tsinghua.edu.cn` returned "No matches found" because everything
+    // was forced through the `name=` path.
+    const looksLikeEmailOrDomain = q.includes("@") || /^[\w.-]+\.[a-z]{2,}$/i.test(q);
+    const param = looksLikeEmailOrDomain
+      ? `email=${encodeURIComponent(q.replace(/^@/, ""))}`
+      : `name=${encodeURIComponent(q)}`;
 
     setLoading(true);
     setSelected(null);
     try {
-      const res = await fetch(
-        `/api/brief?name=${encodeURIComponent(query.trim())}`,
-      );
+      const res = await fetch(`/api/brief?${param}`);
       const data = await res.json();
       setResults(data.briefs ?? []);
     } catch {
@@ -654,7 +665,7 @@ export default function BriefPage() {
               lineHeight: 1.6,
             }}
           >
-            Look up an author by name to see their paper, research profile, and outreach history.
+            Look up an author by name or email (full address or domain like @tsinghua.edu.cn) to see their paper, research profile, and outreach history.
           </p>
           <form onSubmit={handleSearch} style={{ width: "100%", maxWidth: 540 }}>
             <div style={{ display: "flex", gap: 10 }}>
@@ -662,7 +673,7 @@ export default function BriefPage() {
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Enter first name, e.g. Jiahao"
+                placeholder="Name or email — e.g. Jiahao or @tsinghua.edu.cn"
                 className="search-input"
                 style={{ flex: 1, padding: "12px 16px 12px 38px", fontSize: 14, backgroundPosition: "12px center" }}
                 autoFocus
@@ -689,7 +700,7 @@ export default function BriefPage() {
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Enter first name, e.g. Jiahao"
+                placeholder="Name or email — e.g. Jiahao or @tsinghua.edu.cn"
                 className="search-input"
                 style={{ width: "100%" }}
               />

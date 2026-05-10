@@ -89,6 +89,18 @@ export async function POST(req: NextRequest) {
     console.error("[wechat] contract attribution failed", err);
   }
 
+  // Mission progress: the rep who marked this gets credit on their
+  // 'mark_wechat' mission today. Same fire-and-forget pattern as
+  // pipeline/send.
+  try {
+    const { bumpMissionProgress } = await import("@/lib/missions");
+    bumpMissionProgress(session.repId, "mark_wechat", 1).catch((e) => {
+      console.error("bumpMissionProgress (wechat) failed (non-blocking)", e);
+    });
+  } catch (e) {
+    console.error("bumpMissionProgress (wechat) sync throw (non-blocking)", e);
+  }
+
   // Do NOT touch pipeline_leads.status here. "Added on WeChat" is a
   // separate conversion event tracked entirely in brief_lookups. We used to
   // set status='replied' which inflated the per-rep "Replies" stat — Chenyu

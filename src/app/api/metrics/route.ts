@@ -3,6 +3,7 @@ import { supabase } from "@/lib/db";
 import { requireSession } from "@/lib/auth-helpers";
 import { getRep } from "@/lib/assignment";
 import { getDbFunnel } from "@/lib/db-funnel";
+import { CONTACTED_LEAD_STATUSES } from "@/lib/status";
 
 // Live data every request — never cache.
 export const dynamic = "force-dynamic";
@@ -49,14 +50,27 @@ export async function GET(req: NextRequest) {
   const funnel = await getDbFunnel({ fromContains });
 
   // Recent activity feed — synthesize from the funnel we just pulled.
-  // (We no longer need webhook_events for this.)
-  // For the MVP, use a lightweight emails list from Resend directly.
-  // Pull last 20 distinct events.
-  const recentEvents = await recentActivityFromResend(fromContains, 20);
+  // Admin-only because the only consumer (/logs page) is admin-gated:
+  // sales reps' overview page never reads `recentEvents`. Returning
+  // them to a non-admin session would leak the OWN-ONLY recentEvents
+  // (filtered by sender_email above) to that rep, which is technically
+  // self-info but the smoke flagged the dual-consumer surface as
+  // confusing — keep the gate strict so future additions can't widen
+  // it accidentally.
+  const recentEvents = isPrivileged
+    ? await recentActivityFromResend(fromContains, 20)
+    : [];
 
   // ── Pipeline + WeChat (DB-derived, unchanged) ──
   let readyQ = supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("status", "ready");
-  let sentQ = supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("status", "sent");
+  // "Sent" here means "the lead has been contacted at least once" — leads
+  // that progressed to replied / wechat_added still count, otherwise the
+  // tile under-reports by every successful conversion. Use the canonical
+  // set from src/lib/status.ts.
+  let sentQ = supabase
+    .from("pipeline_leads")
+    .select("*", { count: "exact", head: true })
+    .in("status", [...CONTACTED_LEAD_STATUSES]);
   let totalQ = supabase.from("pipeline_leads").select("*", { count: "exact", head: true });
   if (!isPrivileged) {
     readyQ = readyQ.eq("assigned_rep_id", session.repId);

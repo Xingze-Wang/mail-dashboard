@@ -73,8 +73,10 @@ async function scoreTargeting(repId: number, since: string): Promise<DimensionSc
   // Count: of the rep's contacted leads in window, what % converted (clicked
   // OR added on WeChat)? We pull pipeline_leads for the denominator and
   // brief_lookups (marked_by_rep_id) for the wechat numerator. Click signal
-  // approximated by status='replied' or 'wechat_added' — finer-grained
-  // click data lives in webhook_events but we keep this read cheap.
+  // approximated by status='replied' — finer-grained click data lives in
+  // webhook_events but we keep this read cheap. (Historically this comment
+  // also mentioned 'wechat_added' as a status value, but that was never
+  // written; it was removed from the status constants per finding #6.)
   const [{ data: contactedRows }, { data: wechatRows }] = await Promise.all([
     supabase
       .from("pipeline_leads")

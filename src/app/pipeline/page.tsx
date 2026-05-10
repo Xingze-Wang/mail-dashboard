@@ -54,7 +54,7 @@ import { DiscoveryCard } from "./DiscoveryCard";
 import { AddLeadModal } from "./AddLeadModal";
 import { ReassignModal } from "./ReassignModal";
 import { paletteFor, initialsFor } from "./repColors";
-import { isAgeGated } from "@/lib/policy";
+import { isAgeGated, isReadyToSend, isRipeningLead } from "@/lib/policy";
 import { ActiveContractCard } from "@/components/ActiveContractCard";
 import { useLocale, t } from "@/lib/i18n";
 
@@ -240,21 +240,17 @@ const STATUS_CHIPS = [
 ] as const;
 type StatusKey = (typeof STATUS_CHIPS)[number]["key"];
 
-// Paper-age gate — mirrors SEND_MIN_AGE_DAYS in src/lib/contact-guard.ts.
-// A lead is "ripening" if the underlying paper was published less than 7
-// days ago; server-side contact-guard will block a send unless the caller
-// explicitly overrides.
-const MIN_PAPER_AGE_DAYS = 7;
-function paperAgeDays(publishedAt: string | null | undefined): number | null {
-  if (!publishedAt) return null;
-  const t = Date.parse(publishedAt);
-  if (isNaN(t)) return null;
-  return (Date.now() - t) / 86_400_000;
-}
-function isRipening(lead: { status: string; publishedAt: string | null }): boolean {
-  if (lead.status !== "ready") return false;
-  const age = paperAgeDays(lead.publishedAt);
-  return age !== null && age < MIN_PAPER_AGE_DAYS;
+// "Ripening" = status='ready' AND past the 7-day cooldown gate.
+// Anchored on `created_at` (when the lead entered our pipeline), which
+// is the same anchor the server-side `/api/pipeline/ready-count` and
+// `contact-guard.ts` use. The previous version of this file anchored on
+// `published_at` instead, producing a three-way mismatch between the
+// page header, the sidebar badge, and the batch-send banner — see the
+// 2026-05-09 smoke. Use the canonical helpers from src/lib/policy.ts;
+// the wrapper here just adapts the `Lead` shape (camelCase fields) to
+// the helper's snake_case-agnostic input.
+function isRipening(lead: { status: string; createdAt: string }): boolean {
+  return isRipeningLead({ status: lead.status, createdAt: lead.createdAt });
 }
 
 const SORT_OPTIONS = [
@@ -637,6 +633,19 @@ export default function PipelinePage() {
   };
 
   const handleSend = useCallback(async (lead: Lead, override?: boolean) => {
+    // Confirm-before-send. Sales reported the previous behavior fired
+    // immediately on click, with no preview of WHO the mail goes to or
+    // WHAT subject it has — and a misclick on a hot row sent a real
+    // email. A native confirm() keeps it lightweight and unblocked
+    // by the design system; the body is short so it fits the dialog.
+    const subject = lead.draftSubject ?? "(no subject yet)";
+    const recipient = lead.authorEmail ?? "(no recipient)";
+    const overrideHint = override ? "\n\n⚠ Override: paper is <7 days old." : "";
+    const ok = typeof window !== "undefined"
+      ? window.confirm(`Send to ${recipient}?\nSubject: ${subject}${overrideHint}`)
+      : true;
+    if (!ok) return;
+
     setSending(lead.id);
     try {
       const res = await fetch("/api/pipeline/send", {
@@ -644,15 +653,23 @@ export default function PipelinePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: lead.id, override: override === true }),
       });
-      const data = await res.json();
+      let data: Record<string, unknown> = {};
+      try { data = await res.json(); } catch { /* non-JSON body */ }
       if (!res.ok) {
-        toast({ variant: "error", title: "Send failed", description: data.error });
+        // Surface the API's specific error string. Falls through to a
+        // status-code hint when the body has no .error field, instead
+        // of the previous undefined-as-description that rendered as a
+        // bare red banner with no info.
+        const apiError = typeof data.error === "string" ? data.error : null;
+        const description = apiError ?? `Send failed (HTTP ${res.status}). Try again or check the lead status.`;
+        toast({ variant: "error", title: "Send failed", description });
       } else {
         toast({ variant: "success", title: "Email sent", description: lead.authorEmail });
         fetchLeads();
       }
-    } catch {
-      toast({ variant: "error", title: "Send failed", description: "Network error" });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Network error";
+      toast({ variant: "error", title: "Send failed", description: msg });
     } finally {
       setSending(null);
     }

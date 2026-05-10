@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
+import { requireAdmin } from "@/lib/auth-helpers";
 
 /**
  * GET /api/scorer — returns all training runs for the dashboard
@@ -50,6 +51,20 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  // Auth: EITHER a SCORER_INGEST_KEY bearer (for scripts/train_scorer.py)
+  // OR an admin session (for in-app uploads). Without this gate, paired
+  // with /api/scorer/promote-latest (which picks the newest scorer_runs
+  // row by trained_at), any caller could swap the live model by
+  // inserting a future-timestamped row. Same shape as
+  // /api/pipeline/import.
+  const ingestKey = process.env.SCORER_INGEST_KEY;
+  const auth = req.headers.get("authorization") || "";
+  const hasValidKey = !!ingestKey && auth === `Bearer ${ingestKey}`;
+  if (!hasValidKey) {
+    const gate = await requireAdmin(req);
+    if ("response" in gate) return gate.response;
+  }
+
   try {
     const body = await req.json();
 

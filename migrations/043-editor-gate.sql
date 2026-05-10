@@ -8,6 +8,16 @@
 -- 2. WHO WRITES
 -- editor_reviews: api/editor/review (auto when a contract carries a content change)
 -- editor_appeals: api/editor/appeal (company submits) + admin decision
+--
+-- 3. WHO READS
+-- - /editor admin queue (reviews pending appeal/admin attention)
+-- - api/proposals/* (gate: pass/revise advances, block requires appeal)
+-- - audit log when investigating "why did X ship?"
+--
+-- 4. BACKFILL FOR OLD ROWS
+-- (d) not applicable — new tables, history starts now. Pre-existing
+-- proposals and contracts have no review row; readers must treat
+-- "no editor_reviews row" as ungated (legacy) rather than blocked.
 
 create table if not exists editor_reviews (
   id uuid primary key default gen_random_uuid(),

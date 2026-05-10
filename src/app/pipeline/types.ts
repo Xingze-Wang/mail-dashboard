@@ -160,13 +160,18 @@ export interface SendCheck {
 
 const SEND_MIN_AGE_MS = 7 * 86_400_000;
 
+// Anchored on `createdAt` to match the canonical `isAgeGated` /
+// `isReadyToSend` helpers in src/lib/policy.ts. Earlier this used
+// `publishedAt`, which produced a different "ripening" set than the
+// server-side ready-count endpoint and the batch-send banner — see
+// the 2026-05-09 smoke (#26: three-way ready-count mismatch).
 export function canSend(lead: Lead): SendCheck {
   if (lead.status !== "ready") return { ok: false, reason: "Not ready" };
   if (!lead.draftHtml) return { ok: false, reason: "No draft" };
-  if (!lead.publishedAt) return { ok: true };
+  if (!lead.createdAt) return { ok: true };
 
-  const pub = new Date(lead.publishedAt);
-  const ageMs = Date.now() - pub.getTime();
+  const created = new Date(lead.createdAt);
+  const ageMs = Date.now() - created.getTime();
   if (ageMs < SEND_MIN_AGE_MS) {
     const remainingMs = SEND_MIN_AGE_MS - ageMs;
     const daysLeft = Math.ceil(remainingMs / 86_400_000);
