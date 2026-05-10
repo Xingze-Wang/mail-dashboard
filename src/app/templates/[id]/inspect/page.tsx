@@ -434,7 +434,11 @@ function ApprovalBar({
   onChanged: () => void;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
-  const [segment, setSegment] = useState<string>(template.segment_default ?? "cn");
+  // Default to whatever the proposal already declares. NULL → "global"
+  // not "cn" — defaulting null to cn silently turned every global
+  // proposal into cn-only on activate. The dropdown's "global (no
+  // segment)" option carries the same semantics as null in DB.
+  const [segment, setSegment] = useState<string>(template.segment_default ?? "global");
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
 

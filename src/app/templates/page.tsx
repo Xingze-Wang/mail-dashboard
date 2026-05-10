@@ -282,21 +282,36 @@ function TemplateLibrary() {
               {group.map((t) => {
                 const swapped = getSwappedContent(t);
                 const title = humanTitle(t);
+                // Card href: pending edits route to /edit so admin can
+                // approve/reject the slot changes; everything else routes
+                // to /inspect which has the ApprovalBar. Proposals
+                // currently never carry pending edits in prod, but the
+                // routing logic is correct either way.
+                const cardHref = t.pending_edits && t.pending_edits.count > 0
+                  ? `/templates/${t.id}/edit`
+                  : `/templates/${t.id}/inspect`;
                 return (
-                  <Link
+                  // Card is a div, NOT a Link — wrapping <a> around
+                  // <button> elements (the inline reject modal) caused
+                  // hydration warnings in React 19. Instead, the body
+                  // is a Link, the action footer is outside the Link.
+                  <div
                     key={t.id}
-                    href={t.pending_edits && t.pending_edits.count > 0
-                      ? `/templates/${t.id}/edit`
-                      : `/templates/${t.id}/inspect`}
                     className="section-card"
                     style={{
                       padding: "14px 16px",
+                      cursor: "default",
+                      transition: "background 0.1s",
+                      borderLeft: `3px solid ${meta.ring}`,
+                    }}
+                  >
+                  <Link
+                    href={cardHref}
+                    style={{
                       display: "block",
                       textDecoration: "none",
                       color: "inherit",
                       cursor: "pointer",
-                      transition: "background 0.1s",
-                      borderLeft: `3px solid ${meta.ring}`,
                     }}
                   >
                     {/* Top row: title + segment + open arrow */}
@@ -400,21 +415,21 @@ function TemplateLibrary() {
                       </div>
                     )}
 
-                    {/* Footnote — internal name + provenance, small + tertiary */}
+                  </Link>
+                    {/* Footnote — internal name + provenance, small + tertiary.
+                        OUTSIDE the Link so the InlineRejectButton modal can
+                        be portaled without nesting <button> inside <a>. */}
                     <div style={{ marginTop: 8, fontSize: 11, color: "var(--text-tertiary)", display: "flex", gap: 12, alignItems: "center" }}>
                       <span style={{ fontFamily: "monospace" }}>{t.name}</span>
                       {t.proposed_by && <span>via {t.proposed_by}</span>}
                       <span>· updated {new Date(t.updated_at).toLocaleDateString()}</span>
-                      {/* Inline actions for proposal/approved_draft. The
-                          stopPropagation calls keep the surrounding <Link>
-                          from navigating when admin clicks an action. */}
                       {(t.status === "proposal" || t.status === "approved_draft") && (
                         <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
                           <InlineRejectButton templateId={t.id} templateName={t.name} />
                         </span>
                       )}
                     </div>
-                  </Link>
+                  </div>
                 );
               })}
             </div>
