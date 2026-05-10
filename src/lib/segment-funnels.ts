@@ -177,22 +177,37 @@ export async function computeSegmentFunnels(opts: LoadOpts = {}): Promise<Segmen
   // 3. Load lead features keyed by lowercased author_email — for cross-axis
   // dimensions (school tier, h-index, etc) the features come from
   // pipeline_leads, joined to emails by recipient address.
-  const { data: leadsRaw } = await supabase
-    .from("pipeline_leads")
-    .select("author_email, school_tier, lead_tier, h_index, citation_count, matched_directions, assigned_rep_id");
+  //
+  // CRITICAL: Supabase silently caps a single .select() at 1000 rows.
+  // Before pagination, this dropped 30%+ of leads (1443 in DB → only
+  // first 1000 in the join Map), causing every emailed-recipient whose
+  // lead happened to be in rows 1001-1443 to bucket as "(no lead data)"
+  // instead of their actual h_index/school_tier. The H-index slice
+  // showed ~148 emails when the real number was 1000+.
   const featureByEmail = new Map<string, LeadFeatures>();
-  for (const l of leadsRaw ?? []) {
-    const em = (l.author_email as string | null)?.toLowerCase().trim();
-    if (!em) continue;
-    featureByEmail.set(em, {
-      email: em,
-      school_tier: l.school_tier as number | null,
-      lead_tier: l.lead_tier as string | null,
-      h_index: l.h_index as number | null,
-      citation_count: l.citation_count as number | null,
-      matched_directions: l.matched_directions as string | string[] | null,
-      assigned_rep_id: l.assigned_rep_id as number | null,
-    });
+  let leadCursor = 0;
+  while (true) {
+    const { data: leadsRaw, error } = await supabase
+      .from("pipeline_leads")
+      .select("author_email, school_tier, lead_tier, h_index, citation_count, matched_directions, assigned_rep_id")
+      .range(leadCursor, leadCursor + 999);
+    if (error || !leadsRaw || leadsRaw.length === 0) break;
+    for (const l of leadsRaw) {
+      const em = (l.author_email as string | null)?.toLowerCase().trim();
+      if (!em) continue;
+      featureByEmail.set(em, {
+        email: em,
+        school_tier: l.school_tier as number | null,
+        lead_tier: l.lead_tier as string | null,
+        h_index: l.h_index as number | null,
+        citation_count: l.citation_count as number | null,
+        matched_directions: l.matched_directions as string | string[] | null,
+        assigned_rep_id: l.assigned_rep_id as number | null,
+      });
+    }
+    if (leadsRaw.length < 1000) break;
+    leadCursor += 1000;
+    if (leadCursor > 100_000) break;  // sanity stop, same as emails loop
   }
 
   // 4. Build per-recipient state. We dedupe by recipient because click

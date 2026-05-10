@@ -88,20 +88,23 @@ const MIN_VALID_BUCKETS = 2;
 // ── Loaders ────────────────────────────────────────────────────────────
 
 export async function loadLeadsForAnalysis(scope: AnalysisScope): Promise<LeadRow[]> {
-  let q = supabase.from("pipeline_leads").select(
-    "id, status, author_email, matched_directions, compute_level, compute_confidence, school_tier, school_name, h_index, citation_count, industry_orgs, local_score, lead_tier, published_at, sent_at, assigned_rep_id, source"
-  );
-  if (scope.repId) q = q.eq("assigned_rep_id", scope.repId);
-  if (scope.lookbackDays) {
-    const cutoff = new Date(Date.now() - scope.lookbackDays * 86_400_000).toISOString();
-    q = q.gte("created_at", cutoff);
-  }
-  const { data, error } = await q;
-  if (error) {
-    console.error("loadLeadsForAnalysis failed:", error.message);
-    return [];
-  }
-  return (data ?? []) as LeadRow[];
+  // Paginate past Supabase's silent 1000-row cap. With 1443+ leads
+  // in prod, a single .select() would cut analysis to ~70% of
+  // population — and silently. See src/lib/supabase-paginate.ts for
+  // the bug history.
+  const { paginateAll } = await import("@/lib/supabase-paginate");
+  const cutoff = scope.lookbackDays
+    ? new Date(Date.now() - scope.lookbackDays * 86_400_000).toISOString()
+    : null;
+  const rows = await paginateAll<LeadRow>((from, to) => {
+    let q = supabase.from("pipeline_leads").select(
+      "id, status, author_email, matched_directions, compute_level, compute_confidence, school_tier, school_name, h_index, citation_count, industry_orgs, local_score, lead_tier, published_at, sent_at, assigned_rep_id, source",
+    ).range(from, to);
+    if (scope.repId) q = q.eq("assigned_rep_id", scope.repId);
+    if (cutoff) q = q.gte("created_at", cutoff);
+    return q;
+  });
+  return rows;
 }
 
 /** Load WeChat-marked emails for the scope, return as a Set of lead_ids. */
