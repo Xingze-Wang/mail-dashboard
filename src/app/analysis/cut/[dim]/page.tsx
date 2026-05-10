@@ -29,6 +29,18 @@ interface CutData {
   segments: Segment[];
   summary: { summary: string; biggest_lever: string; should_pitch_to_congress: boolean } | null;
   generated_at: string;
+  // Realignment banner data — present when today's snapshot was
+  // freshly published by the daily cron (vs read-through from a
+  // prior day). Populated by /api/cron/insights-realign when its
+  // LLM gatekeeper decides today's data has moved enough.
+  realignment?: {
+    reason: string;
+    movement: { segment: string; metric: "ctr" | "post_click_conv" | "sample_size"; from: number; to: number } | null;
+    effective_date: string;
+    prev_snapshot_id: string | null;
+  } | null;
+  effective_date?: string;
+  source?: "snapshot" | "bootstrap";
 }
 
 const SIBLING_CUTS: Array<{ dim: string; label: string }> = [
@@ -108,6 +120,42 @@ export default function CutPage({ params }: { params: Promise<{ dim: string }> }
 
       {/* Sibling cuts */}
       <CutSiblings active={dim} />
+
+      {/* Realignment banner — visible the day the LLM cron decides
+          today's data has moved enough to publish a new snapshot.
+          Diff-style: previous A% → today B% on the biggest mover. */}
+      {data.realignment && (
+        <div
+          style={{
+            marginTop: 14,
+            marginBottom: 18,
+            padding: "12px 14px",
+            background: "linear-gradient(135deg, rgba(124,58,237,0.07), rgba(37,99,235,0.04))",
+            border: "1px solid rgba(124,58,237,0.25)",
+            borderRadius: 8,
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 10,
+          }}
+        >
+          <span style={{ fontSize: 16, lineHeight: "20px" }}>✨</span>
+          <div style={{ flex: 1, fontSize: 13, color: "var(--text)", lineHeight: 1.55 }}>
+            <div style={{ fontSize: 11, color: "#7c3aed", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>
+              今日重对齐 · {data.realignment.effective_date}
+            </div>
+            {data.realignment.movement && (
+              <div style={{ marginBottom: 4, fontFamily: "monospace", fontSize: 12 }}>
+                <span style={{ color: "var(--text-secondary)" }}>{data.realignment.movement.segment}</span>
+                <span style={{ color: "var(--text-tertiary)" }}> · {data.realignment.movement.metric}: </span>
+                <span style={{ color: "var(--text-tertiary)" }}>{data.realignment.movement.from}%</span>
+                <span style={{ color: "var(--text-secondary)" }}> → </span>
+                <span style={{ color: "var(--text)", fontWeight: 600 }}>{data.realignment.movement.to}%</span>
+              </div>
+            )}
+            <div>{data.realignment.reason}</div>
+          </div>
+        </div>
+      )}
 
       {/* Bot summary */}
       {data.summary && (

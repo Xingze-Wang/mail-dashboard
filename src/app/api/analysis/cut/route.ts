@@ -1,10 +1,19 @@
 // GET /api/analysis/cut?dim={geo_binary|geo_detail|school_tier|lead_tier|h_index|citations|direction}
 //
-// Generic cut endpoint — pulls one dimension from computeSegmentFunnels
-// and asks the LLM for a 3-5 sentence interpretation. Replaces the
-// per-cut endpoint sprawl (geo, direction, …) with one route.
+// Reads from insights_snapshots (mig 075). Daily LLM cron decides
+// whether to publish a new snapshot — see /api/cron/insights-realign.
+// Users see the same numbers all day; the realignment banner fires
+// only when the day's data has actually moved meaningfully.
+//
+// Bootstrapping fallback: if no snapshot exists yet (very first read
+// after migration), fall through to a live compute and inline-publish
+// the result with decided_by='bootstrap'.
+//
+// LLM summary is cached on the snapshot too (computed once during
+// realignment, not on every page click).
 
 import { NextRequest, NextResponse } from "next/server";
+import { supabase } from "@/lib/db";
 import { requireSession } from "@/lib/auth-helpers";
 import { computeSegmentFunnels } from "@/lib/segment-funnels";
 import { llmChat } from "@/lib/llm-proxy";
@@ -59,6 +68,40 @@ export async function GET(req: NextRequest) {
   }
   const lookbackDays = daysParam ? Math.max(7, Math.min(365, Number(daysParam) || 90)) : 90;
 
+  // Fast path: read most-recent published snapshot for this scope.
+  // Per-rep snapshots are stored separately when present; we check
+  // those first, then fall back to org-wide if a per-rep one doesn't
+  // exist (most common — the daily cron only computes org-wide).
+  const snapshot = await readSnapshot({ dim, repId, lookbackDays });
+  if (snapshot) {
+    return NextResponse.json({
+      dim,
+      label: meta.label,
+      slice_label: meta.sliceLabel,
+      scope: { repId, lookbackDays, isAdmin },
+      totals: snapshot.payload.totals,
+      segments: snapshot.payload.segments ?? [],
+      summary: snapshot.payload.summary ?? null,
+      // Realignment banner data — when present the page shows
+      // "Previous: A%. This week: B%. ..."
+      realignment: snapshot.realignment_reason
+        ? {
+            reason: snapshot.realignment_reason,
+            movement: snapshot.movement_summary,
+            effective_date: snapshot.effective_date,
+            prev_snapshot_id: snapshot.prev_snapshot_id,
+          }
+        : null,
+      effective_date: snapshot.effective_date,
+      generated_at: snapshot.computed_at,
+      source: "snapshot",
+    });
+  }
+
+  // Bootstrap fallback: no snapshot yet (e.g. day 1 after deploy
+  // before the cron has fired, or a per-rep view that's never been
+  // computed). Compute live, persist as a bootstrap row so the
+  // next click is fast.
   const funnels = await computeSegmentFunnels({ repId, lookbackDays });
   const dimension = funnels.dimensions.find((d) => d.dimension === dim);
 
@@ -87,6 +130,26 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // Persist bootstrap. Idempotent via the (dim, scope, date) unique
+  // index — if two requests race, second one no-ops on conflict.
+  const today = new Date().toISOString().slice(0, 10);
+  const payload = {
+    totals: funnels.totals,
+    segments: dimension?.segments ?? [],
+    summary,
+  };
+  await supabase.from("insights_snapshots").upsert(
+    {
+      dimension: dim,
+      rep_id: repId,
+      lookback_days: lookbackDays,
+      payload,
+      decided_by: "bootstrap",
+      effective_date: today,
+    },
+    { onConflict: "dimension,rep_id,lookback_days,effective_date" },
+  );
+
   return NextResponse.json({
     dim,
     label: meta.label,
@@ -95,6 +158,45 @@ export async function GET(req: NextRequest) {
     totals: funnels.totals,
     segments: dimension?.segments ?? [],
     summary,
+    realignment: null,
+    effective_date: today,
     generated_at: new Date().toISOString(),
+    source: "bootstrap",
   });
+}
+
+interface SnapshotRow {
+  payload: { totals: { delivered: number; clicked: number; wechat: number }; segments: unknown[]; summary: unknown };
+  realignment_reason: string | null;
+  movement_summary: unknown;
+  prev_snapshot_id: string | null;
+  effective_date: string;
+  computed_at: string;
+}
+
+/**
+ * Read the most-recent published snapshot for (dim, scope). For per-rep
+ * scope we first try the rep-specific snapshot; if none, we use the
+ * org-wide one (because the cron only realigns org-wide).
+ */
+async function readSnapshot(args: { dim: string; repId: number | null; lookbackDays: number }): Promise<SnapshotRow | null> {
+  const { dim, repId, lookbackDays } = args;
+  const probe = async (rid: number | null): Promise<SnapshotRow | null> => {
+    let q = supabase
+      .from("insights_snapshots")
+      .select("payload, realignment_reason, movement_summary, prev_snapshot_id, effective_date, computed_at")
+      .eq("dimension", dim)
+      .eq("lookback_days", lookbackDays)
+      .order("effective_date", { ascending: false })
+      .limit(1);
+    q = rid == null ? q.is("rep_id", null) : q.eq("rep_id", rid);
+    const { data, error } = await q.maybeSingle();
+    if (error || !data) return null;
+    return data as SnapshotRow;
+  };
+  if (repId != null) {
+    const perRep = await probe(repId);
+    if (perRep) return perRep;
+  }
+  return probe(null);
 }
