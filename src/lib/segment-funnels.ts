@@ -311,32 +311,54 @@ export async function computeSegmentFunnels(opts: LoadOpts = {}): Promise<Segmen
   // We escalate through the list, keeping the first match that has
   // school_tier. This way an arxiv-matched feat with null tier still
   // gets domain-fallback enrichment for the tier slot.
+  // Resolve lead features through 4 paths in priority order. The
+  // PRIOR version short-circuited on school_tier!=null, which meant
+  // a lead with lead_tier='strong' but school_tier=null got DROPPED
+  // for the lead_tier dimension cut even though the data exists.
+  // Symptom user reported: "/analysis/cut/lead_tier shows no
+  // strong/normal data". Fix: pick the richest feat available
+  // across all 4 paths, merging field-by-field rather than picking
+  // one wholesale. Each consumer downstream guards on its own
+  // field anyway.
   const resolveFeat = (em: string, arxivId: string | null): LeadFeatures | null => {
     const viaArxiv = arxivId ? featureByArxiv.get(arxivId) ?? null : null;
-    if (viaArxiv && viaArxiv.school_tier != null) return viaArxiv;
-    const direct = featureByEmail.get(em);
-    if (direct && direct.school_tier != null) return direct;
+    const direct = featureByEmail.get(em) ?? null;
     const pid = emailToPersonId.get(em);
     const viaPerson = pid ? featureByPersonId.get(pid) ?? null : null;
-    if (viaPerson && viaPerson.school_tier != null) return viaPerson;
 
-    // Domain-level fallback. Synthesize a minimal LeadFeatures from
-    // SCHOOL_DATA so school_tier-based cuts have signal.
-    const schoolInfo = getSchoolInfo(em);
-    if (schoolInfo) {
-      // Prefer the most-data-rich source we have. arxiv first because
-      // that's the most specific to "what we mailed them about".
-      const base = viaArxiv ?? direct ?? viaPerson ?? {
-        email: em,
-        school_tier: null, lead_tier: null, h_index: null,
-        citation_count: null, matched_directions: null, assigned_rep_id: null,
-      };
-      return {
-        ...base,
-        school_tier: base.school_tier ?? schoolInfo.tier,
-      };
+    const sources = [viaArxiv, direct, viaPerson].filter(
+      (s): s is LeadFeatures => s !== null,
+    );
+    if (sources.length === 0) {
+      // Domain-only fallback: synthesize a feat with just school_tier
+      // from the email's domain so school_tier-based cuts still bucket.
+      const schoolInfo = getSchoolInfo(em);
+      if (schoolInfo) {
+        return { email: em, school_tier: schoolInfo.tier, lead_tier: null,
+          h_index: null, citation_count: null, matched_directions: null,
+          assigned_rep_id: null };
+      }
+      return null;
     }
-    return viaArxiv ?? direct ?? viaPerson ?? null;
+
+    // Merge across all sources — first non-null wins per field. This
+    // lets a lead row that only has lead_tier still surface in the
+    // lead_tier dimension, while school_tier fills from another path.
+    const merged: LeadFeatures = {
+      email: em,
+      school_tier: sources.find((s) => s.school_tier != null)?.school_tier ?? null,
+      lead_tier: sources.find((s) => s.lead_tier != null)?.lead_tier ?? null,
+      h_index: sources.find((s) => s.h_index != null)?.h_index ?? null,
+      citation_count: sources.find((s) => s.citation_count != null)?.citation_count ?? null,
+      matched_directions: sources.find((s) => s.matched_directions != null)?.matched_directions ?? null,
+      assigned_rep_id: sources.find((s) => s.assigned_rep_id != null)?.assigned_rep_id ?? null,
+    };
+    // Backfill school_tier from domain if still null after the merge.
+    if (merged.school_tier == null) {
+      const schoolInfo = getSchoolInfo(em);
+      if (schoolInfo) merged.school_tier = schoolInfo.tier;
+    }
+    return merged;
   };
   // Track per-recipient the arxiv_id we'll use to resolve features.
   // If a recipient appears on multiple emails for different papers,

@@ -69,13 +69,11 @@ export default function ModelBenchPage() {
 
 function KindSection({ title, subtitle, rows, kind }: { title: string; subtitle: string; rows: LeaderboardRow[]; kind: string }) {
   const sorted = [...(rows ?? [])].sort((a, b) => {
-    const ma = a.mae ?? a.approval_agreement ?? null;
-    const mb = b.mae ?? b.approval_agreement ?? null;
     if (kind === "email_quality_judge") {
-      // higher agreement is better
+      // higher agreement is better; null sorts last
       return (b.approval_agreement ?? -1) - (a.approval_agreement ?? -1);
     }
-    // lower MAE is better
+    // lower MAE is better; null sorts last
     return (a.mae ?? 99) - (b.mae ?? 99);
   });
 

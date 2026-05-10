@@ -29,6 +29,10 @@ export interface Lead {
   s2AuthorId: string | null;
   threadId: string | null;
   industryOrgs?: string[] | null;
+  // Multi-click interest signal (mig 078). Bumped on every
+  // email.clicked webhook. > 1 = recipient came back to the email.
+  clickCount?: number | null;
+  lastClickAt?: string | null;
 }
 
 export interface Rep {

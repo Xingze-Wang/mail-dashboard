@@ -72,8 +72,12 @@ export async function GET(req: NextRequest) {
       let agree = 0, total = 0;
       for (const pred of preds) {
         if (!pred.template_id) continue;
-        const adminApproved = tmplStatus.get(pred.template_id) === "active" ? 1 : 0;
-        const rejected = tmplStatus.get(pred.template_id) === "archived" ? 1 : 0;
+        const status = tmplStatus.get(pred.template_id);
+        // Migration 066 added 'approved_draft' as an intermediate
+        // approve-but-not-yet-active state. Both 'active' and
+        // 'approved_draft' count as ground-truth-approved by admin.
+        const adminApproved = (status === "active" || status === "approved_draft") ? 1 : 0;
+        const rejected = status === "archived" ? 1 : 0;
         if (adminApproved === 0 && rejected === 0) continue; // pending — no GT yet
         const aiApproved = (pred.headline ?? 0) >= 0.5 ? 1 : 0;
         if (aiApproved === adminApproved) agree++;

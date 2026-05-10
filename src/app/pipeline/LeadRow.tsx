@@ -230,6 +230,26 @@ function LeadRowInner({
             ) : lead.publishedAt ? (
               <span>{relativeTime(lead.publishedAt)}</span>
             ) : null}
+            {lead.clickCount && lead.clickCount > 0 && (
+              <>
+                <span className="dx-meta-dot" />
+                {/* Multi-click signal (mig 078). > 1 = recipient came back —
+                    that's stronger interest than a one-and-done click. */}
+                <span
+                  title={
+                    lead.clickCount > 1
+                      ? `Clicked ${lead.clickCount}× — they came back ${lead.clickCount - 1} more time(s)${lead.lastClickAt ? ", last on " + new Date(lead.lastClickAt).toLocaleDateString() : ""}`
+                      : `Clicked once${lead.lastClickAt ? " on " + new Date(lead.lastClickAt).toLocaleDateString() : ""}`
+                  }
+                  style={{
+                    color: lead.clickCount >= 3 ? "var(--dx-green)" : lead.clickCount >= 2 ? "var(--dx-amber)" : "var(--dx-text-3)",
+                    fontWeight: lead.clickCount >= 2 ? 600 : 500,
+                  }}
+                >
+                  {lead.clickCount}× click{lead.clickCount > 1 ? "s" : ""}
+                </span>
+              </>
+            )}
           </span>
         )}
       </div>

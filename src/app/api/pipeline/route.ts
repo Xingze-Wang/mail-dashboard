@@ -65,6 +65,8 @@ function mapLead(l: Record<string, unknown>) {
     assignedRepId: l.assigned_rep_id,
     threadId: (l.thread_id as string | null) ?? null,
     industryOrgs: Array.isArray(l.industry_orgs) ? (l.industry_orgs as string[]) : null,
+    clickCount: (l.click_count as number | null) ?? null,
+    lastClickAt: (l.last_click_at as string | null) ?? null,
   };
 }
 

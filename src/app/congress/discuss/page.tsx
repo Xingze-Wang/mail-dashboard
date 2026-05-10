@@ -5,7 +5,7 @@
 // personas debate in real time. Each persona's turn streams in as it
 // completes, producing a chat-room feel.
 
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2, Play, RefreshCw, Users } from "lucide-react";
 import { CONGRESS_SAMPLES } from "@/lib/bench-congress";
@@ -37,7 +37,18 @@ const PERSONA_COLOR: Record<string, string> = {
   synthesizer:     "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-200",
 };
 
+// Next 16 requires useSearchParams() to be inside a <Suspense> boundary
+// or the build emits a warning + the page loses static prerender. Wrap
+// the inner component and export a thin Suspense shell.
 export default function CongressDiscussPage() {
+  return (
+    <Suspense fallback={<div style={{ padding: 32, fontSize: 13, color: "var(--text-tertiary)" }}>Loading…</div>}>
+      <CongressDiscussInner />
+    </Suspense>
+  );
+}
+
+function CongressDiscussInner() {
   const router = useRouter();
   const params = useSearchParams();
   const [gated, setGated] = useState<"checking" | "allowed" | "forbidden">("checking");

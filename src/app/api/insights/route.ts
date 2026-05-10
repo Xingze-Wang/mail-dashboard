@@ -73,6 +73,40 @@ async function computeGeoSplit(repId: number | null): Promise<GeoSplit | null> {
   }
 }
 
+// Compute compact summaries of the OTHER dimensions so the LLM can
+// write cards about lead_tier / school_tier / h_index / direction.
+// User reported "no normal/strong lead data on insights page" — the
+// root cause was that only geo_binary made it into the LLM's
+// userPayload (Bug #1 from E2E test). Computing all once and passing
+// segment-level CTR + post-click is what unlocks those cards.
+async function computeAllDimensionSplits(repId: number | null): Promise<Record<string, Array<{ segment: string; delivered: number; clicked: number; wechat: number; ctr: number; postClickConv: number }>>> {
+  try {
+    const f = await computeSegmentFunnels({ repId, lookbackDays: 90 });
+    const out: Record<string, Array<{ segment: string; delivered: number; clicked: number; wechat: number; ctr: number; postClickConv: number }>> = {};
+    for (const d of f.dimensions) {
+      // Skip the noisy "(no lead data)" bucket from the LLM's view —
+      // the cards should talk about real signals only. Same with
+      // ultra-fine geo_detail (~50 country buckets).
+      if (d.dimension === "geo_detail") continue;
+      out[d.dimension] = d.segments
+        .filter((s) => s.segment !== "(no lead data)" && s.segment !== "(unknown)")
+        .slice(0, 12)
+        .map((s) => ({
+          segment: s.segment,
+          delivered: s.delivered,
+          clicked: s.clicked,
+          wechat: s.wechat,
+          ctr: Number(s.ctr.toFixed(3)),
+          postClickConv: Number(s.postClickConv.toFixed(3)),
+        }));
+    }
+    return out;
+  } catch (err) {
+    console.error("[insights] all-dim splits failed", err);
+    return {};
+  }
+}
+
 function asObj(x: unknown): Record<string, unknown> {
   return typeof x === "object" && x !== null ? (x as Record<string, unknown>) : {};
 }
@@ -148,6 +182,8 @@ const SYSTEM_REP = `你是这位销售 rep 的资深 advisor. 你看完所有数
 - 用 user_preferences_for_insights 决定哪些主题进/出 (memory 里 insights: 前缀的条目)
 
 geo_split (CN .cn vs 海外) 是这个产品最重要的切片之一. 你应该**主动判断**它对这个 rep 现在重不重要 (新人 vs 老 rep, 国内主导 vs 海外主导, 上周 vs 90 天). 如果重要, 把它做成一张带强观点的卡 ("你海外样本只有 12, 别下结论" 也是合理的卡). 不要因为它是默认数据就生搬硬套.
+
+segment_splits 包含其他切片: lead_tier (strong / normal — 哪类 lead 在转化), school_tier (Tier 1/2/3 学校的差异), h_index (作者引用量段), citations, direction (研究方向). 这些是 rep 真正在意的: "我邮件大部分发到 Tier 1, 但 Tier 2 转化更高" 是非常值得做卡的洞察. 主动从 segment_splits 里挖一两条最反直觉/最 actionable 的, 写成卡.
 
 返回严格 JSON, schema:
 {
@@ -287,9 +323,10 @@ export async function computeInsightsPayload(args: {
   const memArr = (asObj(memTool?.result).memory as Array<{ kind: string; body: string }>) ?? [];
   const prefs = extractInsightsPrefs(memArr);
 
-  const [weekly, geoSplit] = await Promise.all([
+  const [weekly, geoSplit, allDimSplits] = await Promise.all([
     isAdmin ? getWeeklyConversionsOrgWide(8) : getWeeklyConversionsForRep(repId, 8),
     computeGeoSplit(isAdmin ? null : repId),
+    computeAllDimensionSplits(isAdmin ? null : repId),
   ]);
   const sparkline = buildSparkline(weekly);
   const lastTwo = sparkline.slice(-2);
@@ -306,6 +343,10 @@ export async function computeInsightsPayload(args: {
     headline_metric: { this_week_conversions: thisWeek, last_week_conversions: lastWeek, delta },
     weekly_history: weekly,
     geo_split: geoSplit,
+    // Per-dimension funnel data — lead_tier (strong/normal), school_tier
+    // (Tier 1/2/3), h_index buckets, citation buckets, direction. The
+    // LLM uses these to write segment-specific cards.
+    segment_splits: allDimSplits,
     primitives: Object.fromEntries(toolResults.map((t) => [t.tool, t.result])),
   };
 
