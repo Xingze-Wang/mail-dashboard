@@ -63,14 +63,75 @@ export interface SegmentDimension {
 const MIN_DELIVERED_FOR_CTR = 20;
 const MIN_CLICKED_FOR_CONV = 5;
 
+/**
+ * Per-email region classifier for the geo_detail dimension on /analysis/cut.
+ * Split into named buckets that map to real CTR/conversion patterns we
+ * care about (CN vs HK vs SG vs US vs UK/Europe-anglo vs East Asia vs etc).
+ *
+ * Order matters: more-specific suffixes must come before fallbacks.
+ * `.edu` (US universities) sits ahead of generic 2-letter TLD checks
+ * because some .edu domains also resolve to country roots we'd miss.
+ * Personal Chinese mail providers (qq/163/126) are still CN even when
+ * the domain isn't .cn — same for proton.me/gmail/outlook which stay
+ * in "Personal Email" as a real bucket (they behave differently from
+ * institutional senders).
+ */
 function locationFromEmail(em: string): string {
-  const d = em.split("@")[1] || "";
-  if (d.endsWith(".cn")) return "Domestic (.cn)";
+  const d = (em.split("@")[1] || "").toLowerCase();
+  if (!d) return "Other";
+
+  // Chinese personal-email providers — these are CN-resident even
+  // though TLD is .com. Surface them as a distinct bucket because they
+  // tend to be junior researchers / students with different CTR.
+  if (/^(qq|163|126|foxmail|139|sina|sohu)\.com$/.test(d)) return "China (personal mail)";
+
+  if (d.endsWith(".cn")) return "China (institutional .cn)";
   if (d.endsWith(".hk")) return "Hong Kong (.hk)";
-  if (d.endsWith(".edu")) return "US (.edu)";
+  if (d.endsWith(".mo")) return "Macao (.mo)";
+  if (d.endsWith(".tw")) return "Taiwan (.tw)";
   if (d.endsWith(".sg")) return "Singapore (.sg)";
-  if (d.endsWith(".jp") || d.endsWith(".kr")) return "Other Asia";
-  if (d.endsWith(".uk") || d.endsWith(".de") || d.endsWith(".fr") || d.endsWith(".ca") || d.endsWith(".au")) return "Other West";
+
+  // US universities — .edu is overwhelmingly US (some non-US use it
+  // but rare). Distinguish from .gov/.mil which also indicate US but
+  // we don't see in our outbound.
+  if (d.endsWith(".edu")) return "US (.edu)";
+  if (d.endsWith(".gov") || d.endsWith(".mil")) return "US (.gov)";
+
+  // English-speaking West, broken out so we can spot UK vs Canada vs AU.
+  if (d.endsWith(".uk") || d.endsWith(".ac.uk")) return "UK (.uk)";
+  if (d.endsWith(".ca")) return "Canada (.ca)";
+  if (d.endsWith(".au")) return "Australia (.au)";
+  if (d.endsWith(".nz")) return "New Zealand (.nz)";
+
+  // East Asia (non-CN/HK/SG/TW).
+  if (d.endsWith(".jp")) return "Japan (.jp)";
+  if (d.endsWith(".kr")) return "Korea (.kr)";
+
+  // Europe (continental, English not dominant).
+  if (d.endsWith(".de")) return "Germany (.de)";
+  if (d.endsWith(".fr")) return "France (.fr)";
+  if (d.endsWith(".ch")) return "Switzerland (.ch)";
+  if (d.endsWith(".nl")) return "Netherlands (.nl)";
+  if (d.endsWith(".it") || d.endsWith(".es") || d.endsWith(".se") || d.endsWith(".no") || d.endsWith(".fi") || d.endsWith(".dk") || d.endsWith(".be") || d.endsWith(".at") || d.endsWith(".ie") || d.endsWith(".pt")) return "Other Europe";
+
+  // Middle East + Africa + South Asia, low volume but worth keeping.
+  if (d.endsWith(".il")) return "Israel (.il)";
+  if (d.endsWith(".sa") || d.endsWith(".ae")) return "Gulf";
+  if (d.endsWith(".in")) return "India (.in)";
+
+  // Personal email (Gmail / Outlook / Hotmail / Yahoo / iCloud / Proton).
+  // These are mostly Chinese researchers using gmail to dodge GFW, plus
+  // some Western researchers. Keep as a single bucket so it doesn't pollute.
+  if (/^(gmail|outlook|hotmail|yahoo|icloud|me|protonmail|proton)\.com$/.test(d) || d === "yahoo.co.uk") {
+    return "Personal Email (gmail/outlook/etc)";
+  }
+
+  // Known industry domains. We don't break these out by country
+  // because they're mostly multinational. The string is purely a label.
+  if (/(amazon|google|microsoft|meta|apple|nvidia|alibaba|tencent|baidu|huawei|bytedance|sensetime|kuaishou|jd\.com|meituan|antgroup|salesforce|adobe|ibm|intel|deepmind|openai|anthropic|hugging?face|databricks)/.test(d)) {
+    return "Industry";
+  }
+
   return "Other";
 }
 

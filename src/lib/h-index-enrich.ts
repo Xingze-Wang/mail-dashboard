@@ -37,17 +37,40 @@ function tokens(s: string): string[] {
   return normalizeName(s).split(/\s+/).filter(Boolean);
 }
 
-/** True if every token of `needle` appears somewhere in `hay`. Used to
- *  match "Hongyuze Cao" against an S2 author name like "Cao Hongyuze"
- *  or "H. Cao". Permissive but anchored to all-tokens-present. */
+/** True if every token of `needle` appears EXACTLY (or as a clear
+ *  initial) in `hay`. Tightened after shard-24 caught misjoins where
+ *  "Yuan" matched "Yuanzhi", "Rui" matched "Ruibin", "Yuxin" matched
+ *  "Yuxing" — startsWith() in either direction is too loose for
+ *  Chinese given names where one extra character is a different person.
+ *
+ *  Rules:
+ *    - Every needle token must appear in hay (case/diacritic-stripped).
+ *    - A needle token can match an initial (single letter + optional
+ *      ".") but NOT a longer prefix. "H" matches "Hongyuze"; "Hong"
+ *      does NOT match "Hongyuze".
+ *    - The CLAUDE.md memory rule (feedback_chinese_name_matching) says
+ *      surname character must match exactly; this enforces that too —
+ *      a needle of ["yuan","wang"] does NOT match ["yuanzhi","wang"]
+ *      because "yuan" ≠ "yuanzhi" and "yuan" is more than 1 char so
+ *      doesn't qualify as an initial.
+ */
 function nameMatch(needle: string, hay: string): boolean {
   const n = tokens(needle);
   const h = new Set(tokens(hay));
   if (n.length === 0) return false;
   return n.every((t) => {
-    // exact token, or hay contains a token starting with this letter
-    // (initials like "H." matching "Hongyuze")
-    return h.has(t) || [...h].some((ht) => ht.startsWith(t) || t.startsWith(ht));
+    if (h.has(t)) return true;
+    // Initial fallback: needle is 1 char (or "x." → 1 char after
+    // strip), and hay contains a token starting with that char.
+    if (t.length === 1) {
+      for (const ht of h) if (ht.startsWith(t)) return true;
+    }
+    // Hay-side initial: hay token is 1 char and matches the start
+    // of the needle token. Same direction as above.
+    if (t.length > 1) {
+      for (const ht of h) if (ht.length === 1 && t.startsWith(ht)) return true;
+    }
+    return false;
   });
 }
 
