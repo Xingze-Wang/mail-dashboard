@@ -481,70 +481,220 @@ function TemplateLibrary() {
  * The order matches the send-time render order in template-assembler:
  *   subject → greeting → intro → rep_intro → school_pitch → cta_signoff
  */
+// Slot-key label for the rendered preview gutter.
+const RENDERED_SLOT_LABEL: Record<string, string> = {
+  subject: "Subject",
+  greeting: "Greeting",
+  intro: "Intro",
+  rep_intro: "Rep intro",
+  school_pitch: "School pitch",
+  cta_signoff: "CTA / sign-off",
+};
+
+const RENDERED_KIND_STYLE: Record<string, { color: string; bg: string; border: string; label: string }> = {
+  fixed:            { color: "#475569", bg: "transparent", border: "transparent", label: "fixed" },
+  segment_selected: { color: "#0369a1", bg: "#eff6ff",    border: "#bfdbfe",     label: "segment" },
+  rule_computed:    { color: "#7e22ce", bg: "#faf5ff",    border: "#e9d5ff",     label: "computed" },
+  ai_generated:     { color: "#a16207", bg: "#fefce8",    border: "#fde68a",     label: "AI-generated · click" },
+};
+
+interface RenderedPart {
+  slot: string;
+  kind: "fixed" | "segment_selected" | "rule_computed" | "ai_generated";
+  rendered: string;
+  source_format: string | null;
+  selection_reason: string | null;
+  resolved_prompt: string | null;
+}
+interface RenderedSample {
+  lead: { id: string; title: string; author_email: string; assigned_rep: { name: string; sender_email?: string | null } };
+  rendered: { subject: string; html: string } | null;
+  parts: RenderedPart[];
+  intro_output?: string;
+}
+
 function ExpandedTemplate({ t, swappedSlot }: { t: EmailTemplateRow; swappedSlot: string | null }) {
-  const slots: Array<{ key: keyof EmailTemplateRow; label: string; emphasis?: boolean }> = [
-    { key: "subject_format", label: "Subject" },
-    { key: "greeting_format", label: "Greeting" },
-    { key: "intro_prompt", label: "Intro" },
-    { key: "rep_intro_format", label: "Rep intro" },
-    { key: "school_pitch_format", label: "School pitch" },
-    { key: "cta_signoff_format", label: "CTA / sign-off" },
-  ];
+  const [sample, setSample] = useState<RenderedSample | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [openPart, setOpenPart] = useState<RenderedPart | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    fetch(`/api/templates/${t.id}/inspect?segment=auto&n=1`, { credentials: "include" })
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
+      .then((j) => {
+        if (cancelled) return;
+        // The inspect API returns `renderings: [...]` — take the first.
+        const first = (j.renderings ?? [])[0];
+        if (!first) { setError("No golden-set lead rendered against this template"); return; }
+        setSample(first as RenderedSample);
+      })
+      .catch((e) => { if (!cancelled) setError(String(e)); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [t.id]);
+
+  if (loading) {
+    return (
+      <div style={{ marginTop: 12, padding: "16px 18px", fontSize: 13, color: "#94a3b8", fontStyle: "italic", background: "#fafafa", border: "1px solid #e5e7eb", borderRadius: 8 }}>
+        Rendering against a golden-set lead…
+      </div>
+    );
+  }
+  if (error || !sample) {
+    return (
+      <div style={{ marginTop: 12, padding: "16px 18px", fontSize: 13, color: "#b91c1c", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8 }}>
+        Couldn&apos;t render preview: {error ?? "unknown"}
+      </div>
+    );
+  }
+
+  // Map the lead's assigned rep slot order to the standard order
+  const orderedSlots = ["subject", "greeting", "intro", "rep_intro", "school_pitch", "cta_signoff"];
+  const partBySlot = new Map<string, RenderedPart>();
+  for (const p of sample.parts) partBySlot.set(p.slot, p);
+
   return (
-    <div style={{
-      marginTop: 12,
-      padding: "16px 18px",
-      background: "#ffffff",
-      border: "1px solid #e5e7eb",
-      borderRadius: 8,
-      fontSize: 14,
-      lineHeight: 1.75,
-      color: "#1f2937",
-      fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-    }}>
-      {slots.map(({ key, label }) => {
-        const text = t[key] as string | undefined;
-        if (!text) return null;
-        const isSwapped = swappedSlot === key;
-        return (
+    <div style={{ marginTop: 12 }}>
+      {/* Mail-client style header so the rep sees this as a REAL email. */}
+      <div style={{
+        background: "#ffffff",
+        border: "1px solid #e5e7eb",
+        borderRadius: 8,
+        overflow: "hidden",
+        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+        fontSize: 14,
+        color: "#1f2937",
+      }}>
+        {/* Envelope */}
+        <div style={{ background: "#f8fafc", borderBottom: "1px solid #e5e7eb", padding: "10px 16px", fontSize: 12, lineHeight: 1.6 }}>
+          <div><span style={{ color: "#64748b", display: "inline-block", width: 36 }}>From</span> {sample.lead.assigned_rep.name}{sample.lead.assigned_rep.sender_email ? ` <${sample.lead.assigned_rep.sender_email}>` : ""}</div>
+          <div><span style={{ color: "#64748b", display: "inline-block", width: 36 }}>To</span> <span style={{ fontFamily: "monospace" }}>{sample.lead.author_email}</span></div>
+          <div style={{ color: "#94a3b8", marginTop: 2 }}>
+            Sample paper: {sample.lead.title.slice(0, 80)}
+          </div>
+        </div>
+
+        {/* Body: one labeled email, each slot a row */}
+        <div style={{ padding: "16px 18px", lineHeight: 1.75 }}>
+          {orderedSlots.map((slot) => {
+            const part = partBySlot.get(slot);
+            if (!part) return null;
+            const isSwapped = swappedSlot === `${slot}_format` || swappedSlot === slot ||
+                              swappedSlot === "intro_prompt" && slot === "intro";
+            const kindStyle = RENDERED_KIND_STYLE[part.kind];
+            return (
+              <div
+                key={slot}
+                onClick={() => setOpenPart(part)}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "110px 1fr",
+                  gap: 14,
+                  marginBottom: slot === "subject" ? 18 : 12,
+                  alignItems: "start",
+                  cursor: "pointer",
+                  padding: "4px 4px",
+                  marginLeft: -4,
+                  marginRight: -4,
+                  borderRadius: 4,
+                  transition: "background 0.1s",
+                }}
+              >
+                <div style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  color: isSwapped ? "#a16207" : kindStyle.color,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.06em",
+                  paddingTop: 4,
+                  textAlign: "right",
+                }}>
+                  {RENDERED_SLOT_LABEL[slot] ?? slot}
+                  {isSwapped && <div style={{ fontWeight: 600, marginTop: 2, color: "#a16207" }}>· 这次改的</div>}
+                  <div style={{ fontWeight: 500, marginTop: 2, opacity: 0.65, fontSize: 9 }}>{kindStyle.label}</div>
+                </div>
+                <div
+                  style={{
+                    whiteSpace: "pre-wrap",
+                    padding: (isSwapped || part.kind === "ai_generated") ? "8px 10px" : "0",
+                    background: isSwapped ? "#fefce8" : kindStyle.bg,
+                    borderLeft: isSwapped ? "3px solid #fde68a" : (part.kind === "ai_generated" ? `3px solid ${kindStyle.border}` : "none"),
+                    borderRadius: (isSwapped || part.kind === "ai_generated") ? 4 : 0,
+                    fontWeight: slot === "subject" ? 600 : 400,
+                    fontSize: slot === "subject" ? 15 : 14,
+                  }}
+                  // sanitizeHtml is DOMPurify-based (see src/lib/sanitize.ts)
+                  dangerouslySetInnerHTML={{ __html: sanitizeHtml(part.rendered) }}
+                />
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Slide-in detail for AI-generated parts: prompt + source format
+          + selection reason. Clicking any part opens this; clicking
+          backdrop closes. */}
+      {openPart && (
+        <div
+          onClick={() => setOpenPart(null)}
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 1000, display: "flex", justifyContent: "flex-end" }}
+        >
           <div
-            key={String(key)}
-            style={{
-              display: "grid",
-              gridTemplateColumns: "110px 1fr",
-              gap: 14,
-              marginBottom: key === "subject_format" ? 18 : 12,
-              alignItems: "start",
-            }}
+            onClick={(e) => e.stopPropagation()}
+            style={{ background: "white", width: "min(560px, 100%)", height: "100%", overflowY: "auto", boxShadow: "-4px 0 24px rgba(0,0,0,0.15)" }}
           >
-            <div style={{
-              fontSize: 10,
-              fontWeight: 700,
-              color: isSwapped ? "#a16207" : "#94a3b8",
-              textTransform: "uppercase",
-              letterSpacing: "0.06em",
-              paddingTop: 4,
-              textAlign: "right",
-            }}>
-              {label}
-              {isSwapped && <div style={{ fontWeight: 600, marginTop: 2, color: "#a16207" }}>· 这次改的</div>}
+            <div style={{ padding: "14px 18px", borderBottom: "1px solid #e5e7eb", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ fontSize: 14, fontWeight: 600 }}>
+                {RENDERED_SLOT_LABEL[openPart.slot] ?? openPart.slot} ·
+                <span style={{ marginLeft: 6, fontSize: 11, color: RENDERED_KIND_STYLE[openPart.kind].color, fontWeight: 500 }}>
+                  {RENDERED_KIND_STYLE[openPart.kind].label}
+                </span>
+              </div>
+              <button onClick={() => setOpenPart(null)} style={{ background: "none", border: "none", fontSize: 18, color: "#94a3b8", cursor: "pointer" }}>×</button>
             </div>
-            <div
-              style={{
-                whiteSpace: "pre-wrap",
-                padding: isSwapped ? "8px 10px" : "0",
-                background: isSwapped ? "#fefce8" : "transparent",
-                borderLeft: isSwapped ? "3px solid #fde68a" : "none",
-                borderRadius: isSwapped ? 4 : 0,
-                fontWeight: key === "subject_format" ? 600 : 400,
-                fontSize: key === "subject_format" ? 15 : 14,
-              }}
-            >
-              {text}
+            <div style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: 14 }}>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: "#64748b", marginBottom: 6 }}>Rendered (in this preview)</div>
+                <div
+                  style={{ fontSize: 13, padding: "10px 12px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, whiteSpace: "pre-wrap" }}
+                  dangerouslySetInnerHTML={{ __html: sanitizeHtml(openPart.rendered) }}
+                />
+              </div>
+              {openPart.source_format && openPart.kind !== "ai_generated" && (
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: "#64748b", marginBottom: 6 }}>Source format (template)</div>
+                  <pre style={{ fontSize: 11, fontFamily: "monospace", padding: "10px 12px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, whiteSpace: "pre-wrap", overflowX: "auto" }}>{openPart.source_format}</pre>
+                </div>
+              )}
+              {openPart.kind === "ai_generated" && openPart.resolved_prompt && (
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: "#a16207", marginBottom: 6 }}>Prompt fed to LLM (after placeholder resolution)</div>
+                  <pre style={{ fontSize: 11, fontFamily: "monospace", padding: "10px 12px", background: "#fefce8", border: "1px solid #fde68a", borderRadius: 6, whiteSpace: "pre-wrap", overflowX: "auto" }}>{openPart.resolved_prompt}</pre>
+                </div>
+              )}
+              {openPart.kind === "ai_generated" && sample.intro_output && (
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: "#a16207", marginBottom: 6 }}>Raw LLM output (pre-HTML-escape)</div>
+                  <pre style={{ fontSize: 11, fontFamily: "monospace", padding: "10px 12px", background: "#fefce8", border: "1px solid #fde68a", borderRadius: 6, whiteSpace: "pre-wrap", overflowX: "auto" }}>{sample.intro_output}</pre>
+                </div>
+              )}
+              {openPart.selection_reason && openPart.kind !== "ai_generated" && (
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: "#64748b", marginBottom: 6 }}>Why this slot</div>
+                  <div style={{ fontSize: 12, color: "#475569", padding: "8px 10px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6 }}>{openPart.selection_reason}</div>
+                </div>
+              )}
             </div>
           </div>
-        );
-      })}
+        </div>
+      )}
     </div>
   );
 }
