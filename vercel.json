@@ -9,6 +9,7 @@
     { "path": "/api/cron/insights-realign",    "schedule": "0 6 * * *" },
     { "path": "/api/cron/insights-prewarm",    "schedule": "15 6 * * *" },
     { "path": "/api/cron/model-bench-eval",    "schedule": "0 8 * * *" },
+    { "path": "/api/missions/heuristic-seed",  "schedule": "0 2 * * *" },
     { "path": "/api/congress/jitr-tick",      "schedule": "0 7 * * 1-5" },
     { "path": "/api/congress/weekly",         "schedule": "0 1 * * 1" },
     { "path": "/api/congress/monthly",        "schedule": "0 2 1 * *" },

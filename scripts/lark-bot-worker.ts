@@ -189,7 +189,12 @@ const dispatcher = new Lark.EventDispatcher({}).register({
     } catch (err) {
       console.error(`[worker] card action threw:`, err);
     }
-    return "";
+    // Card-action handler MUST return an object (Lark SDK
+    // JSON-encodes it into the WS ack frame). Returning "" caused
+    // Lark client to show "Something went wrong code: 200345"
+    // because the SDK tried to JSON.parse a string and failed.
+    // {} = ack without updating the card UI.
+    return {};
   },
 });
 

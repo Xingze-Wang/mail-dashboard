@@ -51,10 +51,8 @@ interface SeedResult {
   skipped_reason?: string;
 }
 
-export async function POST(req: NextRequest) {
-  const admin = await requireAdmin(req);
-  if (!admin) return NextResponse.json({ error: "Admin only" }, { status: 403 });
-
+/** Shared seed logic. POST (admin) and GET (cron) both call this. */
+async function seedMissions(): Promise<{ today: string; results: SeedResult[] }> {
   const today = todayIso();
 
   // Only target sales reps. Admins (role='admin') don't have email
@@ -67,7 +65,7 @@ export async function POST(req: NextRequest) {
     .eq("active", true)
     .eq("role", "sales");
   if (!reps || reps.length === 0) {
-    return NextResponse.json({ error: "No active reps" }, { status: 404 });
+    return { today, results: [] };
   }
 
   const results: SeedResult[] = [];
@@ -149,5 +147,26 @@ export async function POST(req: NextRequest) {
     results.push({ rep_id: repId, rep_name: repName, send_target: sendTarget, reply_target: replyTarget });
   }
 
-  return NextResponse.json({ today, results });
+  return { today, results };
+}
+
+export async function POST(req: NextRequest) {
+  const admin = await requireAdmin(req);
+  if (!admin) return NextResponse.json({ error: "Admin only" }, { status: 403 });
+  const out = await seedMissions();
+  return NextResponse.json(out);
+}
+
+/**
+ * GET /api/missions/heuristic-seed — cron entry point.
+ * Auth: Bearer $CRON_SECRET. Vercel cron runs this daily 02:00 UTC
+ * (10:00 Beijing) so reps see today's missions when they log in.
+ */
+export async function GET(req: NextRequest) {
+  const auth = req.headers.get("authorization");
+  if (auth !== `Bearer ${process.env.CRON_SECRET}`) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+  const out = await seedMissions();
+  return NextResponse.json(out);
 }
