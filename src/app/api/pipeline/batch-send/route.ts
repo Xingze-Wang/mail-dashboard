@@ -3,7 +3,7 @@ import { supabase } from "@/lib/db";
 import { resend } from "@/lib/resend";
 import { recordContact } from "@/lib/scanner";
 import { getRep } from "@/lib/assignment";
-import { checkSendAllowed } from "@/lib/contact-guard";
+import { checkSendAllowed, claimContact, confirmClaim, releaseClaim } from "@/lib/contact-guard";
 import { MIN_AGE_DAYS, leadAgeDays } from "@/lib/policy";
 import { canonicalizeEmail } from "@/lib/email-id";
 import { requireSession } from "@/lib/auth-helpers";
@@ -279,6 +279,25 @@ export async function POST(req: NextRequest) {
         console.error(`[batch-send] freshen threw on lead=${id}:`, e);
       }
 
+      // Atomic claim BEFORE Resend. Hard-closes the double-send race
+      // that checkSendAllowed alone couldn't (mig 079). Two parallel
+      // batches sending to the same recipient both call this; one
+      // wins, the other returns claimed=false and is skipped without
+      // Resend ever firing.
+      const claim = await claimContact({
+        email: toEmail,
+        leadId: id,
+        actorRepId: actingRepId ?? null,
+        paperArxivId: (lead.arxiv_id as string | null) ?? null,
+      });
+      if (!claim.claimed) {
+        await supabase.from("pipeline_leads").update({ status: "ready" }).eq("id", id);
+        blocks[claim.reason === "duplicate" ? "already_claimed" : "claim_db_error"] =
+          (blocks[claim.reason === "duplicate" ? "already_claimed" : "claim_db_error"] || 0) + 1;
+        skipped++;
+        continue;
+      }
+
       let result;
       try {
         result = await resend.emails.send({
@@ -289,6 +308,7 @@ export async function POST(req: NextRequest) {
           html: freshHtml,
         });
       } catch (e) {
+        await releaseClaim(claim.claimId);
         await supabase.from("pipeline_leads").update({ status: "ready" }).eq("id", id);
         const msg = e instanceof Error ? e.message : String(e);
         errors.push(`${toEmail}: ${msg}`);
@@ -298,12 +318,16 @@ export async function POST(req: NextRequest) {
       }
 
       if (result.error) {
+        await releaseClaim(claim.claimId);
         await supabase.from("pipeline_leads").update({ status: "ready" }).eq("id", id);
         errors.push(`${toEmail}: ${result.error.message}`);
         blocks["resend_error"] = (blocks["resend_error"] || 0) + 1;
         skipped++;
         continue;
       }
+
+      // Resend accepted — promote tentative claim to confirmed.
+      await confirmClaim(claim.claimId, result.data?.id ?? null);
 
       // Resend accepted — mark the lead sent FIRST so a downstream failure
       // in the emails insert doesn't strand it at status='sending'. We also

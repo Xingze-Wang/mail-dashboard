@@ -251,6 +251,80 @@ export async function wasRecentlyContacted(email: string): Promise<{ contacted: 
 }
 
 /**
+ * Hard-close the double-send race by claiming the recipient BEFORE
+ * Resend is called. The UNIQUE index on contact_claims.email_normalized
+ * means two parallel sends to the same recipient cannot both INSERT —
+ * one wins (returns the claim row), the other gets Postgres 23505
+ * and returns { claimed: false }. Caller must:
+ *   - If claimed=true, proceed with Resend, then call confirmClaim()
+ *   - If claimed=false, abort the send WITHOUT calling Resend
+ *   - On Resend failure, call releaseClaim() so a retry can succeed
+ *
+ * The audit-CC address (williamxwang03@gmail.com) is excluded from
+ * the unique-index gate (partial index WHERE clause in mig 079) so
+ * every send can deliberately copy it.
+ *
+ * This is the atomic gate that closes the TOCTOU window between
+ * checkSendAllowed() and the actual emails INSERT.
+ */
+export async function claimContact(args: {
+  email: string;
+  leadId?: string | null;
+  actorRepId?: number | null;
+  paperArxivId?: string | null;
+}): Promise<{ claimed: true; claimId: string } | { claimed: false; reason: "duplicate" | "db_error"; error?: string }> {
+  const email = args.email.trim().toLowerCase();
+  if (!email) return { claimed: false, reason: "db_error", error: "empty email" };
+
+  const { data, error } = await supabase
+    .from("contact_claims")
+    .insert({
+      email_normalized: email,
+      actor_rep_id: args.actorRepId ?? null,
+      lead_id: args.leadId ?? null,
+      paper_arxiv_id: args.paperArxivId ?? null,
+    })
+    .select("id")
+    .single();
+
+  if (error) {
+    // 23505 = unique_violation. That's the "another send is already
+    // in flight for this recipient" case — return cleanly so caller
+    // can return the right error code to the user.
+    if (error.code === "23505") return { claimed: false, reason: "duplicate" };
+    // Any other DB error: fail CLOSED. We don't know whether the
+    // recipient is locked, so the safe move is to refuse the send.
+    return { claimed: false, reason: "db_error", error: error.message };
+  }
+  return { claimed: true, claimId: data!.id as string };
+}
+
+/**
+ * Flip the claim to confirmed=true once Resend has accepted the send.
+ * The row stays in place for 365 days as part of the dedup record,
+ * sitting alongside emails.to / email_contact_history.
+ */
+export async function confirmClaim(claimId: string, resendId: string | null): Promise<void> {
+  await supabase
+    .from("contact_claims")
+    .update({ confirmed: true, resend_id: resendId })
+    .eq("id", claimId);
+}
+
+/**
+ * Release the claim when Resend itself failed (network reset, 4xx, etc.)
+ * so the recipient is immediately retriable. Without this, a transient
+ * Resend failure would lock out that recipient until the cleanup cron
+ * GC'd the unconfirmed claim.
+ */
+export async function releaseClaim(claimId: string): Promise<void> {
+  await supabase
+    .from("contact_claims")
+    .delete()
+    .eq("id", claimId);
+}
+
+/**
  * Paper-level firewall — has ANY co-author of this paper been contacted in
  * the last 365 days? Stops the "delete the lead row, then a different
  * scraper finds another co-author" loophole.

@@ -214,6 +214,11 @@ function getSwappedContent(t: EmailTemplateRow): { slot: string; text: string } 
 function TemplateLibrary() {
   const [rows, setRows] = useState<EmailTemplateRow[]>([]);
   const [loading, setLoading] = useState(true);
+  // Inline-expansion state. Clicking a card toggles this; expanded
+  // card renders the FULL email with parts labeled. No navigation to
+  // a separate inspect page — admin asked specifically for "ONE email
+  // with parts labeled" instead of parallel preview boxes.
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -282,19 +287,8 @@ function TemplateLibrary() {
               {group.map((t) => {
                 const swapped = getSwappedContent(t);
                 const title = humanTitle(t);
-                // Card href: pending edits route to /edit so admin can
-                // approve/reject the slot changes; everything else routes
-                // to /inspect which has the ApprovalBar. Proposals
-                // currently never carry pending edits in prod, but the
-                // routing logic is correct either way.
-                const cardHref = t.pending_edits && t.pending_edits.count > 0
-                  ? `/templates/${t.id}/edit`
-                  : `/templates/${t.id}/inspect`;
+                const isExpanded = expandedId === t.id;
                 return (
-                  // Card is a div, NOT a Link — wrapping <a> around
-                  // <button> elements (the inline reject modal) caused
-                  // hydration warnings in React 19. Instead, the body
-                  // is a Link, the action footer is outside the Link.
                   <div
                     key={t.id}
                     className="section-card"
@@ -305,13 +299,14 @@ function TemplateLibrary() {
                       borderLeft: `3px solid ${meta.ring}`,
                     }}
                   >
-                  <Link
-                    href={cardHref}
+                  {/* Header area is the click target. Toggles inline
+                      expansion — same paradigm as Gmail thread. No
+                      navigation to /inspect; everything renders here. */}
+                  <div
+                    onClick={() => setExpandedId(isExpanded ? null : t.id)}
                     style={{
-                      display: "block",
-                      textDecoration: "none",
-                      color: "inherit",
                       cursor: "pointer",
+                      userSelect: "none",
                     }}
                   >
                     {/* Top row: title + segment + open arrow */}
@@ -343,7 +338,7 @@ function TemplateLibrary() {
                         </span>
                       )}
                       <span style={{ marginLeft: "auto", fontSize: 13, color: "var(--blue)" }}>
-                        打开 →
+                        {isExpanded ? "收起 ▴" : "展开 ▾"}
                       </span>
                     </div>
 
@@ -397,8 +392,11 @@ function TemplateLibrary() {
                       </p>
                     )}
 
-                    {/* Inline preview of swapped slot — the actual NEW prose. */}
-                    {swapped && (
+                    {/* Inline preview (collapsed state only) — short
+                        teaser of the swapped slot so admin can scan the
+                        list. When the card is expanded, the full
+                        email below replaces this. */}
+                    {!isExpanded && swapped && (
                       <div style={{
                         background: "#fafafa", border: "1px solid #e5e7eb", borderRadius: 6,
                         padding: "10px 12px", fontSize: 13, lineHeight: 1.7, color: "#1f2937",
@@ -414,17 +412,49 @@ function TemplateLibrary() {
                         </div>
                       </div>
                     )}
+                  </div>{/* end of click-toggle header */}
 
-                  </Link>
-                    {/* Footnote — internal name + provenance, small + tertiary.
-                        OUTSIDE the Link so the InlineRejectButton modal can
-                        be portaled without nesting <button> inside <a>. */}
-                    <div style={{ marginTop: 8, fontSize: 11, color: "var(--text-tertiary)", display: "flex", gap: 12, alignItems: "center" }}>
+                  {/* Expanded body — ONE labeled email, no parallel
+                      preview boxes. Renders the entire template as the
+                      recipient would see it, with each slot's role
+                      shown as a small label on the left margin. This
+                      replaces the old "open inspect" navigation. */}
+                  {isExpanded && (
+                    <ExpandedTemplate t={t} swappedSlot={swapped?.slot ?? null} />
+                  )}
+
+                    {/* Footnote — internal name + provenance, small + tertiary. */}
+                    <div style={{ marginTop: 12, fontSize: 11, color: "var(--text-tertiary)", display: "flex", gap: 12, alignItems: "center" }}>
                       <span style={{ fontFamily: "monospace" }}>{t.name}</span>
                       {t.proposed_by && <span>via {t.proposed_by}</span>}
                       <span>· updated {new Date(t.updated_at).toLocaleDateString()}</span>
                       {(t.status === "proposal" || t.status === "approved_draft") && (
                         <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+                          {isExpanded && (
+                            <>
+                              <Link
+                                href={`/congress/proposals/${t.id}/review`}
+                                style={{
+                                  fontSize: 11, padding: "3px 9px", borderRadius: 6,
+                                  background: "#fef3c7", color: "#92400e",
+                                  textDecoration: "none", border: "1px solid #fde68a",
+                                }}
+                                title="Review with congress's reasoning + leave feedback"
+                              >
+                                Discuss with congress →
+                              </Link>
+                              <Link
+                                href={`/templates/${t.id}/inspect`}
+                                style={{
+                                  fontSize: 11, padding: "3px 9px", borderRadius: 6,
+                                  background: "#eff6ff", color: "#1d4ed8",
+                                  textDecoration: "none", border: "1px solid #bfdbfe",
+                                }}
+                              >
+                                批准 / Activate →
+                              </Link>
+                            </>
+                          )}
                           <InlineRejectButton templateId={t.id} templateName={t.name} />
                         </span>
                       )}
@@ -434,6 +464,85 @@ function TemplateLibrary() {
               })}
             </div>
           </section>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * Renders the entire template as ONE email with parts labeled — no
+ * parallel preview boxes. Slot labels sit as small left-margin
+ * annotations so admin sees "this is the subject, this is the
+ * greeting, this is the school pitch" without losing the email's
+ * actual flow. The swapped slot (the one this proposal changes) gets
+ * a highlighted background so the diff is obvious without diff syntax.
+ *
+ * The order matches the send-time render order in template-assembler:
+ *   subject → greeting → intro → rep_intro → school_pitch → cta_signoff
+ */
+function ExpandedTemplate({ t, swappedSlot }: { t: EmailTemplateRow; swappedSlot: string | null }) {
+  const slots: Array<{ key: keyof EmailTemplateRow; label: string; emphasis?: boolean }> = [
+    { key: "subject_format", label: "Subject" },
+    { key: "greeting_format", label: "Greeting" },
+    { key: "intro_prompt", label: "Intro" },
+    { key: "rep_intro_format", label: "Rep intro" },
+    { key: "school_pitch_format", label: "School pitch" },
+    { key: "cta_signoff_format", label: "CTA / sign-off" },
+  ];
+  return (
+    <div style={{
+      marginTop: 12,
+      padding: "16px 18px",
+      background: "#ffffff",
+      border: "1px solid #e5e7eb",
+      borderRadius: 8,
+      fontSize: 14,
+      lineHeight: 1.75,
+      color: "#1f2937",
+      fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+    }}>
+      {slots.map(({ key, label }) => {
+        const text = t[key] as string | undefined;
+        if (!text) return null;
+        const isSwapped = swappedSlot === key;
+        return (
+          <div
+            key={String(key)}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "110px 1fr",
+              gap: 14,
+              marginBottom: key === "subject_format" ? 18 : 12,
+              alignItems: "start",
+            }}
+          >
+            <div style={{
+              fontSize: 10,
+              fontWeight: 700,
+              color: isSwapped ? "#a16207" : "#94a3b8",
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+              paddingTop: 4,
+              textAlign: "right",
+            }}>
+              {label}
+              {isSwapped && <div style={{ fontWeight: 600, marginTop: 2, color: "#a16207" }}>· 这次改的</div>}
+            </div>
+            <div
+              style={{
+                whiteSpace: "pre-wrap",
+                padding: isSwapped ? "8px 10px" : "0",
+                background: isSwapped ? "#fefce8" : "transparent",
+                borderLeft: isSwapped ? "3px solid #fde68a" : "none",
+                borderRadius: isSwapped ? 4 : 0,
+                fontWeight: key === "subject_format" ? 600 : 400,
+                fontSize: key === "subject_format" ? 15 : 14,
+              }}
+            >
+              {text}
+            </div>
+          </div>
         );
       })}
     </div>

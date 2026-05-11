@@ -256,6 +256,28 @@ export async function buildWeeklyEvidence(): Promise<string> {
     }
   }
 
+  // ─── Admin in-thread feedback on proposals (mig 080) ───────────────
+  // The /congress/proposals/[id]/review surface lets admins push back
+  // on individual proposals with specific text ("tone too aggressive"
+  // / "we already tried this in March"). Surfacing those replies here
+  // tells the synthesizer what to AVOID this round, even before the
+  // proposal is formally rejected.
+  try {
+    const { data: feedback } = await supabase
+      .from("proposal_feedback")
+      .select("body, created_at, template_proposal_id")
+      .gte("created_at", since30)
+      .order("created_at", { ascending: false })
+      .limit(20);
+    if (feedback && feedback.length > 0) {
+      lines.push(`\n## 📝 Admin in-thread feedback on recent proposals (last 30d)`);
+      lines.push(`Admin left these comments on individual proposals — they're iterative ("close but…") rather than terminal rejections. Use them as fine-grained signals: if admin said "tone is too aggressive" on one proposal, don't re-propose anything aggressive.`);
+      for (const f of feedback) {
+        lines.push(`  • [${(f.created_at as string).slice(0, 10)}] on proposal ${(f.template_proposal_id as string).slice(0, 8)}: "${(f.body as string).slice(0, 280)}"`);
+      }
+    }
+  } catch {/* table may not exist on older DBs */}
+
   // ─── Sales rep reactions to last week's proposals ──────────────────
   // /api/cron/congress-chime pushes a chime-in to every rep on Monday
   // 07:30 UTC asking "Congress proposed X — does this match what you've

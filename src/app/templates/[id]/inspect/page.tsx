@@ -40,7 +40,7 @@ interface RenderingLead {
   school_name: string | null;
   school_tier: number | null;
   matched_directions: string[];
-  assigned_rep: { name: string; wechat: string };
+  assigned_rep: { name: string; wechat: string; sender_email: string | null };
   /** True if this lead has never received an email — i.e. would be a
    *  real prospect for this template tomorrow morning. False = backfill. */
   is_unsent: boolean;
@@ -76,6 +76,18 @@ const SLOT_LABEL: Record<string, string> = {
   school_pitch: "School + compute pitch",
   cta_signoff: "CTA + signoff",
   signature: "Signature",
+};
+
+// Maps the inspect-page short slot id ("subject", "intro", etc.) to the
+// email_templates column name the slots API expects. Edits POST/PATCH
+// this column name so the validator accepts them.
+const SLOT_TO_DB_COLUMN: Record<string, string> = {
+  subject: "subject_format",
+  greeting: "greeting_format",
+  intro: "intro_prompt",
+  rep_intro: "rep_intro_format",
+  school_pitch: "school_pitch_format",
+  cta_signoff: "cta_signoff_format",
 };
 
 // 'auto' = use the template's own segment_default (server-side resolves it).
@@ -184,6 +196,17 @@ export default function TemplateInspectPage({ params }: { params: Promise<{ id: 
         </div>
       </div>
 
+      {/* Routing + performance strip — answers "who does this template
+          actually go to, and how has it performed?". For active
+          templates: real numbers from /api/templates/performance.
+          For proposals: shows the routing decision Activate would make
+          (segment_default + assigned rep) and an empty perf state. */}
+      <RoutingAndPerfStrip
+        templateId={data.template.id}
+        templateStatus={data.template.status}
+        segmentDefault={data.template.segment_default}
+      />
+
       {/* Approval actions bar — visible for proposal/approved_draft.
           Two-stage approval: approve-draft (sign off prose) →
           activate (sign off routing). Per migration 066. */}
@@ -282,76 +305,85 @@ export default function TemplateInspectPage({ params }: { params: Promise<{ id: 
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Parts list */}
-              <div className="space-y-2">
-                <h3 className="text-sm font-medium text-slate-700 mb-1">Parts (click any block)</h3>
-                {(active.parts ?? []).map((part) => {
-                  const style = KIND_STYLE[part.kind];
-                  return (
-                    <button
-                      key={part.slot}
-                      onClick={() => setOpenPart(part)}
-                      className={`w-full text-left ${style.bg} border ${style.border} rounded-md p-3 hover:shadow-sm transition`}
-                    >
-                      <div className="flex items-center gap-2 mb-1.5">
-                        <style.Icon className={`w-3.5 h-3.5 ${style.text}`} />
-                        <span className={`text-[10px] font-medium ${style.text}`}>{style.label}</span>
-                        <span className="text-[10px] text-slate-400 font-mono">{SLOT_LABEL[part.slot] ?? part.slot}</span>
-                      </div>
-                      {part.slot === "subject" ? (
-                        <div className="text-sm font-medium text-slate-900">{part.rendered}</div>
-                      ) : (
-                        <div
-                          className="text-[12px] text-slate-700 leading-relaxed prose prose-sm max-w-none"
-                          dangerouslySetInnerHTML={{ __html: sanitizeHtml(part.rendered) }}
-                        />
+            // ONE email with parts labeled inline. The left margin
+            // shows a small label for each block (Subject / Greeting /
+            // Intro / Rep intro / School pitch / CTA), colored by
+            // kind (fixed-text / ai-generated / etc). Clicking any
+            // labeled block opens the slide-in panel with prompt details.
+            // No parallel-column preview — the rendered text IS the
+            // preview, the labels just annotate which slot is which.
+            //
+            // The slot order matches template-assembler's send-time render:
+            // subject → greeting → intro → rep_intro → school_pitch → cta_signoff.
+            <div className="max-w-3xl">
+              <div className="bg-white border border-slate-200 rounded-md shadow-sm overflow-hidden">
+                {/* Envelope: From / To stays as a single header — that's
+                    routing context, not template content. */}
+                <div className="bg-slate-50 border-b border-slate-200 px-5 py-3 space-y-1">
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-[11px] uppercase tracking-wide text-slate-500 w-12 shrink-0">From</span>
+                    <span className="text-[13px] text-slate-900">
+                      {active.lead.assigned_rep.name}
+                      {active.lead.assigned_rep.sender_email && (
+                        <span className="text-slate-500"> &lt;{active.lead.assigned_rep.sender_email}&gt;</span>
                       )}
-                      {(part.selection_reason || part.kind === "ai_generated") && (
-                        <div className="mt-1.5 text-[10px] text-slate-500 font-mono">
-                          {part.kind === "ai_generated" ? "click to see Gemini prompt" : part.selection_reason}
-                        </div>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Mail-client-style preview — From / To / Subject header
-                  + rendered body, like opening the email in Gmail. */}
-              <div>
-                <h3 className="text-sm font-medium text-slate-700 mb-2">Email preview</h3>
-                <div className="bg-white border border-slate-200 rounded-md shadow-sm overflow-hidden">
-                  {/* From / To / Subject envelope */}
-                  <div className="bg-slate-50 border-b border-slate-200 px-4 py-3 space-y-1">
-                    <div className="flex items-baseline gap-2">
-                      <span className="text-[11px] uppercase tracking-wide text-slate-500 w-12 shrink-0">From</span>
-                      <span className="text-[13px] text-slate-900">
-                        {active.lead.assigned_rep.name} &lt;{active.lead.assigned_rep.name.toLowerCase()}@compute.miracleplus.com&gt;
-                      </span>
-                    </div>
-                    <div className="flex items-baseline gap-2">
-                      <span className="text-[11px] uppercase tracking-wide text-slate-500 w-12 shrink-0">To</span>
-                      <span className="text-[13px] text-slate-900 font-mono">{active.lead.author_email}</span>
-                    </div>
-                    <div className="flex items-baseline gap-2 pt-1 border-t border-slate-200/50 mt-1">
-                      <span className="text-[11px] uppercase tracking-wide text-slate-500 w-12 shrink-0">Subj</span>
-                      <span className="text-[14px] font-semibold text-slate-900">
-                        {active.rendered?.subject}
-                      </span>
-                    </div>
+                    </span>
                   </div>
-                  {/* Rendered body */}
-                  <div
-                    className="text-[14px] text-slate-800 leading-relaxed prose prose-sm max-w-none p-5"
-                    dangerouslySetInnerHTML={{ __html: sanitizeHtml(active.rendered?.html ?? "") }}
-                  />
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-[11px] uppercase tracking-wide text-slate-500 w-12 shrink-0">To</span>
+                    <span className="text-[13px] text-slate-900 font-mono">{active.lead.author_email}</span>
+                  </div>
                 </div>
-                {active.lead.assigned_rep.wechat && (
-                  <div className="mt-2 text-[11px] text-slate-500">
-                    WeChat: <span className="font-mono">{active.lead.assigned_rep.wechat}</span>
-                  </div>
-                )}
+
+                {/* The email itself, with each slot labeled in the
+                    left margin. Click any labeled row → slide-in
+                    panel with prompt + source format. */}
+                <div className="p-5 space-y-4">
+                  {(active.parts ?? []).map((part) => {
+                    const style = KIND_STYLE[part.kind];
+                    return (
+                      <div
+                        key={part.slot}
+                        className="grid grid-cols-[110px_1fr] gap-4 cursor-pointer rounded hover:bg-slate-50 -mx-2 px-2 py-1.5"
+                        onClick={() => setOpenPart(part)}
+                      >
+                        {/* Label gutter */}
+                        <div className="pt-1 text-right">
+                          <div className="flex items-center gap-1 justify-end">
+                            <style.Icon className={`w-3 h-3 ${style.text}`} />
+                            <span className={`text-[10px] font-bold uppercase tracking-wide ${style.text}`}>
+                              {SLOT_LABEL[part.slot] ?? part.slot}
+                            </span>
+                          </div>
+                          <div className={`text-[9px] uppercase tracking-wide mt-0.5 ${style.text} opacity-60`}>
+                            {style.label}
+                          </div>
+                        </div>
+                        {/* Content — looks like the real email */}
+                        <div>
+                          {part.slot === "subject" ? (
+                            <div className="text-[15px] font-semibold text-slate-900 leading-tight">
+                              {part.rendered}
+                            </div>
+                          ) : (
+                            <div
+                              className="text-[14px] text-slate-800 leading-relaxed prose prose-sm max-w-none"
+                              dangerouslySetInnerHTML={{ __html: sanitizeHtml(part.rendered) }}
+                            />
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+              {active.lead.assigned_rep.wechat && (
+                <div className="mt-3 text-[11px] text-slate-500">
+                  WeChat appended at send time: <span className="font-mono">{active.lead.assigned_rep.wechat}</span>
+                </div>
+              )}
+              <div className="mt-3 text-[11px] text-slate-400">
+                Click any labeled block to see its prompt / source format / selection reason.
               </div>
             </div>
           )}
@@ -375,17 +407,31 @@ export default function TemplateInspectPage({ params }: { params: Promise<{ id: 
             </div>
             <div className="p-4 space-y-4">
               <div>
-                <div className="text-xs font-medium text-slate-500 mb-1">Rendered</div>
+                <div className="text-xs font-medium text-slate-500 mb-1">Rendered preview</div>
                 <div
                   className="text-[12px] text-slate-700 leading-relaxed prose prose-sm max-w-none p-3 bg-slate-50 rounded border border-slate-200"
                   dangerouslySetInnerHTML={{ __html: sanitizeHtml(openPart.rendered) }}
                 />
               </div>
-              {openPart.source_format && openPart.kind !== "ai_generated" && (
-                <div>
-                  <div className="text-xs font-medium text-slate-500 mb-1">Source format (template)</div>
-                  <pre className="text-[11px] font-mono text-slate-700 leading-relaxed p-3 bg-slate-50 rounded border border-slate-200 whitespace-pre-wrap">{openPart.source_format}</pre>
-                </div>
+              {/* INLINE EDITOR — admin asked for it. Loads the current
+                  source_format into a textarea; Save → POSTs to the
+                  slots queue endpoint. Non-admins get the same UI but
+                  POST routes to the diff queue (template_edits) for
+                  review. AI-generated slots (kind='ai_generated') edit
+                  the PROMPT, not the rendered output. */}
+              {SLOT_TO_DB_COLUMN[openPart.slot] && id && data?.template && (
+                <SlotEditor
+                  templateId={id}
+                  templateStatus={data.template.status}
+                  slotKey={SLOT_TO_DB_COLUMN[openPart.slot]}
+                  slotLabel={SLOT_LABEL[openPart.slot] ?? openPart.slot}
+                  initialValue={openPart.source_format ?? openPart.resolved_prompt ?? ""}
+                  isAiSlot={openPart.kind === "ai_generated"}
+                  onSaved={() => {
+                    setOpenPart(null);
+                    void load();
+                  }}
+                />
               )}
               {openPart.selection_reason && openPart.kind !== "ai_generated" && (
                 <div>
@@ -409,6 +455,234 @@ export default function TemplateInspectPage({ params }: { params: Promise<{ id: 
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Compact strip showing (a) where this template gets routed
+ * (segment default + per-rep override + active competitors) and (b)
+ * how its rates have moved over the past 14 vs 28 days so admins can
+ * see whether the proposal is beating the baseline before activating.
+ * Lives just under the page header and above the approval bar.
+ */
+function RoutingAndPerfStrip({
+  templateId, templateStatus, segmentDefault,
+}: { templateId: string; templateStatus: string; segmentDefault: string | null }) {
+  const [perf, setPerf] = useState<{
+    sent: number; clicked: number; wechat: number;
+    clickRate: number; wechatRate: number;
+    clickRateBaseline: number | null;
+  } | null>(null);
+  const [routing, setRouting] = useState<{ active_for_segment: string | null; competitors: number }>({
+    active_for_segment: null, competitors: 0,
+  });
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      // (a) per-template performance over a 28d window
+      try {
+        const r = await fetch(`/api/templates/performance?days=28`, { credentials: "include" });
+        if (r.ok) {
+          const j = await r.json();
+          // Find this template in the list. Performance API returns
+          // all templates; we filter client-side because the route
+          // doesn't accept a single-template filter.
+          const mine = (j.rows ?? []).find((x: { id: string }) => x.id === templateId);
+          if (mine && !cancelled) {
+            setPerf({
+              sent: mine.sent ?? 0,
+              clicked: mine.clicked ?? 0,
+              wechat: mine.wechat ?? 0,
+              clickRate: mine.clickRate ?? 0,
+              wechatRate: mine.wechatRate ?? 0,
+              clickRateBaseline: j.orgBaseline?.clickRate ?? null,
+            });
+          }
+        }
+      } catch {/* best effort */}
+      // (b) routing competitors — how many other templates would
+      // serve the same segment if this got activated
+      try {
+        const r = await fetch(`/api/templates/library`, { credentials: "include" });
+        if (r.ok) {
+          const j = await r.json();
+          const seg = segmentDefault ?? null;
+          const competitors = (j.rows ?? []).filter((x: { id: string; status: string; segment_default: string | null }) =>
+            x.id !== templateId && x.status === "active" && x.segment_default === seg,
+          );
+          const me = (j.rows ?? []).find((x: { id: string }) => x.id === templateId);
+          if (!cancelled) setRouting({
+            active_for_segment: me?.status === "active" ? (seg ?? "global") : null,
+            competitors: competitors.length,
+          });
+        }
+      } catch {/* best effort */}
+      if (!cancelled) setLoaded(true);
+    })();
+    return () => { cancelled = true; };
+  }, [templateId, segmentDefault]);
+
+  if (!loaded) return null;
+
+  const fmtPct = (x: number | null | undefined) => x == null ? "—" : `${(x * 100).toFixed(1)}%`;
+  const lift = perf && perf.clickRateBaseline ? perf.clickRate - perf.clickRateBaseline : null;
+  const liftColor = lift == null ? "text-slate-500" : lift > 0.005 ? "text-emerald-700" : lift < -0.005 ? "text-red-700" : "text-slate-500";
+  const liftSign = lift == null ? "" : lift > 0 ? "+" : "";
+
+  return (
+    <div className="mb-3 p-3 bg-slate-50 border border-slate-200 rounded flex flex-wrap items-center gap-x-6 gap-y-2 text-[12px]">
+      {/* Routing — who this goes to */}
+      <div>
+        <span className="text-slate-500 uppercase tracking-wide text-[10px] mr-1.5">Routes to</span>
+        <span className="font-mono">{segmentDefault ?? "global"}</span>
+        {routing.competitors > 0 && (
+          <span className="ml-1.5 text-amber-700 bg-amber-100 border border-amber-200 rounded px-1.5 py-0.5 text-[10px]">
+            {routing.competitors} active competitor{routing.competitors > 1 ? "s" : ""} same segment
+          </span>
+        )}
+      </div>
+      <div className="text-slate-300">·</div>
+      {/* Performance — what's happening with it */}
+      {perf && perf.sent > 0 ? (
+        <>
+          <div>
+            <span className="text-slate-500 uppercase tracking-wide text-[10px] mr-1.5">Sent (28d)</span>
+            <span className="font-medium">{perf.sent}</span>
+          </div>
+          <div>
+            <span className="text-slate-500 uppercase tracking-wide text-[10px] mr-1.5">CTR</span>
+            <span className="font-medium">{fmtPct(perf.clickRate)}</span>
+            {lift != null && perf.sent >= 20 && (
+              <span className={`ml-1.5 ${liftColor}`}>
+                ({liftSign}{(lift * 100).toFixed(1)}pp vs org baseline {fmtPct(perf.clickRateBaseline)})
+              </span>
+            )}
+            {perf.sent < 20 && perf.sent > 0 && (
+              <span className="ml-1.5 text-slate-400">(low n — need ≥20 sends for lift)</span>
+            )}
+          </div>
+          <div>
+            <span className="text-slate-500 uppercase tracking-wide text-[10px] mr-1.5">WeChat conv</span>
+            <span className="font-medium">{perf.wechat}</span>
+          </div>
+        </>
+      ) : (
+        <div className="text-slate-500 italic">
+          {templateStatus === "proposal" || templateStatus === "approved_draft"
+            ? "No real sends yet — performance will populate once Activated."
+            : "No sends in the last 28 days."}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Inline editor for a single template slot, rendered inside the slide-in
+ * detail panel. Behavior depends on template status:
+ *   - status='active'    → can't edit in place (would change live emails).
+ *                          Shows a "Fork" CTA pointing at /api/templates/fork.
+ *   - status='approved_draft' or 'proposal' → PATCH the slot directly
+ *                          via /api/templates/[id]/slots (admin-only).
+ *   - non-admin user      → POST to the slots queue (template_edits row,
+ *                          status='pending') so admin can review.
+ *
+ * The server enforces all of this — the client just hits the right verb
+ * and surfaces the resulting message.
+ */
+function SlotEditor({
+  templateId, templateStatus, slotKey, slotLabel, initialValue, isAiSlot, onSaved,
+}: {
+  templateId: string;
+  templateStatus: string;
+  slotKey: string;
+  slotLabel: string;
+  initialValue: string;
+  isAiSlot: boolean;
+  onSaved: () => void;
+}) {
+  const [value, setValue] = useState(initialValue);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  // Re-key the local state when the parent opens a DIFFERENT slot.
+  useEffect(() => { setValue(initialValue); setMsg(null); }, [initialValue, slotKey]);
+
+  const dirty = value !== initialValue;
+  const isActive = templateStatus === "active";
+
+  const save = async (verb: "PATCH" | "POST") => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const body: Record<string, string> = { [slotKey]: value };
+      const res = await fetch(`/api/templates/${templateId}/slots`, {
+        method: verb,
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setMsg(`Save failed (${res.status}): ${j.error ?? "unknown"}`);
+        return;
+      }
+      setMsg(verb === "PATCH" ? "Saved ✓" : "Queued for admin review ✓");
+      setTimeout(onSaved, 600);
+    } catch (e) {
+      setMsg(`Network error: ${String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="border border-slate-200 rounded p-3 bg-white">
+      <div className="text-xs font-medium text-slate-500 mb-1.5">
+        Edit {slotLabel} {isAiSlot ? "(prompt fed to LLM)" : "(template source)"}
+      </div>
+      <textarea
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        rows={Math.min(20, Math.max(4, value.split("\n").length + 1))}
+        disabled={busy}
+        className="w-full text-[12px] font-mono p-2.5 bg-slate-50 border border-slate-300 rounded resize-y"
+      />
+      <div className="flex items-center gap-2 mt-2">
+        {isActive ? (
+          <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+            Active templates can&apos;t be edited in place — fork via /api/templates/fork.
+          </div>
+        ) : (
+          <>
+            <button
+              disabled={!dirty || busy}
+              onClick={() => save("PATCH")}
+              className="text-[12px] px-3 py-1 rounded bg-slate-900 text-white font-medium disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {busy ? "Saving…" : "Save (admin)"}
+            </button>
+            <button
+              disabled={!dirty || busy}
+              onClick={() => save("POST")}
+              className="text-[12px] px-3 py-1 rounded border border-slate-300 text-slate-700 font-medium disabled:opacity-40 disabled:cursor-not-allowed"
+              title="Queue this edit for admin review"
+            >
+              Submit for review
+            </button>
+            <button
+              disabled={!dirty || busy}
+              onClick={() => setValue(initialValue)}
+              className="text-[11px] text-slate-500"
+            >
+              Reset
+            </button>
+          </>
+        )}
+        {msg && <span className={`text-[11px] ml-auto ${msg.startsWith("Save") || msg.startsWith("Queued") ? "text-emerald-700" : "text-red-700"}`}>{msg}</span>}
+      </div>
     </div>
   );
 }

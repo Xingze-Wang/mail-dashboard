@@ -3,7 +3,7 @@ import { supabase } from "@/lib/db";
 import { resend } from "@/lib/resend";
 import { recordContact } from "@/lib/scanner";
 import { getRep } from "@/lib/assignment";
-import { checkSendAllowed, SEND_MIN_AGE_DAYS, CONTACT_DEDUP_DAYS } from "@/lib/contact-guard";
+import { checkSendAllowed, SEND_MIN_AGE_DAYS, CONTACT_DEDUP_DAYS, claimContact, confirmClaim, releaseClaim } from "@/lib/contact-guard";
 import { MIN_AGE_DAYS, leadAgeDays } from "@/lib/policy";
 import { canonicalizeEmail } from "@/lib/email-id";
 import { checkBlocked } from "@/lib/blocklist";
@@ -301,10 +301,40 @@ export async function POST(req: NextRequest) {
       finalHtml = resolved.html;
       finalSubject = resolved.subject;
     }
+    // Atomic claim — hard-closes the double-send race. checkSendAllowed
+    // above is a soft check that can race; this is the hard gate. If
+    // another send for the same recipient is already in flight, the
+    // INSERT fails with 23505 and we abort BEFORE calling Resend. See
+    // mig 079 and contact-guard.ts:claimContact.
+    const claim = await claimContact({
+      email: toEmail,
+      leadId: id,
+      actorRepId: actingRepId ?? null,
+      paperArxivId: (lead.arxiv_id as string | null) ?? null,
+    });
+    if (!claim.claimed) {
+      await supabase.from("pipeline_leads").update({ status: "ready" }).eq("id", id);
+      if (claim.reason === "duplicate") {
+        return NextResponse.json(
+          {
+            error: `这位收件人正在被另一封邮件锁定（可能是并行发送或本月已联系）。已经把这条 lead 回滚到 ready，不要重复联系。`,
+            code: "already_claimed",
+          },
+          { status: 409 },
+        );
+      }
+      return NextResponse.json(
+        { error: `Claim failed (db): ${claim.error ?? "unknown"}`, code: "claim_db_error" },
+        { status: 500 },
+      );
+    }
+
     // Wrap Resend in try/catch — on a thrown error (network reset, DNS,
     // lib exception), the old code fell through to the outer catch and
     // left the lead stuck at status='sending' forever. Roll back
-    // explicitly on both `result.error` and thrown cases.
+    // explicitly on both `result.error` and thrown cases. We also
+    // release the contact_claims row so a retry isn't permanently
+    // blocked by a transient Resend failure.
     let result;
     try {
       result = await resend.emails.send({
@@ -315,15 +345,22 @@ export async function POST(req: NextRequest) {
         html: finalHtml,
       });
     } catch (e) {
+      await releaseClaim(claim.claimId);
       await supabase.from("pipeline_leads").update({ status: "ready" }).eq("id", id);
       const msg = e instanceof Error ? e.message : String(e);
       return NextResponse.json({ error: `Resend threw: ${msg}. Lead returned to 'ready'.` }, { status: 500 });
     }
 
     if (result.error) {
+      await releaseClaim(claim.claimId);
       await supabase.from("pipeline_leads").update({ status: "ready" }).eq("id", id);
       return NextResponse.json({ error: result.error.message }, { status: 500 });
     }
+
+    // Resend accepted; promote the claim from tentative → confirmed.
+    // From here on we're committed: the email is out, the recipient is
+    // dedup-protected for the next 365 days.
+    await confirmClaim(claim.claimId, result.data?.id ?? null);
 
     // Resend accepted the email. From here on, every step is best-effort —
     // we must NOT return 500 to the user because the email already went out.

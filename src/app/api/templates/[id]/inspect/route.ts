@@ -199,16 +199,17 @@ export async function GET(
   const repIds = Array.from(
     new Set(leads.map((l) => l.assigned_rep_id).filter((v): v is number => typeof v === "number")),
   );
-  const repById = new Map<number, { name: string; wechat: string }>();
+  const repById = new Map<number, { name: string; wechat: string; sender_email: string | null }>();
   if (repIds.length > 0) {
     const { data: reps } = await supabase
       .from("sales_reps")
-      .select("id, sender_name, name, wechat_id")
+      .select("id, sender_name, name, wechat_id, sender_email")
       .in("id", repIds);
     for (const r of reps ?? []) {
       repById.set(r.id as number, {
         name: ((r.sender_name as string | null) ?? (r.name as string | null) ?? "Leon") as string,
         wechat: ((r.wechat_id as string | null) ?? "") as string,
+        sender_email: (r.sender_email as string | null) ?? null,
       });
     }
   }
@@ -241,7 +242,7 @@ export async function GET(
             school_name: lead.school_name,
             school_tier: lead.school_tier,
             matched_directions: parseDirections(lead.matched_directions),
-            assigned_rep: { name: repName, wechat: repWechat },
+            assigned_rep: { name: repName, wechat: repWechat, sender_email: rep?.sender_email ?? null },
             is_unsent: unsentIds.has(lead.id),
           },
           rendered: { subject: draft.subject, html: draft.html },
@@ -260,7 +261,7 @@ export async function GET(
             school_name: lead.school_name,
             school_tier: lead.school_tier,
             matched_directions: parseDirections(lead.matched_directions),
-            assigned_rep: { name: repName, wechat: repWechat },
+            assigned_rep: { name: repName, wechat: repWechat, sender_email: rep?.sender_email ?? null },
             is_unsent: unsentIds.has(lead.id),
           },
           rendered: null,
