@@ -248,13 +248,16 @@ function getRepInfo(session: Session) {
 
 async function listReps() {
   // List of all sales reps so the helper can translate a rep name
-  // ("Yujie") to a rep_id (2). Used primarily when admin wants to
-  // re-assign a lead but speaks the rep's name. Doesn't expose
-  // anything sensitive — name + role are already in the sidebar UI
-  // for everyone in the org.
+  // ("Yujie", "caohongyuze", "曹鸿宇泽") to a rep_id (2, 3, 3). Used
+  // when admin wants to re-assign a lead but speaks the rep's name.
+  //
+  // aliases (mig 081) covers Lark display names + pinyin + family-name
+  // short forms. lark_name is the rep's actual Lark display name in
+  // Chinese — kept separate from aliases because it's authoritative
+  // (auto-pulled from Lark) rather than admin-curated.
   const { data, error } = await supabase
     .from("sales_reps")
-    .select("id, name, sender_name, role, active")
+    .select("id, name, sender_name, lark_name, aliases, role, active")
     .order("id", { ascending: true });
   if (error) return { error: error.message };
   return {
@@ -262,6 +265,8 @@ async function listReps() {
       id: r.id,
       name: r.name,
       sender_name: r.sender_name ?? null,
+      lark_name: (r.lark_name as string | null) ?? null,
+      aliases: Array.isArray(r.aliases) ? r.aliases as string[] : [],
       role: r.role,
       active: r.active !== false,
     })),

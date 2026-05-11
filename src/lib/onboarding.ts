@@ -739,7 +739,12 @@ function firstNameForGreeting(fullName: string): string {
   return s;
 }
 
-async function sendWalkthrough(
+// Exported so admin can re-fire the welcome flow at any open_id for
+// preview / demo purposes (see scripts/_preview-welcome.mjs). The
+// production path still uses the internal trigger from
+// completeOnboarding(); this just makes the function externally
+// callable without going through the full claim-step state machine.
+export async function sendWalkthrough(
   pending: PendingRow,
   repId: number,
   senderEmail: string,
