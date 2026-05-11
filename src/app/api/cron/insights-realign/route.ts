@@ -36,6 +36,7 @@ export const dynamic = "force-dynamic";
 
 const REALIGN_DIMS = [
   "geo_binary",
+  "geo_detail",                            // 20-bucket region breakdown (mig… well, just app code)
   "school_tier",
   "lead_tier",
   "h_index",

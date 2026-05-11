@@ -28,7 +28,7 @@ const sb = createClient(
   { auth: { persistSession: false } },
 );
 
-const REALIGN_DIMS = ["geo_binary", "school_tier", "lead_tier", "h_index", "citations", "direction"];
+const REALIGN_DIMS = ["geo_binary", "geo_detail", "school_tier", "lead_tier", "h_index", "citations", "direction"];
 
 // Import the funnel module dynamically — needs the build tooling.
 // Use tsx to actually load the TS module.

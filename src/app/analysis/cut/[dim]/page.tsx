@@ -44,7 +44,8 @@ interface CutData {
 }
 
 const SIBLING_CUTS: Array<{ dim: string; label: string }> = [
-  { dim: "geo_binary",  label: "Geography" },
+  { dim: "geo_binary",  label: "Geo (CN/overseas)" },
+  { dim: "geo_detail",  label: "Geo (region)" },
   { dim: "direction",   label: "Direction" },
   { dim: "school_tier", label: "School tier" },
   { dim: "lead_tier",   label: "Lead tier" },
