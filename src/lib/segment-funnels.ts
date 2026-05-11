@@ -389,7 +389,16 @@ export async function computeSegmentFunnels(opts: LoadOpts = {}): Promise<Segmen
   const recipients = [...byRecipient.values()];
 
   // 5. Bucket by each dimension and compute the two rates per segment.
-  const bucketsBy = (keyFn: (r: RecipientState) => string): SegmentStats[] => {
+  // For numeric ordinal dims (h_index, citations, school_tier) the
+  // natural sort is the bucket's lower bound, NOT delivered count —
+  // otherwise a high-volume mid bucket like "h 20-49" gets rendered
+  // BEFORE "h 10-19" which reads wrong. Caller passes orderBy='ordinal'
+  // + an ordinalRank fn for those dims. Default is the original
+  // delivered-desc behavior.
+  const bucketsBy = (
+    keyFn: (r: RecipientState) => string,
+    opts: { ordinalRank?: (segment: string) => number } = {},
+  ): SegmentStats[] => {
     const m = new Map<string, { delivered: number; clicked: number; wechat: number }>();
     for (const r of recipients) {
       const k = keyFn(r);
@@ -400,7 +409,7 @@ export async function computeSegmentFunnels(opts: LoadOpts = {}): Promise<Segmen
       if (r.wechat) cur.wechat++;
       m.set(k, cur);
     }
-    return [...m.entries()].map(([segment, v]) => {
+    const rows = [...m.entries()].map(([segment, v]) => {
       const ctr = v.delivered > 0 ? v.clicked / v.delivered : 0;
       const postClickConv = v.clicked > 0 ? v.wechat / v.clicked : 0;
       const endToEnd = v.delivered > 0 ? v.wechat / v.delivered : 0;
@@ -410,8 +419,41 @@ export async function computeSegmentFunnels(opts: LoadOpts = {}): Promise<Segmen
         ctr, postClickConv, endToEnd,
         lowN: v.delivered < MIN_DELIVERED_FOR_CTR || v.clicked < MIN_CLICKED_FOR_CONV,
       };
-    }).sort((a, b) => b.delivered - a.delivered);
+    });
+    if (opts.ordinalRank) {
+      // Ordinal sort by rank, with sentinel buckets (unknown / no lead
+      // data) always pushed to the END so they don't interrupt the
+      // numeric progression. The rank fn returns Infinity for sentinels.
+      return rows.sort((a, b) => opts.ordinalRank!(a.segment) - opts.ordinalRank!(b.segment));
+    }
+    return rows.sort((a, b) => b.delivered - a.delivered);
   };
+
+  // Rank table for h_index buckets — must match the strings hIndexBucket
+  // returns above. Sentinel buckets go to the end (Infinity).
+  const H_INDEX_RANK: Record<string, number> = {
+    "h < 5": 0,
+    "h 5-9": 1,
+    "h 10-19": 2,
+    "h 20-49": 3,
+    "h ≥ 50": 4,
+  };
+  const hIndexRank = (s: string): number => H_INDEX_RANK[s] ?? Number.POSITIVE_INFINITY;
+
+  const CITATIONS_RANK: Record<string, number> = {
+    "< 10": 0,
+    "10-99": 1,
+    "100-999": 2,
+    "1000+": 3,
+  };
+  const citationsRank = (s: string): number => CITATIONS_RANK[s] ?? Number.POSITIVE_INFINITY;
+
+  const SCHOOL_TIER_RANK: Record<string, number> = {
+    "Tier 1": 0,
+    "Tier 2": 1,
+    "Tier 3": 2,
+  };
+  const schoolTierRank = (s: string): number => SCHOOL_TIER_RANK[s] ?? Number.POSITIVE_INFINITY;
 
   const dimensions: SegmentDimension[] = [
     {
@@ -427,7 +469,10 @@ export async function computeSegmentFunnels(opts: LoadOpts = {}): Promise<Segmen
     {
       dimension: "school_tier",
       label: "School tier",
-      segments: bucketsBy((r) => r.feat ? schoolTierLabel(r.feat.school_tier) : "(no lead data)"),
+      segments: bucketsBy(
+        (r) => r.feat ? schoolTierLabel(r.feat.school_tier) : "(no lead data)",
+        { ordinalRank: schoolTierRank },
+      ),
     },
     {
       dimension: "lead_tier",
@@ -437,12 +482,18 @@ export async function computeSegmentFunnels(opts: LoadOpts = {}): Promise<Segmen
     {
       dimension: "h_index",
       label: "H-index",
-      segments: bucketsBy((r) => r.feat ? hIndexBucket(r.feat.h_index) : "(no lead data)"),
+      segments: bucketsBy(
+        (r) => r.feat ? hIndexBucket(r.feat.h_index) : "(no lead data)",
+        { ordinalRank: hIndexRank },
+      ),
     },
     {
       dimension: "citations",
       label: "Citation count",
-      segments: bucketsBy((r) => r.feat ? citationsBucket(r.feat.citation_count) : "(no lead data)"),
+      segments: bucketsBy(
+        (r) => r.feat ? citationsBucket(r.feat.citation_count) : "(no lead data)",
+        { ordinalRank: citationsRank },
+      ),
     },
     {
       dimension: "direction",
