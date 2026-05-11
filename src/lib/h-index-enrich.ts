@@ -103,6 +103,18 @@ function s2Headers(): HeadersInit {
   return h;
 }
 
+/** Map S2's raw author shape to our internal type. */
+function mapS2Authors(raw: Array<{ authorId?: string | null; name?: string; hIndex?: number | null; citationCount?: number | null; paperCount?: number | null; affiliations?: string[] | null }>): S2Author[] {
+  return raw.map((a) => ({
+    authorId: a.authorId ?? null,
+    name: a.name ?? "",
+    hIndex: a.hIndex ?? null,
+    citationCount: a.citationCount ?? null,
+    paperCount: a.paperCount ?? null,
+    affiliations: Array.isArray(a.affiliations) ? a.affiliations : null,
+  }));
+}
+
 /** Fetch a paper from S2 by arxiv id, including its full author list with
  *  per-author h-index / citation / paper count. One round trip. */
 async function fetchPaperByArxiv(arxivId: string): Promise<{ authors: S2Author[] } | null> {
@@ -110,20 +122,44 @@ async function fetchPaperByArxiv(arxivId: string): Promise<{ authors: S2Author[]
   try {
     const r = await fetch(url, { headers: s2Headers(), signal: AbortSignal.timeout(15_000) });
     if (!r.ok) return null;
-    const j = (await r.json().catch(() => null)) as {
-      authors?: Array<{ authorId: string | null; name: string; hIndex?: number | null; citationCount?: number | null; paperCount?: number | null; affiliations?: string[] | null }>;
-    } | null;
+    const j = (await r.json().catch(() => null)) as { authors?: Array<{ authorId?: string | null; name?: string; hIndex?: number | null; citationCount?: number | null; paperCount?: number | null; affiliations?: string[] | null }> } | null;
     if (!j || !Array.isArray(j.authors)) return null;
-    return {
-      authors: j.authors.map((a) => ({
-        authorId: a.authorId ?? null,
-        name: a.name,
-        hIndex: a.hIndex ?? null,
-        citationCount: a.citationCount ?? null,
-        paperCount: a.paperCount ?? null,
-        affiliations: Array.isArray(a.affiliations) ? a.affiliations : null,
-      })),
-    };
+    return { authors: mapS2Authors(j.authors) };
+  } catch {
+    return null;
+  }
+}
+
+/** Fallback: when arxiv lookup fails, search S2 by paper title. Returns
+ *  the top result IF its title matches closely AND the author we're
+ *  looking for is on it. The arxiv-id route is preferred because it's
+ *  unambiguous; this is for leads where S2 indexed the paper under a
+ *  different identifier (e.g. a venue publication that hasn't been
+ *  cross-linked to arxiv yet). */
+async function fetchPaperByTitle(title: string, authorName: string): Promise<{ authors: S2Author[] } | null> {
+  const trimmed = title.slice(0, 200);
+  const q = encodeURIComponent(trimmed);
+  // search/match returns the best title-match; we then validate the
+  // returned paper has our author on it via the author-list field.
+  const url = `${S2_API}/paper/search/match?query=${q}&fields=title,authors,authors.hIndex,authors.citationCount,authors.paperCount,authors.affiliations,authors.name`;
+  try {
+    const r = await fetch(url, { headers: s2Headers(), signal: AbortSignal.timeout(15_000) });
+    if (!r.ok) return null;
+    const j = (await r.json().catch(() => null)) as { data?: Array<{ title?: string; authors?: Array<{ authorId?: string | null; name?: string; hIndex?: number | null; citationCount?: number | null; paperCount?: number | null; affiliations?: string[] | null }> }> } | null;
+    const top = j?.data?.[0];
+    if (!top || !Array.isArray(top.authors)) return null;
+    // Title-similarity gate: the matched title's tokens must mostly
+    // overlap with our title. Catches the "S2 returned a different
+    // paper with one shared word" case.
+    const ourToks = new Set(tokens(trimmed));
+    const theirToks = tokens(top.title ?? "");
+    const overlap = theirToks.filter((t) => ourToks.has(t)).length;
+    const required = Math.max(3, Math.floor(ourToks.size * 0.5));
+    if (overlap < required) return null;
+    // Author-presence gate: the lead's author must be on the paper.
+    const authors = mapS2Authors(top.authors);
+    if (!authors.some((a) => nameMatch(authorName, a.name))) return null;
+    return { authors };
   } catch {
     return null;
   }
@@ -151,6 +187,7 @@ function bestAuthorMatch(needle: string, authors: S2Author[]): S2Author | null {
 export async function enrichLead(lead: {
   id: string;
   arxiv_id: string | null;
+  title?: string | null;
   author_name: string | null;
   first_name: string | null;
   h_index: number | null;
@@ -158,17 +195,32 @@ export async function enrichLead(lead: {
   if (lead.h_index != null) {
     return { status: "already_filled", details: "h_index already set" };
   }
-  if (!lead.arxiv_id) {
-    return { status: "no_paper", details: "no arxiv_id" };
-  }
-  const name = lead.author_name || lead.first_name;
+  // Prefer first_name (re-derived from the actual "<X>你好" greeting
+  // we sent) — it's more canonical than author_name which has known
+  // misjoins from the Python scanner. Fall back to author_name only
+  // when first_name is blank.
+  const name = lead.first_name || lead.author_name;
   if (!name || name.length < 2) {
-    return { status: "no_paper", details: "no usable author_name" };
+    return { status: "no_paper", details: "no usable name (first_name + author_name both blank)" };
   }
 
-  const paper = await fetchPaperByArxiv(lead.arxiv_id);
-  await sleep(SLEEP_MS);
-  if (!paper) return { status: "no_paper", details: `S2 had no record for arXiv:${lead.arxiv_id}` };
+  // Path 1: arxiv-id lookup. Strongest signal because S2's
+  // /paper/arXiv:<id> guarantees the exact paper.
+  let paper: { authors: S2Author[] } | null = null;
+  if (lead.arxiv_id) {
+    paper = await fetchPaperByArxiv(lead.arxiv_id);
+    await sleep(SLEEP_MS);
+  }
+
+  // Path 2: title fallback. Used when arxiv_id is missing or S2 hasn't
+  // indexed it yet (new arxiv papers can take 1-2 weeks). Gated by
+  // strict title-similarity + author-presence in fetchPaperByTitle.
+  if (!paper && lead.title) {
+    paper = await fetchPaperByTitle(lead.title, name);
+    await sleep(SLEEP_MS);
+  }
+
+  if (!paper) return { status: "no_paper", details: `S2 had no record for arXiv:${lead.arxiv_id ?? "(none)"} title="${(lead.title ?? "").slice(0, 60)}"` };
 
   const author = bestAuthorMatch(name, paper.authors);
   if (!author) {
@@ -219,21 +271,22 @@ export async function enrichLead(lead: {
 export async function fetchEnrichmentBatch(limit: number): Promise<Array<{
   id: string;
   arxiv_id: string | null;
+  title: string | null;
   author_name: string | null;
   first_name: string | null;
   h_index: number | null;
 }>> {
   const { data, error } = await supabase
     .from("pipeline_leads")
-    .select("id, arxiv_id, author_name, first_name, h_index, created_at")
+    .select("id, arxiv_id, title, author_name, first_name, h_index, created_at")
     .is("h_index", null)
-    .not("arxiv_id", "is", null)
     .order("created_at", { ascending: false })
     .limit(limit);
   if (error) return [];
   return (data ?? []).map((d) => ({
     id: d.id as string,
     arxiv_id: d.arxiv_id as string | null,
+    title: d.title as string | null,
     author_name: d.author_name as string | null,
     first_name: d.first_name as string | null,
     h_index: d.h_index as number | null,
