@@ -231,6 +231,90 @@ export function extractChatType(event: unknown): "p2p" | "group" | null {
   return null;
 }
 
+/** Mention list attached to a Lark message. Each entry maps an
+ *  `@_user_N` placeholder in the text to an open_id (and sometimes
+ *  union_id / name). Used to detect whether the bot itself was
+ *  explicitly @-mentioned in a group chat. */
+export interface LarkMention {
+  key: string;                              // "@_user_1"
+  open_id?: string;
+  union_id?: string;
+  name?: string;
+}
+
+export function extractMentions(event: unknown): LarkMention[] {
+  if (!event || typeof event !== "object") return [];
+  const raw = (event as { message?: { mentions?: unknown[] } }).message?.mentions;
+  if (!Array.isArray(raw)) return [];
+  const out: LarkMention[] = [];
+  for (const m of raw) {
+    if (!m || typeof m !== "object") continue;
+    const mm = m as { key?: string; id?: { open_id?: string; union_id?: string }; name?: string };
+    if (!mm.key) continue;
+    out.push({
+      key: mm.key,
+      open_id: mm.id?.open_id,
+      union_id: mm.id?.union_id,
+      name: mm.name,
+    });
+  }
+  return out;
+}
+
+/** Cached bot open_id. The bot's identity is stable per app, so we
+ *  fetch once and reuse for the process lifetime. Lark exposes it via
+ *  GET /bot/v3/info (authenticated with the tenant access token).
+ *  Falls back to env LARK_BOT_OPEN_ID if set, useful for tests. */
+let _cachedBotOpenId: string | null = null;
+let _cachedBotOpenIdPromise: Promise<string | null> | null = null;
+export async function getBotOpenId(): Promise<string | null> {
+  if (_cachedBotOpenId) return _cachedBotOpenId;
+  if (process.env.LARK_BOT_OPEN_ID) {
+    _cachedBotOpenId = process.env.LARK_BOT_OPEN_ID;
+    return _cachedBotOpenId;
+  }
+  if (_cachedBotOpenIdPromise) return _cachedBotOpenIdPromise;
+  _cachedBotOpenIdPromise = (async () => {
+    const token = await getTenantAccessToken();
+    if (!token) return null;
+    try {
+      const r = await fetch(`${pickBase()}/bot/v3/info`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(8_000),
+      });
+      const j = (await r.json().catch(() => ({}))) as { code?: number; bot?: { open_id?: string } };
+      if (j.code === 0 && j.bot?.open_id) {
+        _cachedBotOpenId = j.bot.open_id;
+        return _cachedBotOpenId;
+      }
+      return null;
+    } catch {
+      return null;
+    } finally {
+      _cachedBotOpenIdPromise = null;
+    }
+  })();
+  return _cachedBotOpenIdPromise;
+}
+
+/** True if the bot is explicitly @-mentioned in this message. Used to
+ *  gate group-chat replies: in groups, the bot should only respond
+ *  when called. In p2p chats this gate doesn't apply (every message
+ *  is for the bot by definition). */
+export async function isBotMentioned(event: unknown): Promise<boolean> {
+  const mentions = extractMentions(event);
+  if (mentions.length === 0) return false;
+  const botOpenId = await getBotOpenId();
+  if (!botOpenId) {
+    // Couldn't resolve the bot's identity — fail OPEN (respond) for p2p
+    // safety, but the caller is responsible for additional gating. Log
+    // so we notice and set LARK_BOT_OPEN_ID.
+    console.warn("[lark] isBotMentioned: bot open_id unknown — defaulting to true. Set LARK_BOT_OPEN_ID env.");
+    return true;
+  }
+  return mentions.some((m) => m.open_id === botOpenId);
+}
+
 /** Resolve a Lark user's display name + bound email by open_id.
  *  Used by onboarding so the admin's approval card shows the actual
  *  human name and Lark-side email, not just the cryptographic open_id. */

@@ -25,6 +25,7 @@ import {
   extractChatType,
   extractMessageId,
   extractSenderOpenId,
+  isBotMentioned,
   resolveRepFromOpenId,
   sendMessage,
   reactToMessage,
@@ -410,6 +411,35 @@ export async function processInboundLarkMessage(
       .maybeSingle();
     if (existing) {
       return { ok: true, reason: "duplicate message_id" };
+    }
+  }
+
+  // Group-chat gate: in group chats, only respond when the bot is
+  // explicitly @-mentioned. P2P chats are always 1:1 with the bot so
+  // every message is implicitly addressed to us. Without this gate
+  // the bot reads + replies to every casual message in any group it's
+  // a member of, which is the bug the user reported.
+  //
+  // Onboarding flows are gated separately (DM-only) by the onboarding
+  // module itself, so they keep working in 1:1 even though we put the
+  // mention-gate BEFORE onboarding handling — group chats never run
+  // onboarding to begin with.
+  if (chatType === "group") {
+    const mentioned = await isBotMentioned(event);
+    if (!mentioned) {
+      // Still persist the message for audit + future context window
+      // building, but DO NOT trigger any reply path. The lark_messages
+      // row keeps the conversation context intact for when the bot IS
+      // mentioned later.
+      await supabase.from("lark_messages").insert({
+        chat_id: chatId,
+        message_id: messageId,
+        rep_id: null,
+        role: "user",
+        text,
+        raw: rawEvent,
+      });
+      return { ok: true, reason: "group-chat without mention — silent" };
     }
   }
 
