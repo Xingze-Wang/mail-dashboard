@@ -2631,6 +2631,189 @@ git commit -m "feat(missions): onboarding walkthrough lists /missions + get_my_m
 
 ---
 
+## Task 16.5: Onboarding — admin sets new rep's quota
+
+**Files:**
+- Modify: `src/lib/onboarding.ts`
+
+**Context:** Under the new system, a rep with no quota row gets zero leads allocated. New reps approved through Lark onboarding hit `provisionRep()` which creates the `sales_reps` row but writes nothing to `rep_daily_quotas`. We need to (a) tell admin to set the quota right after approval and (b) tell the rep that their daily volume is collaboratively set.
+
+- [ ] **Step 1: Add admin-side prompt at the end of approval flow**
+
+In `src/lib/onboarding.ts`, find the function that runs when admin clicks "Approve" on a candidate (likely `handleAdminApproval` or similar — search for `provisionRep`). After the rep is provisioned and the 4 walkthrough DMs are sent to the rep, send an additional DM **to the admin** (not the rep):
+
+```typescript
+// After provisionRep() succeeds and walkthrough is queued for the rep:
+const ADMIN_OPEN_ID_FOR_NOTIFICATION = adminOpenId; // the admin who just approved
+const newRepName = pending.name ?? `rep_${newRepId}`;
+const adminReminderLines = [
+  `✅ ${newRepName} 已经接入了, walkthrough 我已经发了.`,
+  ``,
+  `**下一步: 设置他/她的 daily quota.**`,
+  `去 https://calistamind.com/admin/missions, 在 Daily Quotas 表里给 ${newRepName} 填上每天的 per-pool 数字.`,
+  `第一周建议偏少 (e.g. normal_cn: 4-6), 跟他/她聊一下感觉舒服的节奏再调.`,
+  ``,
+  `如果不设, 系统明早不会给 ${newRepName} 分 lead.`,
+];
+await sendMessage({
+  receive_id: ADMIN_OPEN_ID_FOR_NOTIFICATION,
+  receive_id_type: "open_id",
+  text: adminReminderLines.join("\n"),
+}).catch(() => null);
+```
+
+- [ ] **Step 2: Update Message 4 to set rep expectation**
+
+In `msg4Lines` (updated in Task 16), add one line near the "第一周不用追求量" sentence, telling the rep that the daily volume is a conversation:
+
+```typescript
+msg4Lines.push(
+  ``,
+  `**你今天能拿多少 lead** — admin 在 dashboard 里给你设了一个每日 quota (per_pool 数字). 第一周一般偏少, 跟你聊一下感觉 OK 的节奏再调. 觉得多了或者少了, 直接跟 admin 说就行.`,
+  ``,
+  `第一封邮件慢慢看, 不急. 第一周不用追求量 — 把节奏感建立起来就行.`,
+  // ... existing line about "明早 9 点 DM"
+);
+```
+
+(Adapt the exact splice to where the existing "第一周不用追求量" line lives. The point is the rep learns the daily number isn't dropped on them — it's a conversation.)
+
+- [ ] **Step 3: Add a 24h quota-missing follow-up DM to admin**
+
+Add a new cron route `src/app/api/cron/onboarding-quota-check/route.ts`:
+
+```typescript
+import { NextRequest, NextResponse } from "next/server";
+import { supabase } from "@/lib/db";
+
+export const preferredRegion = ["hkg1"];
+
+export async function GET(req: NextRequest) {
+  const auth = req.headers.get("authorization") || "";
+  if (!process.env.CRON_SECRET || auth !== `Bearer ${process.env.CRON_SECRET}`) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+
+  // Find reps approved in the last 7 days who still have no quota row OR a zero-sum quota.
+  const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
+  const reps = await supabase
+    .from("sales_reps")
+    .select("id, name, created_at, role, sender_email, active")
+    .gte("created_at", since)
+    .eq("active", true)
+    .eq("role", "sales");
+
+  const ADMIN_OPEN_ID = process.env.ADMIN_LARK_OPEN_ID;
+  if (!ADMIN_OPEN_ID) return NextResponse.json({ checked: 0, dmd: 0, reason: "no_admin_open_id" });
+
+  const { sendMessage } = await import("@/lib/lark");
+  let dmd = 0;
+
+  for (const rep of reps.data || []) {
+    // Must be at least 24h since rep was created (so admin had time)
+    const ageHours = (Date.now() - new Date(rep.created_at).getTime()) / 3_600_000;
+    if (ageHours < 24) continue;
+
+    const q = await supabase
+      .from("rep_daily_quotas")
+      .select("per_pool")
+      .eq("rep_id", rep.id)
+      .maybeSingle();
+
+    const pp = (q.data?.per_pool ?? {}) as Record<string, number>;
+    const total = (pp.strong ?? 0) + (pp.normal_cn ?? 0) + (pp.normal_overseas ?? 0) + (pp.normal_edu ?? 0);
+    if (total > 0) continue;
+
+    // Dedup: track that we sent this DM today
+    const today = new Date().toISOString().slice(0, 10);
+    const probe = await supabase
+      .from("rep_daily_quotas_override")
+      .select("id")
+      .eq("rep_id", rep.id)
+      .eq("due_date", today)
+      .eq("reason", "_quota_check_dm_marker") // sentinel reason
+      .maybeSingle();
+    if (probe.data) continue;
+
+    await sendMessage({
+      receive_id: ADMIN_OPEN_ID,
+      receive_id_type: "open_id",
+      text:
+        `⏰ ${rep.name} 已经接入 ${Math.floor(ageHours / 24)} 天了, 但 daily quota 还是 0. ` +
+        `他/她今天还是收不到 lead. 去 /admin/missions 设一下, 或者跟他/她聊聊.`,
+    }).catch(() => null);
+
+    // Mark as DM'd today via a no-op override row (per_pool zeros, reason='_quota_check_dm_marker')
+    await supabase.from("rep_daily_quotas_override").insert({
+      rep_id: rep.id,
+      due_date: today,
+      per_pool: { strong: 0, normal_cn: 0, normal_overseas: 0, normal_edu: 0 },
+      reason: "_quota_check_dm_marker",
+    });
+    dmd++;
+  }
+
+  return NextResponse.json({ checked: reps.data?.length || 0, dmd });
+}
+```
+
+Note the dedup uses a sentinel row in `rep_daily_quotas_override` with `reason='_quota_check_dm_marker'`. The seeder in Task 9 needs to *ignore* override rows whose `reason` starts with `_quota_check_dm_marker` so this marker doesn't affect actual allocation. Add this guard in `getEffectiveQuota`:
+
+```typescript
+// In src/lib/quota-store.ts getEffectiveQuota, near the override lookup:
+const ov = await supabase
+  .from("rep_daily_quotas_override")
+  .select("per_pool, reason")
+  .eq("rep_id", repId)
+  .eq("due_date", dueDate)
+  .maybeSingle();
+if (ov.data?.per_pool && !String(ov.data.reason || "").startsWith("_")) {
+  return {
+    rep_id: repId,
+    per_pool: normalizePerPool(ov.data.per_pool),
+    direction_priority: [],
+    source: "override",
+  };
+}
+```
+
+- [ ] **Step 4: Wire the cron in vercel.json**
+
+Add to `vercel.json` crons array:
+
+```json
+{ "path": "/api/cron/onboarding-quota-check", "schedule": "0 0 * * 1-5" }
+```
+
+(00:00 UTC = 08:00 Beijing, before allocation runs at 09:00.)
+
+- [ ] **Step 5: Smoke test**
+
+Create a test by inserting a fake new rep with `created_at = now() - interval '2 days'` and no quota. Trigger:
+
+```bash
+curl -s -H "Authorization: Bearer $CRON_SECRET" \
+  http://localhost:3000/api/cron/onboarding-quota-check | jq
+```
+
+Expected: `{checked: N, dmd: ≥1}`. Confirm admin received the reminder DM. Re-trigger same day → expected `dmd: 0` (already DM'd today). Clean up the test rep + sentinel rows.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/lib/onboarding.ts src/lib/quota-store.ts \
+        src/app/api/cron/onboarding-quota-check/route.ts vercel.json
+git commit -m "feat(pool): admin onboarding prompts to set new rep's daily quota
+
+After approving a new rep, bot DMs admin to set their daily quota at
+/admin/missions and to have a 1:1 about what feels right for week 1.
+Daily cron at 08:00 Beijing re-DMs admin if quota still zero after 24h.
+Rep's walkthrough Message 4 now tells them the daily volume is a
+conversation, not imposed."
+```
+
+---
+
 ## Task 17: Disable shadow mode (cron starts writing for real)
 
 **Files:** Vercel env vars (no code change)
