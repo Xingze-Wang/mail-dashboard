@@ -315,6 +315,18 @@ export async function runReadTool(
         return { tool: call.tool, result: await getLead(session, args) };
       case "get_my_stats":
         return { tool: call.tool, result: await getMyStats(session) };
+      case "get_admin_daily_report": {
+        if (session.role !== "admin") {
+          return { tool: call.tool, result: { ok: false, error: "admin only" } };
+        }
+        try {
+          const { buildAdminDailyReport } = await import("@/lib/admin-daily-report");
+          const text = await buildAdminDailyReport();
+          return { tool: call.tool, result: { ok: true, text } };
+        } catch (e) {
+          return { tool: call.tool, result: { ok: false, error: e instanceof Error ? e.message : String(e) } };
+        }
+      }
       case "get_my_missions_today": {
         const { supabase } = await import("@/lib/db");
         const today = new Date().toISOString().slice(0, 10);

@@ -192,14 +192,31 @@ async function loadCrossSurfaceHistory(repId: number, limit = 6): Promise<{ role
     .map((m) => ({ role: m.role as "user" | "assistant", text: m.text }));
 }
 
-const MAX_ITERATIONS = 3;
+// Read-tool loop depth. Admins routinely chain lookups ("show daily
+// report → drill into per-rep numbers → check who's behind") so they
+// get more rounds. Sales reps' questions are shorter; 3 is plenty.
+const DEFAULT_MAX_ITERATIONS = 3;
+const ADMIN_MAX_ITERATIONS = 8;
+
+const ADMIN_PROMPT_ADDENDUM = `
+
+## 你正在跟 admin 对话
+
+Admin 经常会让你看更深一层 — 比如先看今日 report, 再 drill 进某个 rep, 再看那个 rep 最近编辑的几条 lead. 你有更多 lookup rounds (最多 ${ADMIN_MAX_ITERATIONS} 轮), 所以放心多查几次, 把答案做扎实.
+
+特别提醒:
+  • 问 "今天 report 长什么样" / "重新跑一遍 report" → 用 \`\`\`lookup\`\`\` get_admin_daily_report 拿最新版
+  • 问 "X rep 这周怎么样" → list_leads + get_my_stats (用 rep 的 id, args 里加 rep_id)
+  • 问 "为什么 Y 指标降了" → diagnose_metric_drop
+  • 问 "把 X lead 转给 Y" / "redraft 一下 Z" → 目前这些 action 操作只能从 web app 的 ✨ helper 触发, 你直接告诉 admin "去 dashboard 右下角 ✨ 那里说一遍, 那个我能直接执行". 不要假装做了.`;
 
 async function runAgent(session: LarkSession, question: string, history: { role: "user" | "assistant"; text: string }[]): Promise<string> {
+  const MAX_ITERATIONS = session.role === "admin" ? ADMIN_MAX_ITERATIONS : DEFAULT_MAX_ITERATIONS;
   const histText = history.length > 0
     ? "\n## 上文对话\n" + history.slice(-6).map((m) => `${m.role === "user" ? "用户" : "助手"}: ${m.text.slice(0, 600)}`).join("\n") + "\n"
     : "";
 
-  const system = SYSTEM_BASE + "\n" + TOOLS_PROMPT;
+  const system = SYSTEM_BASE + "\n" + TOOLS_PROMPT + (session.role === "admin" ? ADMIN_PROMPT_ADDENDUM : "");
   let userPrompt = `## 参考资料 — Sales Guide
 ${SALES_GUIDE.slice(0, 2500)}
 
