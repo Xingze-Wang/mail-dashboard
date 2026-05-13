@@ -103,6 +103,15 @@ Vercel serverless caps at 60s default (300s on Pro). Long ops:
 - Bot agent runs (~30-60s for LLM + tool rounds) — use `after()` to ack first
 - Cron's arxiv scan has a 40s budget inside it; tune with the constant in `src/lib/scanner.ts`
 
+### Shared-pool allocation (migration 082+)
+
+- New leads are imported with `assigned_rep_id = NULL`. The `/api/missions/allocate-leads` cron (09:00 Beijing weekdays) assigns them based on `rep_daily_quotas` set by admin at `/admin/missions`.
+- `draft-queue` only processes leads where `assigned_rep_id IS NOT NULL` — it no longer calls `assignRep()`. Drafts from Python come in with literal `{{REP_NAME}}` placeholders and get rendered post-allocation.
+- Shadow mode (`ALLOCATE_LEADS_SHADOW=true`) is a dry-run flag: skips both `allocation_log` writes AND `pipeline_leads.assigned_rep_id` writes. Writing the log in shadow would poison `alreadyAllocated()` idempotency.
+- Deploy order matters: ensure `ALLOCATE_LEADS_SHADOW` is unset (or `false`) BEFORE the import route stops writing `assigned_rep_id` — otherwise new leads accumulate in the pool with no allocator to claim them. (Current commit `44a4eaa` already flipped imports; verify the shadow flag.)
+- Sub-pool partitioning lives in `v_lead_pool` view: `strong` (any geo), `normal_cn`, `normal_overseas`, `normal_edu`. Derived from `lead_tier` + `author_email` domain. See `migrations/082-shared-pool-allocation.sql`.
+- Spec: `docs/superpowers/specs/2026-05-13-shared-pool-and-mission-ux-design.md`. Plan: `docs/superpowers/plans/2026-05-13-shared-pool-and-mission-ux.md`.
+
 ## Where to look first
 
 | Task | Read this first |
