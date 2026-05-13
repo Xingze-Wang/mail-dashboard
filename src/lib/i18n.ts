@@ -6,16 +6,19 @@ export type Locale = "en" | "zh";
 
 const dict: Record<string, Record<Locale, string>> = {
   // ── Sidebar nav ──────────────────────────────────────────────────────
-  "nav.overview":    { en: "Overview",   zh: "概览" },
-  "nav.pipeline":    { en: "Pipeline",   zh: "线索库" },
-  "nav.emails":      { en: "Emails",     zh: "邮件" },
-  "nav.brief":       { en: "Brief",      zh: "速览" },
-  "nav.insights":    { en: "Insights",   zh: "数据洞察" },
-  "nav.templates":   { en: "Templates",  zh: "模板" },
-  "nav.congress":    { en: "Congress",   zh: "议事厅" },
-  "nav.scorer":      { en: "Scorer",     zh: "评分器" },
-  "nav.bench":       { en: "Bench",      zh: "基准测试" },
-  "nav.drift":       { en: "Drift",      zh: "漂移" },
+  "nav.overview":        { en: "Overview",        zh: "概览" },
+  "nav.missions":        { en: "Today",           zh: "今日" },
+  "nav.pipeline":        { en: "Pipeline",        zh: "线索库" },
+  "nav.emails":          { en: "Emails",          zh: "邮件" },
+  "nav.brief":           { en: "Brief",           zh: "速览" },
+  "nav.insights":        { en: "Insights",        zh: "数据洞察" },
+  "nav.templates":       { en: "Templates",       zh: "模板" },
+  "nav.adminMissions":   { en: "Missions Admin",  zh: "任务管理" },
+  "nav.adminAllocation": { en: "Allocation",      zh: "分配" },
+  "nav.congress":        { en: "Congress",        zh: "议事厅" },
+  "nav.scorer":          { en: "Scorer",          zh: "评分器" },
+  "nav.bench":           { en: "Bench",           zh: "基准测试" },
+  "nav.drift":           { en: "Drift",           zh: "漂移" },
 
   // ── Sidebar account menu ─────────────────────────────────────────────
   "account.accounts":      { en: "Accounts",           zh: "账号" },

@@ -98,6 +98,27 @@ const BenchIcon = () => (
   </svg>
 );
 
+const MissionsIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="12" cy="12" r="10" />
+    <circle cx="12" cy="12" r="6" />
+    <circle cx="12" cy="12" r="2" />
+  </svg>
+);
+
+const AdminMissionsIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="4" y="3" width="16" height="18" rx="2" />
+    <path d="M9 7h6M9 11h6M9 15h4" />
+  </svg>
+);
+
+const AdminAllocationIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M16 3h5v5M4 20l16-16M21 16v5h-5M15 15l5 5M4 4l5 5" />
+  </svg>
+);
+
 // Council/congress icon — speech-bubble cluster, signaling the
 // multi-persona debate happening inside.
 const CongressIcon = () => (
@@ -176,21 +197,25 @@ export function Sidebar() {
 
   const mainNav = [
     { href: "/",         label: t("nav.overview", locale), Icon: OverviewIcon },
+    { href: "/missions", label: t("nav.missions", locale), Icon: MissionsIcon, badgeKey: "missions_incomplete" as const },
     { href: "/pipeline", label: t("nav.pipeline", locale), Icon: PipelineIcon, badgeKey: "ready"  as const },
     { href: "/emails",   label: t("nav.emails",   locale), Icon: EmailsIcon,   badgeKey: "unread" as const },
   ];
 
   const toolsNav = [
-    { href: "/brief",     label: t("nav.brief",     locale), Icon: BriefIcon,     adminOnly: false },
-    { href: "/analysis",  label: t("nav.insights",  locale), Icon: InsightsIcon,  adminOnly: false },
-    { href: "/templates", label: t("nav.templates", locale), Icon: TemplatesIcon, adminOnly: false },
-    { href: "/congress",  label: t("nav.congress",  locale), Icon: CongressIcon,  adminOnly: true  },
-    { href: "/scorer",    label: t("nav.scorer",    locale), Icon: ScorerIcon,    adminOnly: true  },
-    { href: "/bench",     label: t("nav.bench",     locale), Icon: BenchIcon,     adminOnly: true  },
-    { href: "/drift",     label: t("nav.drift",     locale), Icon: DriftIcon,     adminOnly: true  },
+    { href: "/brief",            label: t("nav.brief",           locale), Icon: BriefIcon,           adminOnly: false },
+    { href: "/analysis",         label: t("nav.insights",        locale), Icon: InsightsIcon,        adminOnly: false },
+    { href: "/templates",        label: t("nav.templates",       locale), Icon: TemplatesIcon,       adminOnly: false },
+    { href: "/admin/missions",   label: t("nav.adminMissions",   locale), Icon: AdminMissionsIcon,   adminOnly: true  },
+    { href: "/admin/allocation", label: t("nav.adminAllocation", locale), Icon: AdminAllocationIcon, adminOnly: true  },
+    { href: "/congress",         label: t("nav.congress",        locale), Icon: CongressIcon,        adminOnly: true  },
+    { href: "/scorer",           label: t("nav.scorer",          locale), Icon: ScorerIcon,          adminOnly: true  },
+    { href: "/bench",            label: t("nav.bench",           locale), Icon: BenchIcon,           adminOnly: true  },
+    { href: "/drift",            label: t("nav.drift",           locale), Icon: DriftIcon,           adminOnly: true  },
   ];
   const [unread, setUnread] = useState(0);
   const [ready, setReady]   = useState(0);
+  const [missionsIncomplete, setMissionsIncomplete] = useState(0);
   const [me, setMe] = useState<{ repId: number; repName: string; role: "admin" | "sales" } | null>(null);
   const [accounts, setAccounts] = useState<Array<{ repId: number; repName: string; email: string; role: string; active: boolean }>>([]);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -364,12 +389,33 @@ export function Sidebar() {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const r = await fetch("/api/missions", { credentials: "include", cache: "no-store" });
+        if (!r.ok) return;
+        const j = await r.json();
+        if (cancelled) return;
+        const open = (j.my_today || []).filter(
+          (m: { progress_count?: number; target: number }) =>
+            (m.progress_count ?? 0) < m.target,
+        ).length;
+        setMissionsIncomplete(open);
+      } catch { /* silent — same posture as MissionsDot */ }
+    };
+    void load();
+    const interval = setInterval(() => void load(), 60_000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []);
+
   const isActive = (href: string) =>
     href === "/" ? pathname === "/" : pathname.startsWith(href);
 
-  const badgeFor = (key: "unread" | "ready" | undefined) => {
+  const badgeFor = (key: "unread" | "ready" | "missions_incomplete" | undefined) => {
     if (key === "unread") return unread;
     if (key === "ready")  return ready;
+    if (key === "missions_incomplete") return missionsIncomplete;
     return undefined;
   };
 
