@@ -83,14 +83,14 @@ SELECT
   matched_directions,
   local_score,
   CASE
-    WHEN author_email ILIKE '%.cn' OR author_email ILIKE '%.cn.%' THEN 'cn'
-    WHEN author_email ILIKE '%.edu' OR author_email ILIKE '%.edu.%' THEN 'edu'
+    WHEN author_email ILIKE '%.cn' THEN 'cn'
+    WHEN author_email ILIKE '%.edu' THEN 'edu'
     ELSE 'other'
   END AS geo,
   CASE
     WHEN lead_tier = 'strong' THEN 'strong'
-    WHEN lead_tier = 'normal' AND (author_email ILIKE '%.cn' OR author_email ILIKE '%.cn.%') THEN 'normal_cn'
-    WHEN lead_tier = 'normal' AND (author_email ILIKE '%.edu' OR author_email ILIKE '%.edu.%') THEN 'normal_edu'
+    WHEN lead_tier = 'normal' AND (author_email ILIKE '%.cn') THEN 'normal_cn'
+    WHEN lead_tier = 'normal' AND (author_email ILIKE '%.edu') THEN 'normal_edu'
     ELSE 'normal_overseas'
   END AS pool_key,
   created_at
