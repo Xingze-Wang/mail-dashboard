@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { allocateForRep, alreadyAllocated } from "@/lib/allocator";
 import { getEffectiveQuota } from "@/lib/quota-store";
-import { sumPerPool, normalizePerPool, PerPool } from "@/lib/pool-types";
+import { sumPerPool, normalizePerPool, PerPool, PoolKey } from "@/lib/pool-types";
 import { requireSession } from "@/lib/auth-helpers";
 
 export const preferredRegion = ["hkg1"];
@@ -87,6 +87,23 @@ async function runAllocation(shadow: boolean, allocator: string): Promise<RunRes
     entry.per_pool_actual = r.per_pool_actual;
     entry.underfilled = r.underfilled;
     result.per_rep.push(entry);
+  }
+
+  if (!shadow) {
+    const { notifyRepOfAllocation } = await import("@/lib/allocation-notifier");
+    for (const entry of result.per_rep) {
+      if (!entry.total_allocated || entry.total_allocated === 0) continue;
+      if (entry.skipped_reason) continue;
+      await notifyRepOfAllocation({
+        rep_id: entry.rep_id,
+        due_date: result.due_date,
+        per_pool_actual: entry.per_pool_actual as PerPool,
+        underfilled: (entry.underfilled || []) as PoolKey[],
+        total_allocated: entry.total_allocated,
+      }).catch((e) => {
+        console.error(`[allocate-leads] notify failed for rep ${entry.rep_id}:`, e);
+      });
+    }
   }
 
   return result;
