@@ -56,6 +56,7 @@ import { ReassignModal } from "./ReassignModal";
 import { paletteFor, initialsFor } from "./repColors";
 import { isAgeGated, isReadyToSend, isRipeningLead } from "@/lib/policy";
 import { ActiveContractCard } from "@/components/ActiveContractCard";
+import MissionsBanner from "@/components/missions-banner";
 import { useLocale, t } from "@/lib/i18n";
 
 const ChannelsTab = dynamic(() => import("./ChannelsTab").then((m) => m.ChannelsTab), {
@@ -929,6 +930,9 @@ export default function PipelinePage() {
 
       {/* ── Active contract from this week's deliberation ── */}
       <ActiveContractCard />
+
+      {/* ── Missions banner ── */}
+      <MissionsBanner />
 
       {/* ── Stat strip ── */}
       <div className="dx-stat-strip">
