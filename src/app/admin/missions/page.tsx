@@ -45,6 +45,173 @@ interface AdminMissionsResponse {
   missions: Mission[];
 }
 
+interface QuotaRow {
+  rep_id: number;
+  name: string;
+  sender_email: string | null;
+  role: string;
+  created_at: string;
+  quota: {
+    per_pool: { strong: number; normal_cn: number; normal_overseas: number; normal_edu: number };
+    direction_priority: string[];
+    source: "standing" | "override";
+  } | null;
+}
+
+function QuotaPanel() {
+  const [rows, setRows] = useState<QuotaRow[]>([]);
+  const [today, setToday] = useState<string>("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [dirty, setDirty] = useState<Map<number, QuotaRow["quota"]>>(new Map());
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const r = await fetch("/api/admin/missions/quotas", { credentials: "include", cache: "no-store" });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = await r.json();
+      setRows(j.reps as QuotaRow[]);
+      setToday(j.today as string);
+      setDirty(new Map());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const onChange = (repId: number, key: "strong" | "normal_cn" | "normal_overseas" | "normal_edu", val: number) => {
+    setDirty((prev) => {
+      const m = new Map(prev);
+      const existing = m.get(repId) ?? rows.find((r) => r.rep_id === repId)?.quota ?? null;
+      if (!existing) return prev;
+      m.set(repId, {
+        ...existing,
+        per_pool: { ...existing.per_pool, [key]: Math.max(0, Math.floor(val)) },
+      });
+      return m;
+    });
+  };
+
+  const save = async (repId: number) => {
+    const q = dirty.get(repId);
+    if (!q) return;
+    setSaving(repId);
+    try {
+      const r = await fetch("/api/admin/missions/quotas", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rep_id: repId, per_pool: q.per_pool }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div style={{ padding: 16, color: "#94a3b8" }}>
+        <Loader2 size={14} className="animate-spin" style={{ display: "inline-block", marginRight: 8 }} />
+        Loading quotas…
+      </div>
+    );
+  }
+  if (error) {
+    return <div style={{ padding: 16, color: "#f87171" }}>Quota load failed: {error}</div>;
+  }
+
+  return (
+    <section style={{ marginBottom: 32, border: "1px solid #1e293b", borderRadius: 8, padding: 20 }}>
+      <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 4 }}>Daily quotas</h2>
+      <p style={{ fontSize: 13, color: "#94a3b8", marginBottom: 16 }}>
+        Each rep&apos;s daily lead allocation by sub-pool. Applies every weekday until changed.
+        Saved here, read by the allocation cron at 09:00 Beijing.
+      </p>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead>
+          <tr style={{ borderBottom: "1px solid #1e293b", color: "#94a3b8", fontSize: 12, textAlign: "left" }}>
+            <th style={{ padding: 8 }}>Rep</th>
+            <th style={{ padding: 8, textAlign: "right" }}>Strong</th>
+            <th style={{ padding: 8, textAlign: "right" }}>Normal CN</th>
+            <th style={{ padding: 8, textAlign: "right" }}>Normal Overseas</th>
+            <th style={{ padding: 8, textAlign: "right" }}>Normal EDU</th>
+            <th style={{ padding: 8, textAlign: "right" }}>Total</th>
+            <th style={{ padding: 8 }}></th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => {
+            const current = dirty.get(row.rep_id) ?? row.quota;
+            const pp = current?.per_pool ?? { strong: 0, normal_cn: 0, normal_overseas: 0, normal_edu: 0 };
+            const total = pp.strong + pp.normal_cn + pp.normal_overseas + pp.normal_edu;
+            const isDirty = dirty.has(row.rep_id);
+            const joinedDays = Math.floor(
+              (Date.now() - new Date(row.created_at).getTime()) / 86_400_000,
+            );
+            const isRamping = joinedDays < 30 && row.role === "sales";
+            return (
+              <tr key={row.rep_id} style={{ borderBottom: "1px solid #0f172a" }}>
+                <td style={{ padding: 8 }}>
+                  {row.name}
+                  {isRamping ? (
+                    <span style={{ fontSize: 11, color: "#fbbf24", marginLeft: 8 }}>
+                      ramping (day {joinedDays})
+                    </span>
+                  ) : null}
+                </td>
+                {(["strong", "normal_cn", "normal_overseas", "normal_edu"] as const).map((k) => (
+                  <td key={k} style={{ padding: 4, textAlign: "right" }}>
+                    <input
+                      type="number"
+                      min={0}
+                      value={pp[k]}
+                      onChange={(e) => onChange(row.rep_id, k, Number(e.target.value))}
+                      style={{
+                        width: 56, textAlign: "right",
+                        background: "#0f172a", border: "1px solid #1e293b",
+                        color: "#e2e8f0", padding: "4px 8px", borderRadius: 4,
+                      }}
+                    />
+                  </td>
+                ))}
+                <td style={{ padding: 8, textAlign: "right", color: "#94a3b8" }}>{total}</td>
+                <td style={{ padding: 8 }}>
+                  {isDirty ? (
+                    <button
+                      onClick={() => void save(row.rep_id)}
+                      disabled={saving === row.rep_id}
+                      style={{
+                        padding: "4px 10px", fontSize: 12,
+                        background: "#10b981", color: "white",
+                        border: "none", borderRadius: 4, cursor: "pointer",
+                      }}
+                    >
+                      {saving === row.rep_id ? "Saving…" : "Save"}
+                    </button>
+                  ) : null}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <p style={{ fontSize: 11, color: "#64748b", marginTop: 12 }}>
+        Today is <strong>{today}</strong>. The seed cron reads quotas at 07:00 Beijing; allocation runs at 09:00 Beijing.
+      </p>
+    </section>
+  );
+}
+
 export default function AdminMissionsPage() {
   const [data, setData] = useState<AdminMissionsResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -128,6 +295,9 @@ export default function AdminMissionsPage() {
 
   return (
     <div>
+      {/* Daily Quotas panel */}
+      <QuotaPanel />
+
       {/* Header */}
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 28 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 14 }}>
