@@ -260,11 +260,16 @@ export default function MissionsPage() {
           My missions
         </h3>
         {data.my_today.length === 0 ? (
-          <div className="section-card" style={{ padding: 16, textAlign: "center" }}>
-            <p style={{ fontSize: 13, color: "var(--text-secondary)", margin: 0 }}>
-              今天没有 mission. <Link href="/pipeline" style={{ color: "var(--blue)" }}>去 /pipeline</Link> 看看 ready leads.
-            </p>
-          </div>
+          <section style={{
+            padding: 20, marginTop: 16, border: "1px solid #1e293b",
+            borderRadius: 8, color: "#94a3b8", fontSize: 13,
+          }}>
+            {data.team_focus?.status === "proposed" ? (
+              <>本周的 missions 还在 admin 那里待批准. 你可以先 ping admin, 或者过 1-2 小时再看.</>
+            ) : (
+              <>今天还没有 missions. 系统每天早上 7 点 (Beijing) 自动生成, 9 点分配 leads. 如果到 9:30 还是空的, ping admin 看看你的 daily quota 是不是没设.</>
+            )}
+          </section>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {allDone && (
