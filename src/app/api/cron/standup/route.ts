@@ -28,13 +28,14 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Pull active sales reps with bound Lark accounts. Admins are excluded
-  // because they get the team dashboard view, not per-rep nudges.
+  // Pull active reps with bound Lark accounts. Sales reps get the
+  // per-rep "your queue / your replies" DM; admins get the org-wide
+  // daily report (buildAdminDailyReport).
   const { data: reps } = await supabase
     .from("sales_reps")
     .select("id, name, lark_open_id, role")
     .eq("active", true)
-    .eq("role", "sales")
+    .in("role", ["sales", "admin"])
     .not("lark_open_id", "is", null);
 
   const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
@@ -43,6 +44,31 @@ export async function GET(req: NextRequest) {
 
   for (const rep of reps ?? []) {
     try {
+      // ─── Admin path: org-wide daily report ─────────────────────────
+      if (rep.role === "admin") {
+        const { buildAdminDailyReport } = await import("@/lib/admin-daily-report");
+        const text = await buildAdminDailyReport();
+        const r = await sendMessage({
+          receive_id: rep.lark_open_id!,
+          receive_id_type: "open_id",
+          text,
+        });
+        if (r.ok) {
+          await supabase
+            .from("lark_messages")
+            .insert({
+              chat_id: `dm:${rep.lark_open_id}`,
+              rep_id: rep.id,
+              role: "system",
+              text: text.slice(0, 4000),
+            })
+            .then(() => null, () => null);
+        }
+        results.push({ rep_id: rep.id, name: rep.name, sent: r.ok, reason: r.error });
+        continue;
+      }
+
+      // ─── Sales-rep path (unchanged) ────────────────────────────────
       // 1. Ready leads in their queue
       const { count: readyCount } = await supabase
         .from("pipeline_leads")
