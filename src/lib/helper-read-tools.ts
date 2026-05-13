@@ -315,6 +315,40 @@ export async function runReadTool(
         return { tool: call.tool, result: await getLead(session, args) };
       case "get_my_stats":
         return { tool: call.tool, result: await getMyStats(session) };
+      case "get_my_missions_today": {
+        const { supabase } = await import("@/lib/db");
+        const today = new Date().toISOString().slice(0, 10);
+        const ms = await supabase
+          .from("missions")
+          .select("id, kind, target, status, scope")
+          .eq("rep_id", session.repId)
+          .eq("due_date", today)
+          .eq("status", "active");
+        if (ms.error) return { tool: call.tool, result: { ok: false, error: ms.error.message } };
+        const ids = (ms.data || []).map((m) => m.id as string);
+        const progress = new Map<string, number>();
+        if (ids.length > 0) {
+          const p = await supabase
+            .from("mission_progress")
+            .select("mission_id, count")
+            .in("mission_id", ids);
+          for (const row of p.data || []) progress.set(row.mission_id as string, (row.count as number) ?? 0);
+        }
+        return {
+          tool: call.tool,
+          result: {
+            ok: true,
+            missions: (ms.data || []).map((m) => ({
+              id: m.id,
+              kind: m.kind,
+              target: m.target,
+              progress: progress.get(m.id as string) ?? 0,
+              status: m.status,
+              scope: m.scope,
+            })),
+          },
+        };
+      }
       case "get_rep_info":
         return { tool: call.tool, result: getRepInfo(session) };
       case "list_reps":

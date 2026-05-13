@@ -42,6 +42,7 @@ export const READ_TOOL_NAMES = new Set([
   "list_leads",
   "get_lead",
   "get_my_stats",
+  "get_my_missions_today",
   "get_rep_info",
   "get_my_growth",
   "get_my_weekly_recap",
@@ -107,6 +108,7 @@ export const TOOLS_PROMPT = `## 工具系统
 - list_leads — 列出 leads. args: { status?: "ready"|"sent"|"replied"|"skipped"|"drafting", query?: string (搜 name/email/title), limit?: number (最多20) }. 返回: [{id, title, author_name, author_email, lead_tier, status, created_at, published_at}, ...]
 - get_lead — 单 lead 详情. args: { lead_id: string }. 返回: 完整 lead 行.
 - get_my_stats — 当前 rep 的统计. args: {}. 返回: { assigned, ready, sent, replied, wechat, override_used_today, override_cap }
+- get_my_missions_today — 当前用户今天的 missions 列表. args: {}. 返回: { ok, missions: [{id, kind, target, progress, status, scope}] }. 用于回答 "今天的任务是什么 / 今天还有多少要做".
 - get_rep_info — 当前 rep 自己的信息. args: {}. 返回: { id, name, email, role }
 - list_reps — 全部 sales reps 的列表 (用于 name → rep_id 翻译). args: {}. 返回: { reps: [{id, name, sender_name, lark_name, aliases, role, active}, ...] }. **什么时候用**: 用户用名字提到任何**别的** rep 时 (不是自己) — 比如 "把这个 lead 给 Yujie", "Mei 那边的 .cn lead 都给 Leo". 你不知道 Yujie/Mei/Leo 的 rep_id, 必须先 lookup. **匹配规则**: 用户说的名字要在 (a) name, (b) sender_name, (c) lark_name (中文飞书名), (d) aliases[] (pinyin + 简称 + 中文别名, 见 mig 081) 里任一字段找到. e.g. "caohongyuze" → 匹配 aliases → id=3 (Ethan); "曹鸿宇泽" → 匹配 lark_name → id=3; "宇泽" → 匹配 aliases → id=3. 中文姓 (Cao / Du / Wang) 单独不够 — 还要看上下文消歧. **硬规则**: reassign_lead 和 reassign_leads_bulk 工具的 to_rep_id / currentRepId 字段必须是 list_reps 返回的真实 id, **绝对不要**自己编 (写 1 / 2 / 3 这种猜测式 id 是常见 bug). 用户说 "Yujie" → lookup → 找到 id=2 → tool 里写 to_rep_id: 2.
 - get_my_growth — 当前 rep 的成长打分 (4 个维度: 选 lead 眼光 / AI 草稿契合度 / 跟进节奏 / 回信温度), 每维 1-5 rung + 证据 + 下一步解锁. args: {}. 返回: { dimensions[], overall_rung, top_strength, top_opportunity }. **什么时候用**: rep 问 "我做得怎么样 / 怎么提高 / 我的水平" 时, 或者你想用证据回答 "下一步该练什么"; 也可以在每天第一次开 panel 时主动调用作为 opener.

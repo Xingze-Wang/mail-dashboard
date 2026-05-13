@@ -791,7 +791,8 @@ export async function sendWalkthrough(
     `密码: 就是你刚才在这跟我设的那个.`,
     ``,
     `登进去之后看这几个页面就够了:`,
-    `  • **/pipeline** — 你的 lead 在这. 每天早上 cron 塞新 lead, AI 已经帮你拟好邮件草稿, 你看一眼 OK 就点 Send.`,
+    `  • **/missions** — 今天该做什么. 每天早上 9 点系统给你分今天的 lead (我会在 Lark DM 你), 这页告诉你今天的目标和进度.`,
+    `  • **/pipeline** — 你的 lead 在这. 系统按今天分配给你的 lead, AI 已经帮你拟好邮件草稿, 你看一眼 OK 就点 Send.`,
     `  • **/emails** — 邮件追踪. 谁打开了 / 谁回了 / 谁退订.`,
     `  • **/inbox** — 客户回信. (我会在收到新回复时主动 DM 你提醒.)`,
     ``,
@@ -851,6 +852,7 @@ export async function sendWalkthrough(
   // who saw their card.
   const msg4Lines: string[] = [
     `**怎么使唤我** (直接 DM 就行):`,
+    `  • "今天的任务是什么?"  → 我会告诉你今天的目标 + 进度`,
     `  • "今天我还有几条 ready?"`,
     `  • "把张三的 lead 给 Leo"`,
     `  • "刚加了 wang@xxx 的微信"  → 我会自动标这条转化`,
@@ -858,6 +860,8 @@ export async function sendWalkthrough(
     `  • "发了那条给张三的邮件"  → 我会真的把那封发出去`,
     ``,
     `**加微信流程**: 客户回邮件 → 你跟他要微信 → 加上 → Lark 里跟我说一句 "加了 X 微信" 我帮你标. 这是算转化的关键一步, 别忘.`,
+    ``,
+    `**你今天能拿多少 lead** — admin 在 dashboard 里给你设了一个每日 quota (按 strong / 国内 / 海外 / .edu 分开的数字). 第一周一般偏少, 跟你聊一下感觉 OK 的节奏再调. 觉得多了或者少了, 直接跟 admin 说就行.`,
   ];
   if (cfg.sales_group_chat_id) {
     const added = await addToSalesGroup(cfg.sales_group_chat_id, pending.lark_open_id);
