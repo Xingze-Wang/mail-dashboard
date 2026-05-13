@@ -38,6 +38,21 @@ export default function MissionsDot() {
   const [incomplete, setIncomplete] = useState(0);
   const [total, setTotal] = useState(0);
   const [loaded, setLoaded] = useState(false);
+  const [repCreatedAt, setRepCreatedAt] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const r = await fetch("/api/auth/me", { credentials: "include", cache: "no-store" });
+        if (!r.ok) return;
+        const j = await r.json();
+        if (!cancelled && j.authenticated) setRepCreatedAt(j.repCreatedAt ?? null);
+      } catch { /* silent */ }
+    };
+    void load();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -61,11 +76,52 @@ export default function MissionsDot() {
     return () => { cancelled = true; clearInterval(t); };
   }, []);
 
-  // Don't render on login or if not loaded yet.
+  if (!loaded) return null;
   if (pathname?.startsWith("/login")) return null;
-  if (!loaded || total === 0) return null;
-  // Hide if all complete — this is the "good job, nothing to nag about" state.
-  if (incomplete === 0) return null;
+
+  const isNewRep = repCreatedAt && Date.now() - new Date(repCreatedAt).getTime() < 7 * 86_400_000;
+
+  if (total === 0 && !isNewRep) return null;
+
+  if (total === 0 && isNewRep) {
+    return (
+      <Link
+        href="/missions"
+        style={{
+          position: "fixed", top: 16, right: 16,
+          padding: "6px 12px", borderRadius: 16,
+          background: "rgba(100, 116, 139, 0.12)",
+          border: "1px solid rgba(100, 116, 139, 0.25)",
+          color: "#94a3b8", fontSize: 12, textDecoration: "none",
+          display: "flex", alignItems: "center", gap: 6,
+          zIndex: 50,
+        }}
+        title="新员工: 今日任务即将出现"
+      >
+        <span>📋 今日任务即将出现</span>
+      </Link>
+    );
+  }
+
+  if (incomplete === 0) {
+    return (
+      <Link
+        href="/missions"
+        style={{
+          position: "fixed", top: 16, right: 16,
+          padding: "6px 12px", borderRadius: 16,
+          background: "rgba(16, 185, 129, 0.12)",
+          border: "1px solid rgba(16, 185, 129, 0.25)",
+          color: "#10b981", fontSize: 12, textDecoration: "none",
+          display: "flex", alignItems: "center", gap: 6,
+          zIndex: 50,
+        }}
+        title="今日任务全部完成"
+      >
+        <span>✅ All done</span>
+      </Link>
+    );
+  }
 
   return (
     <Link
