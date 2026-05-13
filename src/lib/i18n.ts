@@ -7,7 +7,7 @@ export type Locale = "en" | "zh";
 const dict: Record<string, Record<Locale, string>> = {
   // ── Sidebar nav ──────────────────────────────────────────────────────
   "nav.overview":        { en: "Overview",        zh: "概览" },
-  "nav.missions":        { en: "Today",           zh: "今日" },
+  "nav.missions":        { en: "Today",           zh: "Today" },
   "nav.pipeline":        { en: "Pipeline",        zh: "线索库" },
   "nav.emails":          { en: "Emails",          zh: "邮件" },
   "nav.brief":           { en: "Brief",           zh: "速览" },
