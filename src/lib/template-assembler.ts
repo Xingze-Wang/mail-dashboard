@@ -45,6 +45,12 @@ export interface EmailTemplate {
   rep_intro_format: string;
   school_pitch_format: string;
   cta_signoff_format: string;
+  // Migration 083 — when non-null, the assembler bypasses slot-based
+  // stitching and uses these directly. {{REP_NAME}}/{{REP_WECHAT}}/etc.
+  // placeholders still resolve at send time via resolveLatePlaceholders.
+  // Lead-specific tokens ({{first_name}}, {{title}}) resolve here.
+  full_html_override?: string | null;
+  subject_override?: string | null;
 }
 
 export interface AssemblyInput {
@@ -453,6 +459,48 @@ export async function assembleDraft(
 }> {
   const schoolInfo = getSchoolInfo(input.authorEmail);
   const segmentCtx = deriveSegmentContext(input);
+
+  // ─── Override fast path (migration 083) ──────────────────────────
+  // When a template has full_html_override or subject_override set —
+  // typically because rep-edit-clustering materialized it from a
+  // cluster of similar edits — bypass slot-based stitching and use
+  // the override directly. Lead-specific tokens ({{first_name}},
+  // {{title}}) still substitute here; rep-specific tokens
+  // ({{REP_NAME}}, {{REP_WECHAT}}, {{CLOSING_NAME}}) stay as literal
+  // placeholders for resolveLatePlaceholders() at send time, same as
+  // the slot-based path.
+  if (template.full_html_override || template.subject_override) {
+    const fullTitle = input.title.replace(/\n/g, " ").trim();
+    const firstNameOrYou = input.firstName ?? "你";
+    const leadVars: Record<string, string> = {
+      title: fullTitle,
+      first_name: input.firstName ?? "你",
+      firstNameOrYou,
+      school: input.schoolName ?? "",
+    };
+    const subjectSrc =
+      template.subject_override ?? template.subject_format ?? "";
+    const subject = truncateSubject(substituteRaw(subjectSrc, leadVars));
+    const htmlSrc = template.full_html_override ?? "";
+    // The override is full HTML; lead-token substitution uses the
+    // same {{key}} convention. Rep-tokens stay as literal placeholders.
+    const html = substituteRaw(htmlSrc, leadVars);
+    return {
+      subject,
+      html,
+      introPromptResolved: "(override path — no intro prompt run)",
+      introOutput: "(override path — no LLM intro generated)",
+      parts: [
+        {
+          slot: "full_html_override",
+          rendered: html,
+          kind: "fixed",
+          source_format: htmlSrc,
+          selection_reason: "template.full_html_override set",
+        },
+      ],
+    };
+  }
 
   // Pull all segment overrides for this template once. Cheap query
   // (indexed on template_id) and lets every slot pick from the same
