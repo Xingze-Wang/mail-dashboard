@@ -283,6 +283,26 @@ export async function processOnboardingCardAction(rawEvent: unknown): Promise<{
     receive_id_type: "open_id",
     text: `✅ ${pending.claimed_name} (${result.senderEmail}) 已通过 — 角色 ${role}, rep_id=${result.repId}.`,
   });
+
+  // Prompt admin to set the new rep's daily quota. Under the shared-pool
+  // allocation system, a rep with no quota gets zero leads — so admin must
+  // configure it (and ideally discuss with the rep) before the next morning's
+  // allocation cron runs. The follow-up cron at /api/cron/onboarding-quota-check
+  // re-DMs admin every 24h if the quota stays at zero.
+  if (role === "sales") {
+    const newRepName = pending.claimed_name ?? `rep_${result.repId}`;
+    await sendMessage({
+      receive_id: operatorOpenId,
+      receive_id_type: "open_id",
+      text:
+        `**下一步: 设置 ${newRepName} 的 daily quota.**\n\n` +
+        `去 https://calistamind.com/admin/missions, 在 Daily Quotas 表里给 ${newRepName} ` +
+        `填上每天的 per-pool 数字 (strong / 国内 / 海外 / .edu).\n\n` +
+        `第一周建议偏少 (e.g. normal_cn: 4–6), 跟 ${newRepName} 聊一下感觉舒服的节奏再调.\n\n` +
+        `如果不设, 明早系统不会给 ${newRepName} 分 lead.`,
+    });
+  }
+
   return { ok: true, reason: "approved" };
 }
 

@@ -11,6 +11,7 @@
     { "path": "/api/cron/model-bench-eval",    "schedule": "0 8 * * *" },
     { "path": "/api/missions/heuristic-seed",  "schedule": "0 23 * * 0-4" },
     { "path": "/api/missions/allocate-leads",  "schedule": "0 1 * * 1-5" },
+    { "path": "/api/cron/onboarding-quota-check", "schedule": "0 0 * * 1-5" },
     { "path": "/api/cron/enrich-h-index",      "schedule": "0 3 * * *" },
     { "path": "/api/congress/jitr-tick",      "schedule": "0 7 * * 1-5" },
     { "path": "/api/congress/weekly",         "schedule": "0 1 * * 1" },
