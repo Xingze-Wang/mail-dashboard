@@ -30,6 +30,9 @@ export async function getEffectiveQuota(
     .eq("rep_id", repId)
     .eq("due_date", dueDate)
     .maybeSingle();
+  if (ov.error) {
+    console.error(`[quota-store] override query failed for rep=${repId} date=${dueDate}: ${ov.error.message}`);
+  }
   if (ov.data?.per_pool && !String(ov.data.reason || "").startsWith("_")) {
     return {
       rep_id: repId,
@@ -44,6 +47,9 @@ export async function getEffectiveQuota(
     .select("per_pool, direction_priority")
     .eq("rep_id", repId)
     .maybeSingle();
+  if (st.error) {
+    console.error(`[quota-store] standing query failed for rep=${repId}: ${st.error.message}`);
+  }
   if (st.data) {
     return {
       rep_id: repId,

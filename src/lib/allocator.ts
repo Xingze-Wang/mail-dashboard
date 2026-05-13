@@ -90,21 +90,25 @@ export async function allocateForRep(input: AllocateForRepInput): Promise<Alloca
     const ids = picks.map((p) => p.id);
     allLeadIds.push(...ids);
 
-    const { error: logErr } = await supabase.from("allocation_log").insert({
-      mission_id: input.mission_id,
-      rep_id: input.rep_id,
-      due_date: input.due_date,
-      pool_key: pk,
-      lead_ids: ids,
-      allocator: input.allocator,
-      reason: input.reason ?? null,
-      notification_status: null,
-    });
-    if (logErr) {
-      console.error(`[allocator] allocation_log insert failed for pool=${pk}: ${logErr.message}`);
-    }
-
+    // In shadow mode, write NEITHER the allocation_log row NOR the
+    // pipeline_leads update. Writing the log alone would poison
+    // alreadyAllocated() — the next real run would skip these missions
+    // because a "fake" shadow row exists for today.
     if (!input.shadow) {
+      const { error: logErr } = await supabase.from("allocation_log").insert({
+        mission_id: input.mission_id,
+        rep_id: input.rep_id,
+        due_date: input.due_date,
+        pool_key: pk,
+        lead_ids: ids,
+        allocator: input.allocator,
+        reason: input.reason ?? null,
+        notification_status: null,
+      });
+      if (logErr) {
+        console.error(`[allocator] allocation_log insert failed for pool=${pk}: ${logErr.message}`);
+      }
+
       const { error: updErr } = await supabase
         .from("pipeline_leads")
         .update({ assigned_rep_id: input.rep_id })

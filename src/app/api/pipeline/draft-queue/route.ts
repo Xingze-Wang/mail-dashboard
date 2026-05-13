@@ -97,8 +97,11 @@ async function processOne(row: Record<string, unknown>): Promise<boolean> {
       }
     }
 
-    // 2. Re-classify + re-assign if enrichment changed the picture (e.g. a
-    //    high-citation author unlocked "strong" tier → routed to Leo).
+    // 2. Re-classify (enrichment may bump tier — e.g. high citations
+    //    unlock "strong"). Rep assignment is NOT re-computed here under
+    //    the shared-pool model — assigned_rep_id is set by the allocator
+    //    (/api/missions/allocate-leads) at 09:00 Beijing daily. Draft-queue
+    //    only processes leads that are already assigned (filtered in run()).
     const schoolTier = (row.school_tier as number | null) ?? null;
     const mdRaw = row.matched_directions;
     const matchedDirs = typeof mdRaw === "string"
@@ -107,9 +110,23 @@ async function processOne(row: Record<string, unknown>): Promise<boolean> {
 
     const config = await getAssignmentConfig();
     const newTier = classifyLead(config, { citationCount, hIndex, schoolTier, authorEmail: email, localScore });
-    const newRepId = assignRep(config, newTier, email, matchedDirs);
+    // Use the rep that the allocator already assigned. If somehow null at
+    // this point (shouldn't happen given the run() filter), bail — the
+    // allocator hasn't claimed this lead yet.
+    const newRepId = (row.assigned_rep_id as number | null) ?? null;
+    if (newRepId == null) {
+      // Roll back to queued so the next run retries after allocation.
+      await supabase
+        .from("pipeline_leads")
+        .update({ status: "queued" })
+        .eq("id", id);
+      return false;
+    }
+    // assignRep import retained for the admin auto-route path elsewhere;
+    // explicitly silence the unused-binding lint here.
+    void assignRep;
 
-    // 3. Look up the (possibly re-assigned) rep and generate the draft.
+    // 3. Look up the assigned rep and generate the draft.
     const rep = await getRep(newRepId);
     const draft = await generateDraft({
       title,
@@ -163,12 +180,17 @@ async function processOne(row: Record<string, unknown>): Promise<boolean> {
 }
 
 async function run() {
+  // Only draft for leads that have already been assigned by the allocator.
+  // Unassigned 'queued' leads sit in the pool until /api/missions/allocate-leads
+  // claims them. This guard is what makes the shared-pool model work — without
+  // it, draft-queue would silently re-assign every lead and undo Phase 2.
   const { data: queued } = await supabase
     .from("pipeline_leads")
     .select(
       "id, title, abstract, author_email, author_name, first_name, school_name, school_tier, matched_directions, assigned_rep_id, citation_count, h_index, s2_author_id, paper_count, local_score"
     )
     .eq("status", "queued")
+    .not("assigned_rep_id", "is", null)
     .order("created_at", { ascending: true })
     .limit(BATCH);
 

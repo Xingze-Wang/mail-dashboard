@@ -75,12 +75,10 @@ console.log("\nTest 3: allocateForRep in shadow mode writes log but NOT assigned
     assert(allNull, "shadow mode left assigned_rep_id NULL");
   }
 
-  // allocation_log row written
-  const log = await sb.from("allocation_log").select("id, lead_ids").eq("mission_id", missionId).eq("due_date", TODAY).eq("allocator", "test:shadow");
-  assert((log.data?.length || 0) > 0, "allocation_log row written");
-
-  // Cleanup test allocation_log rows
-  await sb.from("allocation_log").delete().eq("allocator", "test:shadow");
+  // Shadow mode writes NEITHER assigned_rep_id NOR allocation_log
+  // (writing the log alone would poison alreadyAllocated() idempotency check).
+  const log = await sb.from("allocation_log").select("id").eq("mission_id", missionId).eq("due_date", TODAY).eq("allocator", "test:shadow");
+  assert((log.data?.length || 0) === 0, "shadow mode wrote NO allocation_log row (avoids idempotency poison)");
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
