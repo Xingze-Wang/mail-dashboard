@@ -12,7 +12,6 @@ import { mineAckIndustry } from "@/lib/ack-mining";
 import {
   getAssignmentConfig,
   classifyLead,
-  assignRep,
   getRep,
 } from "@/lib/assignment";
 import { requireSession } from "@/lib/auth-helpers";
@@ -246,47 +245,44 @@ export async function POST(req: NextRequest) {
         localScore: pyLocalScore,
         industryOrgs,
       });
-      const assignedRepId = assignRep(
-        config,
-        leadTier,
-        email,
-        (lead.matchedDirections as string) ?? null,
-      );
+      // Per docs/superpowers/specs/2026-05-13-shared-pool-and-mission-ux-design.md,
+      // assignment is deferred to /api/missions/allocate-leads (runs daily at
+      // 09:00 Beijing). Imports land in the pool with assigned_rep_id=NULL;
+      // the allocator picks them up next morning based on each rep's daily
+      // quota. lead_tier is still classified so the v_lead_pool view can
+      // partition by sub-pool.
+      const assignedRepId: number | null = null;
 
       // Prefer the canonicalized arxiv id; synthesize a unique one otherwise.
       const arxivId = arxivIdCanonical ||
         `${source}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 
       // If Python supplied a draft (body + subject, typically with
-      // {{REP_NAME}} / {{REP_WECHAT}} placeholders), fill those with the
-      // assigned rep's identity and mark the lead 'ready' immediately.
-      // Otherwise the draft-queue worker will generate from scratch later.
-      // Scoring runs in parallel with the rep lookup so import stays fast.
+      // {{REP_NAME}} / {{REP_WECHAT}} placeholders), keep the placeholders
+      // intact — the rep isn't known yet. The draft-queue worker will
+      // re-render with rep identity after the allocator assigns the lead.
+      // Scoring still runs at import time so the lead has a relevance signal.
       const incomingSubject = (lead.draftSubject as string) || null;
       const incomingHtml = (lead.draftHtml as string) || null;
       const incomingScore = typeof lead.localScore === "number" ? lead.localScore : null;
       const abstractStr = (lead.abstract as string) || "";
 
-      const [repLookup, scoreLookup] = await Promise.all([
-        incomingSubject && incomingHtml ? getRep(assignedRepId) : Promise.resolve(null),
-        // Score every lead at import time, even when Python supplied a local_score
-        // we trust that one; otherwise fire Gemini fallback. ~1-2s per call,
-        // bounded by scoreWithGemini's 8s timeout, returns null on any failure.
-        incomingScore !== null ? Promise.resolve(incomingScore) : scoreWithGemini(title, abstractStr),
-      ]);
+      const scoreLookup =
+        incomingScore !== null ? incomingScore : await scoreWithGemini(title, abstractStr);
 
-      let finalSubject: string | null = null;
-      let finalHtml: string | null = null;
-      let finalStatus: "ready" | "queued" = "queued";
-      if (incomingSubject && incomingHtml) {
-        const filled = fillRepPlaceholders(
-          { subject: incomingSubject, html: incomingHtml },
-          repLookup ? { sender_name: repLookup.sender_name, wechat_id: repLookup.wechat_id } : null,
-        );
-        finalSubject = filled.subject;
-        finalHtml = filled.html;
-        finalStatus = "ready";
-      }
+      // Drafts carry literal {{REP_NAME}} / {{REP_WECHAT}} placeholders until
+      // allocation. The draft-queue worker rewrites them post-assignment.
+      // `_` suppresses the unused-import lint for fillRepPlaceholders.
+      void fillRepPlaceholders;
+      // `_` suppresses the unused-import lint for getRep (still used by other
+      // callers in this file via Promise.all paths if added later).
+      void getRep;
+      const finalSubject: string | null = incomingSubject;
+      const finalHtml: string | null = incomingHtml;
+      // 'queued' (not 'ready') — without a rep, the draft has placeholders,
+      // not a sendable email. Allocator + draft-queue flips to 'ready' after
+      // re-rendering with the assigned rep's identity.
+      const finalStatus: "queued" = "queued";
       const finalScore = scoreLookup ?? null;
 
       // Draft is generated server-side by /api/pipeline/draft-queue using the
