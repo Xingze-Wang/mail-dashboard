@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { requireSession } from "@/lib/auth-helpers";
+import { getEffectiveQuota } from "@/lib/quota-store";
+import { sumPerPool } from "@/lib/pool-types";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -27,6 +29,25 @@ export const maxDuration = 30;
  * Auth: admin only (this is a one-shot seed; not for sales).
  */
 
+async function notifyAdminMissingQuota(rep: { id: number; name: string }): Promise<void> {
+  const ADMIN_OPEN_ID = process.env.ADMIN_LARK_OPEN_ID;
+  if (!ADMIN_OPEN_ID) return;
+  try {
+    const { sendMessage } = await import("@/lib/lark");
+    await sendMessage({
+      receive_id: ADMIN_OPEN_ID,
+      receive_id_type: "open_id",
+      text: `⚠️ ${rep.name} 今天没有 daily quota — 我跳过了 mission seed. 去 /admin/missions 设一下.`,
+    });
+  } catch {
+    /* silent — DM failure shouldn't break the seed */
+  }
+}
+
+// Dedup notifications within a single cron invocation.
+// (Cron runs once per day so cross-invocation dedup isn't needed.)
+const notifiedThisRun = new Set<number>();
+
 async function requireAdmin(req: NextRequest) {
   const session = await requireSession(req);
   if (!session) return null;
@@ -49,6 +70,7 @@ interface SeedResult {
   send_target: number;
   reply_target: number;
   skipped_reason?: string;
+  skipped_send_reason?: string;
 }
 
 /** Shared seed logic. POST (admin) and GET (cron) both call this. */
@@ -86,13 +108,16 @@ async function seedMissions(): Promise<{ today: string; results: SeedResult[] }>
       continue;
     }
 
-    // Send target — clamp the queue depth into a sane range.
-    const { count: readyCount } = await supabase
-      .from("pipeline_leads")
-      .select("id", { count: "exact", head: true })
-      .eq("assigned_rep_id", repId)
-      .eq("status", "ready");
-    const sendTarget = Math.max(5, Math.min(12, readyCount ?? 5));
+    // Send target — sourced from admin-set daily quota.
+    const quota = await getEffectiveQuota(repId, today);
+    const sendTarget = sumPerPool(quota.per_pool);
+    if (sendTarget <= 0) {
+      if (!notifiedThisRun.has(repId)) {
+        await notifyAdminMissingQuota({ id: repId, name: repName });
+        notifiedThisRun.add(repId);
+      }
+      // Skip send mission, but still allow reply mission to be created if there's inbound.
+    }
 
     // Reply target — count inbound replies that haven't been
     // acknowledged. Cheap proxy: inbound_emails rows where the source
@@ -115,17 +140,29 @@ async function seedMissions(): Promise<{ today: string; results: SeedResult[] }>
     }
 
     // Insert missions.
-    const rows: Array<Record<string, unknown>> = [
-      {
+    const rows: Array<Record<string, unknown>> = [];
+    if (sendTarget > 0) {
+      const pp = quota.per_pool;
+      const breakdown = [
+        pp.strong > 0 ? `${pp.strong} strong` : null,
+        pp.normal_cn > 0 ? `${pp.normal_cn} 国内` : null,
+        pp.normal_overseas > 0 ? `${pp.normal_overseas} 海外` : null,
+        pp.normal_edu > 0 ? `${pp.normal_edu} .edu` : null,
+      ].filter(Boolean).join(" + ");
+      rows.push({
         rep_id: repId,
         due_date: today,
         kind: "send",
         target: sendTarget,
-        description: `今天的目标: 发 ${sendTarget} 封 (基于你 ready 队列里的数量算出来的, 5-12 区间).`,
+        scope: {
+          per_pool: quota.per_pool,
+          direction_priority: quota.direction_priority,
+        },
+        description: `今天的目标: 发 ${sendTarget} 封 (${breakdown}). 早上 9 点系统会自动分配到你 queue.`,
         generated_by: "heuristic",
         status: "active",
-      },
-    ];
+      });
+    }
     if (replyTarget > 0) {
       rows.push({
         rep_id: repId,
@@ -138,13 +175,17 @@ async function seedMissions(): Promise<{ today: string; results: SeedResult[] }>
       });
     }
 
-    const { error } = await supabase.from("missions").insert(rows);
-    if (error) {
-      results.push({ rep_id: repId, rep_name: repName, send_target: 0, reply_target: 0, skipped_reason: `insert failed: ${error.message}` });
-      continue;
+    if (rows.length > 0) {
+      const { error } = await supabase.from("missions").insert(rows);
+      if (error) {
+        results.push({ rep_id: repId, rep_name: repName, send_target: 0, reply_target: 0, skipped_reason: `insert failed: ${error.message}` });
+        continue;
+      }
     }
 
-    results.push({ rep_id: repId, rep_name: repName, send_target: sendTarget, reply_target: replyTarget });
+    const seedResult: SeedResult = { rep_id: repId, rep_name: repName, send_target: sendTarget, reply_target: replyTarget };
+    if (sendTarget === 0) seedResult.skipped_send_reason = "no_quota";
+    results.push(seedResult);
   }
 
   return { today, results };
