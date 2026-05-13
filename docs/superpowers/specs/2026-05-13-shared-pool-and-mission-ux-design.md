@@ -116,9 +116,10 @@ SELECT
   created_at
 FROM pipeline_leads
 WHERE assigned_rep_id IS NULL
-  AND status IN ('new', 'queued')          -- not sent, not skipped
-  AND (skipped_at IS NULL);
+  AND status IN ('new', 'queued');         -- not sent, not skipped
 ```
+
+(Earlier drafts of this spec included `AND skipped_at IS NULL` as belt-and-suspenders, but `pipeline_leads` has no `skipped_at` column in production — `status='skipped'` is the only skip marker, and is already excluded by the `status IN ('new', 'queued')` filter. See migration 082 for the verified shape.)
 
 `matched_directions` does **not** define its own sub-pool (otherwise we get 20 buckets). It becomes a **priority hint** within the strong pool — allocator picks direction-matched leads first when filling Leo's strong target.
 
