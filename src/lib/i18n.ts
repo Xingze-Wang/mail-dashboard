@@ -15,6 +15,7 @@ const dict: Record<string, Record<Locale, string>> = {
   "nav.templates":       { en: "Templates",       zh: "模板" },
   "nav.adminMissions":   { en: "Missions Admin",  zh: "任务管理" },
   "nav.adminAllocation": { en: "Allocation",      zh: "分配" },
+  "nav.adminTemplateCandidates": { en: "Template Candidates", zh: "Template Candidates" },
   "nav.congress":        { en: "Congress",        zh: "议事厅" },
   "nav.scorer":          { en: "Scorer",          zh: "评分器" },
   "nav.bench":           { en: "Bench",           zh: "基准测试" },

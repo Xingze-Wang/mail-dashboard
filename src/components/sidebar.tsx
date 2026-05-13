@@ -119,6 +119,16 @@ const AdminAllocationIcon = () => (
   </svg>
 );
 
+// Template-candidates icon — sparkle inside a doc, signals
+// "AI-detected template proposal awaiting review."
+const AdminTemplateCandidatesIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+    <path d="M14 3v6h6" />
+    <path d="M12 13l1 2 2 1-2 1-1 2-1-2-2-1 2-1z" />
+  </svg>
+);
+
 // Council/congress icon — speech-bubble cluster, signaling the
 // multi-persona debate happening inside.
 const CongressIcon = () => (
@@ -206,8 +216,9 @@ export function Sidebar() {
     { href: "/brief",            label: t("nav.brief",           locale), Icon: BriefIcon,           adminOnly: false },
     { href: "/analysis",         label: t("nav.insights",        locale), Icon: InsightsIcon,        adminOnly: false },
     { href: "/templates",        label: t("nav.templates",       locale), Icon: TemplatesIcon,       adminOnly: false },
-    { href: "/admin/missions",   label: t("nav.adminMissions",   locale), Icon: AdminMissionsIcon,   adminOnly: true  },
-    { href: "/admin/allocation", label: t("nav.adminAllocation", locale), Icon: AdminAllocationIcon, adminOnly: true  },
+    { href: "/admin/missions",            label: t("nav.adminMissions",            locale), Icon: AdminMissionsIcon,            adminOnly: true  },
+    { href: "/admin/allocation",          label: t("nav.adminAllocation",          locale), Icon: AdminAllocationIcon,          adminOnly: true  },
+    { href: "/admin/templates/candidates", label: t("nav.adminTemplateCandidates", locale), Icon: AdminTemplateCandidatesIcon, adminOnly: true  },
     { href: "/congress",         label: t("nav.congress",        locale), Icon: CongressIcon,        adminOnly: true  },
     { href: "/scorer",           label: t("nav.scorer",          locale), Icon: ScorerIcon,          adminOnly: true  },
     { href: "/bench",            label: t("nav.bench",           locale), Icon: BenchIcon,           adminOnly: true  },
