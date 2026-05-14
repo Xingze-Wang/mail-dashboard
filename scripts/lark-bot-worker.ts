@@ -284,14 +284,27 @@ console.error = (...args: unknown[]) => {
   const s = args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ");
   // Broaden the unhealthy signals: SDK has multiple ways to log a dead
   // WS depending on which retry path it's in. Catch all of them.
-  const unhealthy =
+  //
+  // BUT: "system busy" and "PingInterval" are emitted by the SDK during
+  // initial connect retries — they fire BEFORE "ws client ready" and
+  // are not signs of a dead live connection. Only treat them as
+  // unhealthy if we were already healthy (i.e. they fired POST connect).
+  // Without this guard the watchdog triggers a soft-restart every 60s
+  // on cold-start noise, which drops card events for ~5s each cycle.
+  const definitelyUnhealthy =
     s.includes("unable to connect") ||
     s.includes("ws connect failed") ||
-    s.includes("system busy") ||
-    s.includes("PingInterval") ||
     s.includes("ws read error") ||
     s.includes("ws closed");
-  if (unhealthy) wsHealthy = false;
+  const maybeUnhealthy =
+    s.includes("system busy") ||
+    s.includes("PingInterval");
+  if (definitelyUnhealthy) wsHealthy = false;
+  else if (maybeUnhealthy && wsHealthy && lastHealthyAt > 0) {
+    // Only flip if we'd already become healthy and now something
+    // looks wrong — i.e. a post-connect failure, not connect noise.
+    wsHealthy = false;
+  }
   origErr(...args);
 };
 
