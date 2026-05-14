@@ -50,7 +50,39 @@ export async function POST(req: Request) {
 
   const eventType = parsed.header?.event_type ?? parsed.type ?? "";
   const isMessage = eventType.startsWith("im.message");
-  const isCardAction = eventType.startsWith("card.action.trigger");
+  // Lark uses both "card.action.trigger" and the legacy "interactive_card"
+  // event names depending on app version / event subscription mode.
+  // Cover both — the symptom of getting this wrong is "card lands, click
+  // does nothing", which is exactly what we hit.
+  const isCardAction =
+    eventType.startsWith("card.action.trigger") ||
+    eventType === "interactive_card" ||
+    eventType === "card.action";
+
+  // Fire-and-forget capture into lark_webhook_trace. We do this BEFORE
+  // the early-skip below so even unknown event_types get a row; that
+  // way "Lark calls our webhook but we drop it" becomes visible. The
+  // import is dynamic so the URL-verification fast path stays cold-
+  // start light.
+  {
+    const ev = (parsed.event as {
+      operator?: { open_id?: string };
+      action?: { value?: Record<string, unknown> };
+    } | undefined);
+    const operator = ev?.operator?.open_id ?? null;
+    const actionValue = ev?.action?.value ?? null;
+    void import("@/lib/db").then(({ supabase }) =>
+      supabase.from("lark_webhook_trace").insert({
+        event_type: eventType,
+        is_card_action: isCardAction,
+        operator_open_id: operator,
+        action_value: actionValue as object | null,
+        header: parsed.header ?? null,
+        event: parsed.event ?? null,
+      }),
+    ).catch((e) => console.error("[webhook-trace] insert failed:", e));
+  }
+
   if (!isMessage && !isCardAction) {
     return NextResponse.json({ ok: true, skipped: eventType }, { status: 200 });
   }

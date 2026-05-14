@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
   );
   const since = new Date(Date.now() - minutes * 60_000).toISOString();
 
-  const [adminInbox, larkMsgs, tmplTouched] = await Promise.all([
+  const [adminInbox, larkMsgs, tmplTouched, webhookTrace] = await Promise.all([
     supabase
       .from("admin_inbox")
       .select("id, headline, status, acted_at, dedup_hash, created_at, evidence")
@@ -44,6 +44,12 @@ export async function GET(req: NextRequest) {
       .gte("updated_at", since)
       .order("updated_at", { ascending: false })
       .limit(10),
+    supabase
+      .from("lark_webhook_trace")
+      .select("id, received_at, event_type, is_card_action, operator_open_id, action_value, processed, error")
+      .gte("received_at", since)
+      .order("received_at", { ascending: false })
+      .limit(30),
   ]);
 
   return NextResponse.json({
@@ -57,5 +63,7 @@ export async function GET(req: NextRequest) {
     lark_messages_err: larkMsgs.error?.message,
     templates_touched: tmplTouched.data ?? [],
     templates_touched_err: tmplTouched.error?.message,
+    webhook_trace: webhookTrace.data ?? [],
+    webhook_trace_err: webhookTrace.error?.message,
   });
 }
