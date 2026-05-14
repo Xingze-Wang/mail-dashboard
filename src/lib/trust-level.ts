@@ -62,7 +62,11 @@ const TIERS: Record<TrustTier, Omit<RepCapabilities, "repId" | "totalSends" | "t
   novice:       { canBulkSend: false, bulkBatchMax: 1,   dailyLeadCap: 5,    dailySendCap: 5 },
   training:     { canBulkSend: false, bulkBatchMax: 1,   dailyLeadCap: 10,   dailySendCap: 15 },
   intermediate: { canBulkSend: true,  bulkBatchMax: 5,   dailyLeadCap: 25,   dailySendCap: 40 },
-  mature:       { canBulkSend: true,  bulkBatchMax: 50,  dailyLeadCap: null, dailySendCap: null },
+  // Both mature + admin now allow up to 200 per batch (Vercel Pro 300s
+  // function cap, ~1.2s per send). Bumped 2026-05-14 — reps were
+  // getting 'Max 50 per batch' errors mid-quota with the 50/day per-rep
+  // quotas now in place.
+  mature:       { canBulkSend: true,  bulkBatchMax: 200, dailyLeadCap: null, dailySendCap: null },
   admin:        { canBulkSend: true,  bulkBatchMax: 200, dailyLeadCap: null, dailySendCap: null },
 };
 
