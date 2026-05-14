@@ -189,12 +189,19 @@ const dispatcher = new Lark.EventDispatcher({}).register({
     } catch (err) {
       console.error(`[worker] card action threw:`, err);
     }
-    // Card-action handler MUST return an object (Lark SDK
-    // JSON-encodes it into the WS ack frame). Returning "" caused
-    // Lark client to show "Something went wrong code: 200345"
-    // because the SDK tried to JSON.parse a string and failed.
-    // {} = ack without updating the card UI.
-    return {};
+    // Card-action handler MUST return a Lark-shaped object.
+    // - "" → SDK couldn't parse → code 200345
+    // - {} → some Lark clients render code 200340 (unreachable)
+    // - {toast: {...}} → client shows the toast, ack is unambiguous
+    // Keeping the same shape the HTTP webhook returns so both paths
+    // are interchangeable.
+    const env2 = data as { event?: { action?: { value?: Record<string, unknown> } } };
+    const action = (env2.event?.action?.value?.onboarding_action as string | undefined) ?? "";
+    const toastContent =
+      action === "deny" ? "已拒绝, 正在发拒绝通知…" :
+      action === "approve_sales" || action === "approve_senior" ? "已通过, 正在开账号 + 发欢迎邮件…" :
+      "已收到";
+    return { toast: { type: "success", content: toastContent } };
   },
 });
 

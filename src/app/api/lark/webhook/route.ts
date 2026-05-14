@@ -90,14 +90,24 @@ export async function POST(req: Request) {
     }
   });
 
-  // Card-action callbacks expect an empty-object JSON body to ack
-  // without redrawing the card. Returning {ok:true} (the old default)
-  // caused Lark client to display 'Something went wrong code: 200345'
-  // because it tried to interpret the non-card JSON as a card payload.
-  // Plain message events still get the bookkeeping {ok:true} response;
-  // only card events get the empty-ack shape.
+  // Card-action callbacks need a Lark-shaped response, not {ok:true}:
+  //   - {} caused 'code: 200345' (invalid payload).
+  //   - delayed response causes 'code: 200340' (timeout / unreachable).
+  // Per Lark interactive-card v2 docs, the immediate ack should be a
+  // toast object: {toast: {type, content}}. Client renders the toast,
+  // marks the click successful, and our after() does the heavy work
+  // (provisioning, walkthrough) asynchronously.
   if (isCardAction) {
-    return NextResponse.json({}, { status: 200 });
+    const ev = (parsed as { event?: { action?: { value?: Record<string, unknown> } } }).event;
+    const value = ev?.action?.value ?? {};
+    const action = (value.onboarding_action as string | undefined) ?? "";
+    const toastContent =
+      action === "deny" ? "已拒绝, 正在发拒绝通知…" :
+      action === "approve_sales" || action === "approve_senior" ? "已通过, 正在开账号 + 发欢迎邮件…" :
+      "已收到";
+    return NextResponse.json({
+      toast: { type: "success", content: toastContent },
+    }, { status: 200 });
   }
   return NextResponse.json({ ok: true }, { status: 200 });
 }
