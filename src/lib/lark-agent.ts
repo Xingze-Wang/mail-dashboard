@@ -121,6 +121,40 @@ escalate 怎么做 (一句话给 rep + 调 tool, 不要默默升级):
 
 宁可多 escalate. admin dismiss 一下成本 5 秒; rep 卡 3 天成本不可逆.
 
+## ⛔ "记下来了 / 我记住了 / 帮你记一下" 这种话 → 必须配 tool block (硬规则)
+
+你**只要**说出下面这些短语之一, 这次回复**必须**包含一个对应的 \`\`\`tool\`\`\` JSON block, 否则你是在撒谎.
+
+中招的短语:
+- "我记下来了" / "记住了" / "存进去了" / "已记录" / "我会记得"
+- "save 一下" / "save 进 memory" / "consolidate 一下"
+- "下次我会答 [X]" (隐含: 你已经存了某条 memory)
+- 任何对 admin 说 "好, 这条我记一下" 的承诺
+
+对应的 tool block:
+- 如果是纠正/事实错误 → \`\`\`tool {"action":"learn_from_admin_correction", ...}\`\`\`
+- 如果是 rep 个人偏好 → \`\`\`tool {"action":"remember_about_rep", ...}\`\`\`
+- 如果是 admin 给的 todo → \`\`\`tool {"action":"record_admin_request", ...}\`\`\`
+
+**不要**只在纯文本里说"我记下了"然后什么都不调用. 这是历史 bug — admin 看到"记下了"以为存了, 实际 helper_learnings 表里没有, 下次同样的问题你又答错. 如果你不打算真的调 tool, 就**不要承诺**记下来; 直接说 "这条我没存, 你想存的话明确说一声".
+
+## ⚠️ Escalation 答完后 → 主动 offer 把答案 consolidate (新规则)
+
+当 escalation 流程跑完 — 你 record_admin_request → admin 回答 → 你把答案传给 rep —
+**主动**问 admin (在 admin DM 里, 不是 rep 那边):
+
+> "刚才那个答案我要不要存成 skill? 下次类似问题我直接答. sample answer 会是: '[根据新 memory 你会怎么答]'"
+
+admin "好/save/yes/记一下" → 立刻调 \`learn_from_admin_correction\` (scope: org), 参数:
+- what_i_said: rep 当时问的原话
+- correction: admin 给的答案
+- sample_question: 同类问题的另一个 phrasing
+- (返回的 sample_answer 别忘了发给 admin 验证)
+
+admin "不用/dismiss/算了" → 别强求, 礼貌结束.
+
+这条规则的目的: escalation 不应该是一次性消耗. 每次 admin 答了一个 rep 都可能问的问题, 应该让 Leon 自己以后能答, 否则 admin 会被同样的 question 烦三遍.
+
 ## 遇到搞不定的事 → 找 admin (Xingze)
 
 这条最重要. 你不是 oracle, 你只是搭档. 下面这些情况, **不要硬扛, 直接 record_admin_request**:
@@ -721,6 +755,34 @@ export async function processInboundLarkMessage(
 
   const reply = await runAgent(session, text, history);
   const { cleaned, proposal } = extractAnyProposal(reply);
+
+  // Detector: Leon sometimes claims "我记下了 / 记住了 / save 进去了"
+  // in plain text without emitting a tool block, leaving the memory
+  // unwritten. Admin sees the promise, DB doesn't. The detector
+  // catches this and either (a) auto-converts to a tool call if we
+  // can synthesize one safely, or (b) escalates the prompt failure
+  // to admin_inbox so we know to tighten the prompt further.
+  const claimsMemoryWrite = /我记下来?了|我记住了|存进(去)?了|已记录|save\s+(进|到)\s*memory|consolidate 一下/.test(cleaned);
+  const memoryToolCalled = proposal && (
+    proposal.action === "learn_from_admin_correction" ||
+    proposal.action === "remember_about_rep" ||
+    proposal.action === "record_admin_request"
+  );
+  if (claimsMemoryWrite && !memoryToolCalled) {
+    // Log a self_critique into helper_learnings so next session's
+    // prompt is reminded. Cheap, idempotent (recordLearning dedups
+    // by exact body in practice for prompts).
+    try {
+      const { recordLearning } = await import("@/lib/helper-learnings");
+      await recordLearning({
+        scope_rep_id: null,
+        kind: "self_critique",
+        body: `[guard caught it] Leon said '记下来了' or similar in a reply but did not emit a learn_from_admin_correction / remember_about_rep / record_admin_request tool block. Reply: "${cleaned.slice(0, 200)}". Source message: "${text.slice(0, 200)}". Rule: any claim-to-record requires a matching tool call in the SAME reply.`,
+        confidence: 0.6,
+      });
+    } catch {/* best-effort */}
+    console.warn(`[lark-agent/${transport}] CLAIMS_WITHOUT_TOOL`, { rep: rep.id, text: text.slice(0, 80), reply: cleaned.slice(0, 80) });
+  }
 
   let suffix = "";
   if (proposal) {
