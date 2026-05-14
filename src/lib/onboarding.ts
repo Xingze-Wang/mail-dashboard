@@ -882,6 +882,14 @@ export async function sendWalkthrough(
   }
   if (cfg.who_does_what) {
     docLines.push(`🧭 **谁负责什么 (cheat sheet)**:`, cfg.who_does_what);
+  } else {
+    // Fallback: synthesize from sales_reps when admin hasn't filled
+    // who_does_what yet. New reps should know who to ping for what on
+    // day one; an unset config field shouldn't leave them in the dark.
+    const synthesized = await synthesizeWhoDoesWhat();
+    if (synthesized) {
+      docLines.push(`🧭 **遇到问题找谁 (auto-generated, 来自 sales_reps 表)**:`, synthesized);
+    }
   }
   if (cfg.day_one_notes) {
     docLines.push(`📝 **第一天提醒** (admin 写给你的)`, cfg.day_one_notes);
@@ -946,6 +954,42 @@ export async function sendWalkthrough(
     receive_id_type: "open_id",
     text: msg4Lines.join("\n"),
   });
+}
+
+/**
+ * Fallback for who_does_what cheat sheet when admin hasn't filled the
+ * onboarding_config field. Reads sales_reps directly and synthesizes a
+ * "ping X for Y" block from role + name. Better than silently dropping
+ * the cheat sheet on day-one.
+ */
+async function synthesizeWhoDoesWhat(): Promise<string | null> {
+  const { data: reps } = await supabase
+    .from("sales_reps")
+    .select("name, lark_name, role, active")
+    .eq("active", true);
+  if (!reps || reps.length === 0) return null;
+
+  // Group by role. Show Lark display name (Chinese) if available
+  // since new rep is in Lark too; fall back to English name.
+  const display = (r: { name: string | null; lark_name: string | null }) =>
+    (r.lark_name || r.name || "?") as string;
+
+  const admins = reps.filter((r) => r.role === "admin").map(display);
+  const seniors = reps.filter((r) => r.role === "senior").map(display);
+  const sales = reps.filter((r) => r.role === "sales").map(display);
+
+  const lines: string[] = [];
+  if (admins.length > 0) {
+    lines.push(`  • **算法/产品策略 / 账号问题 / 想加 lead / 整体方向**: 找 admin (${admins.join(" 或 ")})`);
+  }
+  if (seniors.length > 0) {
+    lines.push(`  • **写邮件 / sales 手感 / 难判断的 lead**: 找 senior (${seniors.join(" 或 ")})`);
+  }
+  if (sales.length > 0) {
+    lines.push(`  • **日常协作 / 同 cohort 的同事**: ${sales.join(", ")}`);
+  }
+  lines.push(`  • **不知道找谁**: 默认先 DM 我 (Leon), 我帮你转给对的人.`);
+  return lines.join("\n");
 }
 
 async function addToSalesGroup(chatId: string, openId: string): Promise<boolean> {
@@ -1171,7 +1215,10 @@ async function firstUnsetConfigKey(): Promise<ConfigKey | null> {
   return null;
 }
 
-async function sendOnboardingCard(pending: PendingRow): Promise<void> {
+// Exported so ops scripts can re-fire the card (see
+// scripts/_resend-onboarding-card.mjs). Production trigger is from
+// handleCandidateStep when the candidate finishes the wizard.
+export async function sendOnboardingCard(pending: PendingRow): Promise<void> {
   const adminOpenId = await getAdminOpenId();
   if (!adminOpenId) {
     console.error("[onboarding] cannot send admin card — admin has no lark_open_id");
