@@ -327,11 +327,16 @@ startWS();
 setInterval(() => {
   if (wsHealthy) return;
   const now = Date.now();
+  // First-connect grace: if we've never been healthy (lastHealthyAt
+  // is still 0), the SDK is still in its initial connect sequence.
+  // Don't churn it. After 60s of total silence we'd hard-exit anyway
+  // via the heartbeat watchdog below.
+  if (lastHealthyAt === 0) return;
   // Last-resort: if we've been unhealthy for > UNHEALTHY_MAX_MS, hard
   // exit so the supervisor (launchd/pm2/manual nohup loop) restarts a
   // fresh process. SDK soft-reconnect can deadlock in ways even our
   // recreate-WSClient watchdog doesn't recover from.
-  if (lastHealthyAt > 0 && now - lastHealthyAt > UNHEALTHY_MAX_MS) {
+  if (now - lastHealthyAt > UNHEALTHY_MAX_MS) {
     console.error(`[worker] WATCHDOG: ws unhealthy for >${UNHEALTHY_MAX_MS/1000}s — hard exit so supervisor restarts`);
     process.exit(2);
   }
