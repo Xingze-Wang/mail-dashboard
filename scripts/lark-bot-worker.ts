@@ -159,51 +159,69 @@ const dispatcher = new Lark.EventDispatcher({}).register({
   // Now we mirror the message-handler unwrap pattern.
   "card.action.trigger": async (data: unknown) => {
     const t0 = Date.now();
-    try {
-      const env = data as {
-        header?: { event_id?: string };
-        event?: unknown;
-        action?: { value?: Record<string, unknown> };
-      };
-      // Probe-log the FIRST card action's envelope so we can spot any
-      // future SDK shape changes. Only logs once per worker process.
-      if (!firstCardEnvelopeLogged) {
-        console.log(`[worker] FIRST CARD envelope keys: ${Object.keys(env).join(",")}`);
-        firstCardEnvelopeLogged = true;
-      }
-      const innerEvent = env.event ?? data;
-      const value =
-        ((innerEvent as { action?: { value?: Record<string, unknown> } })?.action?.value) ?? {};
-      console.log(`[worker] card action received, value keys: ${Object.keys(value).join(",")}`);
-      if ("onboarding_action" in value) {
-        const onboarding = await import("../src/lib/onboarding.ts");
-        const result = await onboarding.processOnboardingCardAction({ event: innerEvent });
-        console.log(`[worker] onboarding card action in ${Date.now() - t0}ms ok=${result.ok} reason=${result.reason ?? ""}`);
-      } else if ("admin_inbox_action" in value) {
-        const card = await import("../src/lib/admin-inbox-card.ts");
-        const result = await card.processAdminInboxCardAction({ event: innerEvent });
-        console.log(`[worker] admin_inbox card action in ${Date.now() - t0}ms ok=${result.ok} reason=${result.reason ?? ""}`);
-      } else if ("template_action" in value) {
-        const card = await import("../src/lib/admin-approval-cards.ts");
-        const result = await card.processTemplateCardAction({ event: innerEvent });
-        console.log(`[worker] template card action in ${Date.now() - t0}ms ok=${result.ok} reason=${result.reason ?? ""}`);
-      } else if ("quota_action" in value) {
-        const card = await import("../src/lib/admin-approval-cards.ts");
-        const result = await card.processQuotaCardAction({ event: innerEvent });
-        console.log(`[worker] quota card action in ${Date.now() - t0}ms ok=${result.ok} reason=${result.reason ?? ""}`);
-      } else if ("congress_action" in value) {
-        const card = await import("../src/lib/admin-approval-cards.ts");
-        const result = await card.processCongressCardAction({ event: innerEvent });
-        console.log(`[worker] congress card action in ${Date.now() - t0}ms ok=${result.ok} reason=${result.reason ?? ""}`);
-      } else if ("jitr_action" in value) {
-        const result = await processJitrCardAction({ event: innerEvent }, "ws");
-        console.log(`[worker] jitr card action in ${Date.now() - t0}ms ok=${result.ok} reason=${result.reason ?? ""}`);
-      } else {
-        console.error(`[worker] card action with unknown value keys: ${JSON.stringify(value).slice(0, 200)}`);
-      }
-    } catch (err) {
-      console.error(`[worker] card action threw:`, err);
+    const env = data as {
+      header?: { event_id?: string };
+      event?: unknown;
+      action?: { value?: Record<string, unknown> };
+    };
+    // Probe-log the FIRST card action's envelope so we can spot any
+    // future SDK shape changes. Only logs once per worker process.
+    if (!firstCardEnvelopeLogged) {
+      console.log(`[worker] FIRST CARD envelope keys: ${Object.keys(env).join(",")}`);
+      firstCardEnvelopeLogged = true;
     }
+    const innerEvent = env.event ?? data;
+    const value =
+      ((innerEvent as { action?: { value?: Record<string, unknown> } })?.action?.value) ?? {};
+    console.log(`[worker] card action received, value keys: ${Object.keys(value).join(",")}`);
+
+    // ─── DEFERRED EXECUTION ──────────────────────────────────────────
+    //
+    // Lark's card-action contract gives us 3s to return the toast or
+    // it shows a red "target callback service has timed out" banner to
+    // the user. Supabase + LLM calls easily blow that budget. Move
+    // the actual work off the response path: fire-and-forget here,
+    // return the toast immediately below.
+    //
+    // Tradeoff: the user sees "✓ Approved" instantly even if the DB
+    // write fails seconds later. We catch and log errors, but the
+    // user does not see them. Acceptable because: (a) the operations
+    // are idempotent, (b) failed writes are visible in the trace +
+    // admin_inbox, (c) staying inside 3s is what makes the UX feel
+    // working at all. The HTTP webhook handles this exact pattern
+    // via `after()` from next/server.
+    void (async () => {
+      try {
+        if ("onboarding_action" in value) {
+          const onboarding = await import("../src/lib/onboarding.ts");
+          const result = await onboarding.processOnboardingCardAction({ event: innerEvent });
+          console.log(`[worker] onboarding card action in ${Date.now() - t0}ms ok=${result.ok} reason=${result.reason ?? ""}`);
+        } else if ("admin_inbox_action" in value) {
+          const card = await import("../src/lib/admin-inbox-card.ts");
+          const result = await card.processAdminInboxCardAction({ event: innerEvent });
+          console.log(`[worker] admin_inbox card action in ${Date.now() - t0}ms ok=${result.ok} reason=${result.reason ?? ""}`);
+        } else if ("template_action" in value) {
+          const card = await import("../src/lib/admin-approval-cards.ts");
+          const result = await card.processTemplateCardAction({ event: innerEvent });
+          console.log(`[worker] template card action in ${Date.now() - t0}ms ok=${result.ok} reason=${result.reason ?? ""}`);
+        } else if ("quota_action" in value) {
+          const card = await import("../src/lib/admin-approval-cards.ts");
+          const result = await card.processQuotaCardAction({ event: innerEvent });
+          console.log(`[worker] quota card action in ${Date.now() - t0}ms ok=${result.ok} reason=${result.reason ?? ""}`);
+        } else if ("congress_action" in value) {
+          const card = await import("../src/lib/admin-approval-cards.ts");
+          const result = await card.processCongressCardAction({ event: innerEvent });
+          console.log(`[worker] congress card action in ${Date.now() - t0}ms ok=${result.ok} reason=${result.reason ?? ""}`);
+        } else if ("jitr_action" in value) {
+          const result = await processJitrCardAction({ event: innerEvent }, "ws");
+          console.log(`[worker] jitr card action in ${Date.now() - t0}ms ok=${result.ok} reason=${result.reason ?? ""}`);
+        } else {
+          console.error(`[worker] card action with unknown value keys: ${JSON.stringify(value).slice(0, 200)}`);
+        }
+      } catch (err) {
+        console.error(`[worker] deferred card action threw:`, err);
+      }
+    })();
     // Card-action handler MUST return a Lark-shaped object.
     // - "" → SDK couldn't parse → code 200345
     // - {} → some Lark clients render code 200340 (unreachable)
