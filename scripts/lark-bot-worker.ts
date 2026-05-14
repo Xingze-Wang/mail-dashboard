@@ -183,6 +183,18 @@ const dispatcher = new Lark.EventDispatcher({}).register({
         const card = await import("../src/lib/admin-inbox-card.ts");
         const result = await card.processAdminInboxCardAction({ event: innerEvent });
         console.log(`[worker] admin_inbox card action in ${Date.now() - t0}ms ok=${result.ok} reason=${result.reason ?? ""}`);
+      } else if ("template_action" in value) {
+        const card = await import("../src/lib/admin-approval-cards.ts");
+        const result = await card.processTemplateCardAction({ event: innerEvent });
+        console.log(`[worker] template card action in ${Date.now() - t0}ms ok=${result.ok} reason=${result.reason ?? ""}`);
+      } else if ("quota_action" in value) {
+        const card = await import("../src/lib/admin-approval-cards.ts");
+        const result = await card.processQuotaCardAction({ event: innerEvent });
+        console.log(`[worker] quota card action in ${Date.now() - t0}ms ok=${result.ok} reason=${result.reason ?? ""}`);
+      } else if ("congress_action" in value) {
+        const card = await import("../src/lib/admin-approval-cards.ts");
+        const result = await card.processCongressCardAction({ event: innerEvent });
+        console.log(`[worker] congress card action in ${Date.now() - t0}ms ok=${result.ok} reason=${result.reason ?? ""}`);
       } else if ("jitr_action" in value) {
         const result = await processJitrCardAction({ event: innerEvent }, "ws");
         console.log(`[worker] jitr card action in ${Date.now() - t0}ms ok=${result.ok} reason=${result.reason ?? ""}`);
@@ -200,12 +212,22 @@ const dispatcher = new Lark.EventDispatcher({}).register({
     const v2 = env2.event?.action?.value ?? {};
     const oAction = (v2.onboarding_action as string | undefined) ?? "";
     const aInbox = (v2.admin_inbox_action as string | undefined) ?? "";
-    let toastContent = "已收到";
-    if (oAction === "deny") toastContent = "已拒绝, 正在发拒绝通知…";
-    else if (oAction === "approve_sales" || oAction === "approve_senior") toastContent = "已通过, 正在开账号 + 发欢迎邮件…";
-    else if (aInbox === "acknowledge") toastContent = "✓ 已 ack";
-    else if (aInbox === "save_as_memory") toastContent = "💾 正在存入长期记忆…";
-    else if (aInbox === "dismiss") toastContent = "🗑 已 dismiss";
+    const tplAction = (v2.template_action as string | undefined) ?? "";
+    const quotaAction = (v2.quota_action as string | undefined) ?? "";
+    const congressAction = (v2.congress_action as string | undefined) ?? "";
+    let toastContent = "Received";
+    if (oAction === "deny") toastContent = "Denied — sending notification…";
+    else if (oAction === "approve_sales" || oAction === "approve_senior") toastContent = "Approved — provisioning + sending welcome email…";
+    else if (aInbox === "acknowledge") toastContent = "✓ Acknowledged";
+    else if (aInbox === "save_as_memory") toastContent = "💾 Saving to long-term memory…";
+    else if (aInbox === "dismiss") toastContent = "🗑 Dismissed";
+    else if (tplAction === "approve_draft") toastContent = "✓ Approved as draft";
+    else if (tplAction === "activate") toastContent = "🚀 Activating template…";
+    else if (tplAction === "reject") toastContent = "❌ Rejected — reply with reason";
+    else if (quotaAction === "apply") toastContent = "✓ Applying quota…";
+    else if (quotaAction === "dismiss") toastContent = "🗑 Dismissed";
+    else if (congressAction === "accept") toastContent = "✓ Accepted proposal";
+    else if (congressAction === "reject") toastContent = "❌ Rejected proposal";
     return { toast: { type: "success", content: toastContent } };
   },
 });
