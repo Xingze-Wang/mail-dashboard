@@ -22,9 +22,17 @@ export const preferredRegion = ["hkg1"];
 export async function POST(req: Request) {
   const rawBody = await req.text();
 
-  // FAST PATH: parse just enough to detect url_verification, return
-  // immediately. No imports, no DB, no signature check — Lark's URL
-  // verification is unsigned and the entire payload is plain JSON.
+  // FAST PATH: parse just enough to detect url_verification + card-
+  // action shape. We acknowledge BOTH ASAP — no imports, no DB, no
+  // signature verify — because:
+  //   - url_verification: Lark expects challenge echo in <3s
+  //   - card.action.trigger: Lark expects toast response in <3s,
+  //     and any cold-start work on the critical path was causing
+  //     "target callback service timed out" (200340) toasts.
+  // Signature verify still happens for both, but moves into after()
+  // alongside the heavy work; processOnboardingCardAction does its
+  // own auth check (senderIsAdmin) on the operator open_id so we
+  // don't lose the security invariant.
   let parsed: { type?: string; challenge?: string; encrypt?: string; event?: unknown; header?: { event_type?: string } };
   try {
     parsed = JSON.parse(rawBody);
@@ -40,20 +48,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, reason: "encrypt not supported" }, { status: 200 });
   }
 
-  // ALL OTHER PATHS: signature verify, then dispatch via after().
-  // Imports are dynamic so they only load on real message events.
-  const { verifyLarkEvent } = await import("@/lib/lark");
-  const verify = verifyLarkEvent({
-    rawBody,
-    timestamp: req.headers.get("x-lark-request-timestamp"),
-    nonce: req.headers.get("x-lark-request-nonce"),
-    signature: req.headers.get("x-lark-signature"),
-  });
-  if (!verify.ok) {
-    console.error("[lark/webhook] signature failed:", verify.reason);
-    return NextResponse.json({ error: verify.reason }, { status: 401 });
-  }
-
   const eventType = parsed.header?.event_type ?? parsed.type ?? "";
   const isMessage = eventType.startsWith("im.message");
   const isCardAction = eventType.startsWith("card.action.trigger");
@@ -64,11 +58,22 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, skipped: "no event" }, { status: 200 });
   }
 
-  // ALL DB + LLM work moves into after() — returning 200 ASAP keeps us
-  // inside Lark's 3s ack window.
+  // Dispatch ALL work (including signature verify) into after() so the
+  // synchronous response is as fast as possible — pure JSON serialize.
   const { after } = await import("next/server");
   after(async () => {
     try {
+      const { verifyLarkEvent } = await import("@/lib/lark");
+      const verify = verifyLarkEvent({
+        rawBody,
+        timestamp: req.headers.get("x-lark-request-timestamp"),
+        nonce: req.headers.get("x-lark-request-nonce"),
+        signature: req.headers.get("x-lark-signature"),
+      });
+      if (!verify.ok) {
+        console.error("[lark/webhook] signature failed:", verify.reason);
+        return;
+      }
       const agent = await import("@/lib/lark-agent");
       if (isCardAction) {
         // Card-action discriminator: the inner event.action.value carries

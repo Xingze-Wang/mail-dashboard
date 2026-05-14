@@ -138,6 +138,18 @@ export async function tryHandleOnboardingMessage(
       const handled = await handleAdminBindCommand(senderOpenId, Number(bindMatch[1]));
       if (handled) return { handled: true, reason: "admin-bind" };
     }
+
+    // Admin command: `note for rep <id>: <text>` — stamps trust_notes
+    // on the rep row AND DMs the rep so they see the note. Surfaced
+    // as a follow-up prompt after a successful onboarding approval
+    // (processOnboardingCardAction's confirmation message).
+    // /i for case-insensitive 'note'. Use [\s\S]+ instead of .+ with the
+    // /s flag (which requires ES2018+ target).
+    const noteMatch = trimmed.match(/^note\s+for\s+rep\s+(\d+)\s*[:：]\s*([\s\S]+)$/i);
+    if (noteMatch) {
+      const handled = await handleAdminNoteCommand(senderOpenId, Number(noteMatch[1]), noteMatch[2].trim());
+      if (handled) return { handled: true, reason: "admin-note" };
+    }
   }
 
   // 2. Is this open_id mid-onboarding as a candidate?
@@ -277,11 +289,19 @@ export async function processOnboardingCardAction(rawEvent: unknown): Promise<{
   // Walkthrough DM to the new rep
   await sendWalkthrough(pending, result.repId, result.senderEmail);
 
-  // Confirm to admin
+  // Confirm to admin AND prompt for the onboarding note. trust_notes
+  // is a free-text per-rep note that surfaces in the walkthrough's
+  // closing message ("Admin 想让我转告你: <note>"). Wasn't reachable
+  // before — the comment at line 204 promised a 'DM Leon "for rep_id…"'
+  // flow that didn't actually exist. Now we explicitly prompt admin.
   await sendMessage({
     receive_id: operatorOpenId,
     receive_id_type: "open_id",
-    text: `✅ ${pending.claimed_name} (${result.senderEmail}) 已通过 — 角色 ${role}, rep_id=${result.repId}.`,
+    text:
+      `✅ ${pending.claimed_name} (${result.senderEmail}) 已通过 — 角色 ${role}, rep_id=${result.repId}.\n\n` +
+      `想给 ${pending.claimed_name} 留个 onboarding note 吗? ` +
+      `(会出现在他的欢迎流末尾, 让他知道是你写的)\n` +
+      `直接回 \`note for rep ${result.repId}: <text>\` — 或者跳过不写.`,
   });
 
   // Prompt admin to set the new rep's daily quota. Under the shared-pool
@@ -1523,6 +1543,54 @@ async function escalateToAdmin(
  * Returns false if no paused candidate was found — admin gets a friendly
  * "no candidate to bind" message either way.
  */
+/**
+ * `note for rep <id>: <text>` admin DM command. Writes trust_notes
+ * on the sales_reps row, then DMs the rep so they see the note as
+ * a follow-up to the welcome flow. Confirms back to admin so they
+ * know it landed.
+ */
+async function handleAdminNoteCommand(adminOpenId: string, repId: number, note: string): Promise<boolean> {
+  const trimmed = note.trim().slice(0, 1000);
+  if (trimmed.length < 3) {
+    await sendMessage({
+      receive_id: adminOpenId,
+      receive_id_type: "open_id",
+      text: `note 太短 (${trimmed.length} 字符), 至少 3 个. 不写也行, 跳过就好.`,
+    });
+    return true;
+  }
+  // Look up the rep first so we can tell admin if rep_id is wrong.
+  const { data: rep } = await supabase
+    .from("sales_reps")
+    .select("id, name, lark_open_id, sender_name")
+    .eq("id", repId)
+    .maybeSingle();
+  if (!rep) {
+    await sendMessage({
+      receive_id: adminOpenId,
+      receive_id_type: "open_id",
+      text: `没找到 rep_id=${repId}. 检查一下 ID, 或者跳过.`,
+    });
+    return true;
+  }
+  await supabase.from("sales_reps").update({ trust_notes: trimmed }).eq("id", repId);
+  // DM the rep so they see the note immediately rather than wait
+  // for next onboarding/welcome cycle. The text says it's from admin.
+  if (rep.lark_open_id) {
+    await sendMessage({
+      receive_id: rep.lark_open_id as string,
+      receive_id_type: "open_id",
+      text: `💬 **Admin 让我转告你一句**:\n\n${trimmed}`,
+    });
+  }
+  await sendMessage({
+    receive_id: adminOpenId,
+    receive_id_type: "open_id",
+    text: `✅ note 已保存到 ${rep.name} (rep_id=${repId}) 的档案里, 并 DM 给他了.`,
+  });
+  return true;
+}
+
 async function handleAdminBindCommand(adminOpenId: string, repId: number): Promise<boolean> {
   // Find a paused candidate. There SHOULD be at most one at a time;
   // if multiple, we take the most recent and warn.
