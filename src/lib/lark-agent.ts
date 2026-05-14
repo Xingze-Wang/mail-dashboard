@@ -210,6 +210,67 @@ async function loadCrossSurfaceHistory(repId: number, limit = 6): Promise<{ role
     .map((m) => ({ role: m.role as "user" | "assistant", text: m.text }));
 }
 
+/**
+ * Per-rep "lark mirror" conversation in helper_messages. Returns the
+ * conversation_id, creating it if needed. We use a stable mode='lark'
+ * row per rep so all the rep's Lark DMs accumulate in one thread that
+ * the web help-bot can read just like a regular conversation.
+ *
+ * Without this mirror, Lark and web have asymmetric memory: Lark sees
+ * web (via loadCrossSurfaceHistory above), but web doesn't see Lark.
+ * The user reported "bot seemed to have multiple confusions with Lark"
+ * when switching surfaces — this is the underlying cause.
+ */
+async function getOrCreateLarkMirrorConversation(repId: number): Promise<string | null> {
+  const { data: existing } = await supabase
+    .from("helper_conversations")
+    .select("id")
+    .eq("rep_id", repId)
+    .eq("mode", "lark")
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (existing?.id) return existing.id as string;
+  const { data: created, error } = await supabase
+    .from("helper_conversations")
+    .insert({ rep_id: repId, mode: "lark", title: "Lark DM (mirror)" })
+    .select("id")
+    .single();
+  if (error) {
+    console.error("[lark-agent] couldn't create lark-mirror conversation:", error.message);
+    return null;
+  }
+  return created.id as string;
+}
+
+/**
+ * Mirror a Lark message (user OR assistant) into helper_messages so the
+ * web help-bot sees it too. Best-effort: errors are logged, never
+ * blocking. Keeps the same role + text as the lark_messages row.
+ */
+async function mirrorToHelperMessages(
+  repId: number,
+  role: "user" | "assistant",
+  text: string,
+): Promise<void> {
+  if (!text || !repId) return;
+  try {
+    const convId = await getOrCreateLarkMirrorConversation(repId);
+    if (!convId) return;
+    await supabase.from("helper_messages").insert({
+      conversation_id: convId,
+      role,
+      text,
+    });
+    await supabase
+      .from("helper_conversations")
+      .update({ updated_at: new Date().toISOString() })
+      .eq("id", convId);
+  } catch (err) {
+    console.error("[lark-agent] mirrorToHelperMessages failed:", err);
+  }
+}
+
 // Read-tool loop depth. Admins routinely chain lookups ("show daily
 // report → drill into per-rep numbers → check who's behind") so they
 // get more rounds. Sales reps' questions are shorter; 3 is plenty.
@@ -569,6 +630,9 @@ export async function processInboundLarkMessage(
     text,
     raw: rawEvent,
   });
+  // Mirror to helper_messages so the web help-bot has the same context.
+  // Best-effort; don't block on it.
+  mirrorToHelperMessages(rep.id, "user", text).catch(() => {});
 
   // Fire-and-forget 👀 reaction so the user sees IMMEDIATELY that the
   // bot received their message — even if the LLM takes 30s or the reply
@@ -636,6 +700,13 @@ export async function processInboundLarkMessage(
     role: "assistant",
     text: finalReply || "(empty — likely emoji-reacted)",
   });
+  // Mirror the assistant reply to helper_messages so the web help-bot
+  // sees this side of the conversation too. Without both sides mirrored
+  // the bot only sees "rep said X" but not "I (Leon) said Y" — leading
+  // to confused continuations when the rep switches surfaces.
+  if (finalReply) {
+    mirrorToHelperMessages(rep.id, "assistant", finalReply).catch(() => {});
+  }
   if (finalReply) {
     await sendMessage({
       receive_id: chatId,
