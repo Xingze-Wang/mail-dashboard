@@ -54,6 +54,7 @@ export const READ_TOOL_NAMES = new Set([
   "get_wechat_followups",
   "get_integrity_report",
   "get_rep_helper_activity",
+  "get_org_helper_activity_today",
   "diagnose_metric_drop",
   "find_similar_leads",
   // ── Lark write actions, exposed as "lookup-style" tools so the bot
@@ -126,6 +127,7 @@ export const TOOLS_PROMPT = `## 工具系统
 - find_similar_leads — embedding 空间里找跟 reference lead 最像的 N 个 lead. args: { reference_lead_id: string (UUID), n?: 5 }. 返回: { reference_lead_id, similar: [{lead_id, title, distance}, ...] }. **什么时候用**: 当 rep 说 "再来一打那种 lead / 给我找几个像 X 的 / 跟这个类似的还有谁" 时. 注意: pgvector 没启用 / embedding 没回填的话会返回 error 字符串 — 直接说 "embedding 还没准备好, 让 admin 在 Supabase dashboard 启用 vector + 跑 backfill 脚本", 别假装在搜.
 - diagnose_metric_drop — 拿当前 metric (click_rate 或 wechat_rate) 在 cur 7 天 vs prev 7 天的变化, 同时返回 4 个协变量 (subject_length / geo / lead_tier / school_tier) 的分布偏移. args: { metric: "click_rate"|"wechat_rate", days?: 7, repId?: number (admin 可指定) }. 返回: { metric, prevRate, curRate, ratioChange, noise, cards: [{covariate, biggestShift, hypothesis}] }. **什么时候用**: 当 admin 或 rep 问 "为什么 X 在掉 / 为什么这周不好 / 怎么回事" 时, lookup 一次. 用 cards 里的 hypothesis 给一个**带证据的猜测**, 不要拍脑袋. noise=true 表示样本不够 (各窗口 <20 sent), 那就直说 "样本太少, 不能下结论". 不要主动调 — 只有用户问才用.
 - get_rep_helper_activity — **admin only**. 查看某个 rep 最近问 helper 的原话 (跨 session). args: { repId: number, limit?: 10, days?: 14 }. 返回: { repId, windowDays, messages: [{text, createdAt}, ...] }. **什么时候用**: 当 admin 主动问 "X 最近在问什么 / 困在哪 / 你跟 Yujie 都聊了啥" 时用. 不要主动 lookup — 这是侵入性的, 等 admin 明确说想看再用. 注意: shared_helper_questions cluster 已经聚合了多 rep 共性问题, 这个 tool 是补足那个 (只看一个人).
+- get_org_helper_activity_today — **admin only**. 跨**所有 rep**, 跨**两个 surface (web helper_messages + Lark lark_messages)**, 列出过去 N 小时谁问了 helper 什么. args: { hours?: 1-168 (默认 24) }. 返回: { window_hours, total_messages, unique_senders, rows: [{ rep_id, display (从 sales_reps join 来的真名), surface_breakdown, message_count, samples: [{ surface, text, at }, ...] }, ...] }. **什么时候用 (这是关键)**: admin 问 "**今天/最近 X 小时 谁问过 helper / 谁活跃 / 大家都在问什么**" 时必须用这个工具, **不要**自己用 helper_messages 一张表给答案 (会漏掉 Lark 的). **display 字段是 join 出来的真名**, 直接用; **绝对不要**自己从 rep_id 推名字 (历史 bug: 看到 rep_id=5 就猜成"王泽群", 真名其实是 Xingze; rep_id 必须永远 from tool result). rep_id=null 的 bucket 是群聊里没 @bot 的 traffic 或没绑 sales_reps 的人, 当成 "(group-chat or unbound)" 标出来.
 
 **A2. Lark 操作工具** — 这些**有副作用** (会发出消息 / 创建文档 / 写表), 但因为用户正在 Lark 里跟你 DM, 你直接执行更自然 (用户立刻就能在 Lark 看到结果). 也用 \`\`\`lookup\`\`\` 调用. 用之前一定要确认意图 (用一句话说"我现在 X 给 Y, 内容是 Z, 对吗?" 等用户回 "go" / "可以" / "对" 再调).
 

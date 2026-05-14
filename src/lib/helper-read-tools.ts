@@ -495,6 +495,98 @@ export async function runReadTool(
           },
         };
       }
+      case "get_org_helper_activity_today": {
+        // Admin spot-check: "who messaged Leon today?" across BOTH
+        // surfaces (helper_messages = web bot, lark_messages = Lark DM).
+        // Joins to sales_reps so the rep_id↔name mapping is
+        // authoritative — previously the agent had no tool for this
+        // and would hallucinate names from prompt context (the
+        // "rep 5 = 王泽群" bug from 2026-05-15).
+        if (session.role !== "admin") {
+          return { tool: call.tool, result: { error: "admin only" } };
+        }
+        const hours = Math.max(1, Math.min(168, Number(args.hours) || 24));
+        const cutoff = new Date(Date.now() - hours * 3_600_000).toISOString();
+
+        // Helper-messages side. Join to helper_conversations to get rep_id.
+        const helperRows = await supabase
+          .from("helper_messages")
+          .select("text, role, created_at, helper_conversations!inner(rep_id)")
+          .eq("role", "user")
+          .gte("created_at", cutoff)
+          .order("created_at", { ascending: false })
+          .limit(200);
+
+        // Lark-messages side. rep_id is already on the row.
+        const larkRows = await supabase
+          .from("lark_messages")
+          .select("text, role, rep_id, chat_id, created_at")
+          .eq("role", "user")
+          .gte("created_at", cutoff)
+          .order("created_at", { ascending: false })
+          .limit(200);
+
+        // Unify both into per-rep buckets. group-chat rows have
+        // rep_id=null; surface those as "group_chat" so admin sees
+        // they exist but knows they're not DMs.
+        type Msg = { rep_id: number | null; surface: "web" | "lark"; text: string; createdAt: string };
+        const all: Msg[] = [];
+        for (const m of helperRows.data ?? []) {
+          const c = m.helper_conversations as { rep_id: number | null } | { rep_id: number | null }[] | null;
+          const rid = Array.isArray(c) ? c[0]?.rep_id ?? null : c?.rep_id ?? null;
+          all.push({ rep_id: rid, surface: "web", text: String(m.text ?? "").slice(0, 300), createdAt: m.created_at as string });
+        }
+        for (const m of larkRows.data ?? []) {
+          all.push({ rep_id: m.rep_id as number | null, surface: "lark", text: String(m.text ?? "").slice(0, 300), createdAt: m.created_at as string });
+        }
+
+        // Resolve rep_ids → names in one round trip so we never label
+        // a rep_id with a guessed name.
+        const repIds = [...new Set(all.map((m) => m.rep_id).filter((x): x is number => x != null))];
+        const nameByRepId = new Map<number, string>();
+        if (repIds.length > 0) {
+          const { data: reps } = await supabase
+            .from("sales_reps")
+            .select("id, name, sender_name, lark_name, role")
+            .in("id", repIds);
+          for (const r of reps ?? []) {
+            const display = (r.lark_name as string | null) ?? (r.sender_name as string | null) ?? (r.name as string) ?? `rep#${r.id}`;
+            nameByRepId.set(r.id as number, `${display} (rep_id=${r.id}, role=${r.role})`);
+          }
+        }
+
+        // Bucket by rep
+        type Bucket = { rep_id: number | null; display: string; surface_breakdown: Record<string, number>; message_count: number; samples: Array<{ surface: string; text: string; at: string }> };
+        const buckets = new Map<string, Bucket>();
+        for (const m of all) {
+          const key = m.rep_id == null ? "unknown_or_group_chat" : String(m.rep_id);
+          let b = buckets.get(key);
+          if (!b) {
+            b = {
+              rep_id: m.rep_id,
+              display: m.rep_id == null ? "(group-chat or unbound user)" : (nameByRepId.get(m.rep_id) ?? `rep_id=${m.rep_id} (no sales_reps row)`),
+              surface_breakdown: {},
+              message_count: 0,
+              samples: [],
+            };
+            buckets.set(key, b);
+          }
+          b.message_count++;
+          b.surface_breakdown[m.surface] = (b.surface_breakdown[m.surface] ?? 0) + 1;
+          if (b.samples.length < 3) b.samples.push({ surface: m.surface, text: m.text, at: m.createdAt });
+        }
+
+        const rows = [...buckets.values()].sort((a, b) => b.message_count - a.message_count);
+        return {
+          tool: call.tool,
+          result: {
+            window_hours: hours,
+            total_messages: all.length,
+            unique_senders: rows.length,
+            rows,
+          },
+        };
+      }
       case "dm_user": {
         const { sendMessage } = await import("@/lib/lark");
         const openId = String(args.open_id ?? "").trim();
