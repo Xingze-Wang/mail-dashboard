@@ -221,5 +221,64 @@ export async function GET(req: NextRequest) {
     results.rep_profiles = { error: String(err) };
   }
 
+  // ── Step 8: FAN-OUT for crons that Vercel Hobby's 2-cron limit
+  // wouldn't otherwise schedule. The vercel.json declares 20 crons,
+  // but only the first 2 actually fire on Hobby. To get the daily
+  // essentials running, we call them inline here from the master
+  // `/api/cron` route (which IS one of those scheduled jobs).
+  //
+  // Each call is best-effort + bounded — if one step fails or times
+  // out the others still get their shot. We don't try to be clever
+  // about hour-of-day gating: this whole route runs once daily, so
+  // each fan-out step runs once a day, which is what they want.
+  const fanOutSteps: Array<[string, () => Promise<unknown>]> = [
+    ["mission_seed",        () => callInternalCron("/api/missions/heuristic-seed", secret)],
+    ["mission_allocate",    () => callInternalCron("/api/missions/allocate-leads", secret)],
+    ["insights_realign",    () => callInternalCron("/api/cron/insights-realign", secret)],
+    ["insights_prewarm",    () => callInternalCron("/api/cron/insights-prewarm", secret)],
+    ["enrich_h_index",      () => callInternalCron("/api/cron/enrich-h-index?limit=50", secret)],
+    ["model_bench_eval",    () => callInternalCron("/api/cron/model-bench-eval", secret)],
+    ["wechat_followup",     () => callInternalCron("/api/cron/wechat-followup", secret)],
+    ["template_promote",    () => callInternalCron("/api/cron/template-auto-promote", secret)],
+    ["onboarding_followup", () => callInternalCron("/api/cron/onboarding-followup", secret)],
+  ];
+  const fanOut: Record<string, unknown> = {};
+  for (const [name, fn] of fanOutSteps) {
+    try {
+      fanOut[name] = await fn();
+    } catch (err) {
+      fanOut[name] = { error: String(err).slice(0, 200) };
+    }
+  }
+  results.fan_out = fanOut;
+
   return NextResponse.json(results);
+}
+
+/**
+ * Internal helper: call another cron route on this same deploy with
+ * the same Bearer secret. Uses the request's own origin so we work in
+ * any env (preview, production). 60s per-step timeout to prevent one
+ * slow downstream from eating the master cron's 300s budget.
+ */
+async function callInternalCron(path: string, secret: string): Promise<{ ok: boolean; status?: number; result?: unknown; error?: string }> {
+  // Use https://calistamind.com explicitly — the master /api/cron may
+  // run on hkg1 while preferredRegion-pinned routes (lark/webhook) run
+  // elsewhere. The public alias works from any region.
+  const url = `https://calistamind.com${path}`;
+  try {
+    const r = await fetch(url, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${secret}` },
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!r.ok) {
+      const txt = await r.text().catch(() => "");
+      return { ok: false, status: r.status, error: txt.slice(0, 200) };
+    }
+    const j = await r.json().catch(() => ({}));
+    return { ok: true, status: r.status, result: j };
+  } catch (err) {
+    return { ok: false, error: String(err).slice(0, 200) };
+  }
 }

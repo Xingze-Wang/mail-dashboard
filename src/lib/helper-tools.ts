@@ -35,6 +35,8 @@ export const ACTION_TOOL_NAMES = new Set([
   "track_prediction",
   "reassign_lead",
   "reassign_leads_bulk",
+  "learn_from_admin_correction",   // admin pointed out a mistake → save + sample-QA
+  "recall_my_mistakes",            // admin asks "what have I corrected you on?"
 ]);
 
 export const READ_TOOL_NAMES = new Set([
@@ -179,6 +181,8 @@ export const TOOLS_PROMPT = `## 工具系统
 - reassign_leads_bulk — **admin only**. 用一组规则批量改 owner. 参数: { rules: [{ when: { geo?: "cn"|"edu"|"other", schoolTier?: 1|2|3, leadTier?: "strong"|"normal", currentRepId?: number|null }, to_rep_id: number }, ...], reason?: string }. 规则**有顺序**, 第一个匹配的赢; 一个 lead 只会被一条规则命中, 没命中的不动. AND 语义 — 同一条规则里的 when 字段全部都要满足. **重要**: 提交前 confirm 卡会自动跑一次 preview, 把"这次会移动 N 个 lead, 例: ..."显示给 admin 看, admin 点 Confirm 才真的写. 你不要假装自己能算出会移动多少 — 让卡片去算, 你只描述规则的意图. 限制: 最多 5 条规则一次 (chat 里别堆 megasystem). 每条规则的 when 至少要有一个字段 (空的 when 会拒绝). **same data-model 注意事项 as reassign_lead** — 改 owner, 不改 actor.
 - track_prediction — 把刚才你 (helper) 说过的一个 falsifiable 判断记下来跟踪. 参数: { claim: string (≤500 字, 引用刚说的话), targetEvent: "no_reply"|"no_wechat"|"reply"|"wechat", targetLeadId?: string (UUID), targetRecipient?: string (email), horizonDays?: number (默认 7, 最多 30) }. **什么时候用**: 当你做了一个**具体可证伪**的判断 ("这个 lead 应该不会 reply, 因为..." / "这个发出去 7 天内应该会加微信"), 而且 rep 在跟你讨论那个 lead — 主动提议 "我把这个判断记下来跟踪一下, 7 天后我们看准不准, 我错了我自己改". 不要每次说话都 propose, 只在你确实下了一个**具体的、能被现实打脸**的判断时. 不要追着 rep "track 一下吧" — 用 1 句自然语言提议就行.
 - remember_about_rep — 把一条关于这位 rep 的事实写进长期记忆 (跨 session 保留). 参数: { kind: "rep_pref"|"tactic"|"self_critique"|"other", body: string (一句话, 中英文都行), scope?: "rep"|"org" (默认 rep, admin 可指定 org) }. **什么时候用**: 当 rep 主动告诉你他的偏好 ("我喜欢简短" / "别再提算力具体额度了" / "Tsinghua 的 lead 我都用 citation hook"), 或者发现一个有效战术时. **写之前先 lookup get_my_memory** 看看是不是已经有了同义条目, 别重复写. 不要把吐槽 / 临时情绪当 memory 存.
+- learn_from_admin_correction — **admin only**. 当 admin 指出你刚才答错了一个事实/做错了一件事 (e.g. "你说 Yujie 是 rep_id 3 但其实是 2", "你说 Tsinghua 通过率 5% 但其实 1.5%", "下次别再把 cn 学生默认为 strong"), 用这个工具把更正写进长期 self_critique 记忆. 参数: { what_i_said: string (你之前的原话, ≤300 字), correction: string (admin 的更正, ≤300 字), scope?: "rep"|"org" (默认 org, 因为更正通常对所有 rep 都适用), sample_question?: string (一句话举例, 让我能 demo 修正后会怎么答) }. 返回: { ok, learning_id, sample_answer: string (基于新 memory 的模拟答复, 让 admin 当场验证) }. **流程**: (1) admin 说 "no, X 是 Y 不是 Z" 或 "下次别这么答" / "这是错的" → 你识别这是更正, (2) 简单确认 "你是说 [总结一句]?" (除非显然), (3) 调 learn_from_admin_correction, (4) 用返回的 sample_answer 给 admin 看一遍 "好, 下次类似问题我会答: [...]". 不要被动等 admin 说 "记一下" — 听出更正信号就主动用. 信号词: "no" / "wrong" / "其实" / "应该是" / "下次别" / "不对" / "我刚才说错了, 帮我记一下".
+- recall_my_mistakes — admin 问 "我之前纠正过你什么 / 你之前答错过什么 / 你 self_critique 里有啥" 时用. 参数: { limit?: 5, scope?: "rep"|"org"|"all" (默认 all) }. 返回: { critiques: [{body, created_at, evidence}, ...] }. **回答方式**: 不要 dump 全部 — 挑 1-3 条最近的, 用 "你过去纠正过我: X, Y, Z" 的形式. 让 admin 一眼看到他的反馈被记住了.
 
 ## 工具使用规则 (很重要)
 
@@ -193,7 +197,7 @@ export const TOOLS_PROMPT = `## 工具系统
 **格式提醒**:
 - lookup 块放在回答的**前面**或**中间**, tool 块放在**最后一行**.
 - lookup JSON 的 tool 字段必须是: list_leads / get_lead / get_my_stats / get_rep_info / list_reps / get_my_growth / get_my_weekly_recap / get_my_memory / get_admin_alerts / get_wechat_followups / get_integrity_report / get_rep_helper_activity / diagnose_metric_drop / find_similar_leads.
-- tool JSON 的 action 字段必须是: batch_send / skip_lead / flag_lead / bulk_flag / redraft_lead / review_next / build_rep_template / open_split_view / remember_about_rep / track_prediction / reassign_lead / reassign_leads_bulk.
+- tool JSON 的 action 字段必须是: batch_send / skip_lead / flag_lead / bulk_flag / redraft_lead / review_next / build_rep_template / open_split_view / remember_about_rep / track_prediction / reassign_lead / reassign_leads_bulk / learn_from_admin_correction / recall_my_mistakes.
 
 **反面例子 (不要这样做)**:
 用户: "skip 那个 Yanye 的 lead"

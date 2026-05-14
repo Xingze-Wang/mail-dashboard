@@ -313,6 +313,138 @@ async function doRememberAboutRep(
   };
 }
 
+/**
+ * Admin correction → durable self-critique memory + sample QA so admin
+ * sees how Leon will answer next time. Records to helper_learnings with
+ * kind='self_critique', org-scoped by default (most factual corrections
+ * apply to every rep, not just the one who happened to be in the chat).
+ *
+ * Returns sample_answer: an LLM-rendered short answer that respects the
+ * correction. This is the "verify in chat before walking away" loop the
+ * user asked for — adminclap can see the memory works before trusting.
+ */
+async function doLearnFromAdminCorrection(
+  session: { repId: number; role: string },
+  params: Record<string, unknown>,
+): Promise<{ ok: boolean; detail: Record<string, unknown> }> {
+  if (session.role !== "admin") {
+    return { ok: false, detail: { error: "admin only — only admin can correct Leon's facts" } };
+  }
+  const whatISaid = typeof params.what_i_said === "string" ? params.what_i_said.trim().slice(0, 600) : "";
+  const correction = typeof params.correction === "string" ? params.correction.trim().slice(0, 600) : "";
+  if (!correction || correction.length < 3) {
+    return { ok: false, detail: { error: "correction must be ≥3 chars — what should I have said?" } };
+  }
+  const scopeRaw = params.scope === "rep" ? "rep" : "org"; // default org
+  const scope_rep_id = scopeRaw === "rep" ? session.repId : null;
+
+  const body = whatISaid
+    ? `When asked something like: "${whatISaid.slice(0, 200)}", do NOT answer the way I did before. Correct answer: ${correction}`
+    : `Correction from admin: ${correction}`;
+
+  const { recordLearning } = await import("@/lib/helper-learnings");
+  const learning = await recordLearning({
+    scope_rep_id,
+    kind: "self_critique",
+    body,
+    confidence: 0.95,  // admin-stated facts get high confidence
+    evidence: {
+      source: "admin_correction",
+      corrected_by_rep: session.repId,
+      what_i_said: whatISaid || null,
+      correction,
+      at: new Date().toISOString(),
+    },
+  });
+  if (!learning) {
+    return { ok: false, detail: { error: "failed to save correction — check server logs" } };
+  }
+
+  // Sample-QA: run a small LLM call to demo how Leon would answer the
+  // sample_question NOW with the new memory in context. Lets admin
+  // verify the correction took without waiting for the next real ask.
+  const sampleQ = typeof params.sample_question === "string" ? params.sample_question.trim().slice(0, 300) : "";
+  let sampleAnswer: string | null = null;
+  if (sampleQ) {
+    try {
+      const { llmChat } = await import("@/lib/llm-proxy");
+      const sys = `You are Leon, the sales-team helper bot. Admin just corrected you. Respect the correction below in all future answers.
+
+Correction (high confidence, from admin):
+${body}
+
+Answer the user's question briefly (1-2 sentences) in the same language as the question. If the correction directly applies, use the corrected fact. If not, answer normally but stay consistent with the correction's spirit.`;
+      const out = await llmChat({
+        model: "claude-haiku-4-5",
+        system: sys,
+        user: sampleQ,
+        max_tokens: 250,
+        temperature: 0.2,
+        timeoutMs: 12_000,
+      });
+      sampleAnswer = (out.text || "").trim() || null;
+    } catch (err) {
+      console.warn("learn_from_admin_correction: sample-QA failed (non-blocking):", err);
+    }
+  }
+
+  return {
+    ok: true,
+    detail: {
+      learning_id: learning.id,
+      scope: scopeRaw,
+      saved: body,
+      sample_question: sampleQ || null,
+      sample_answer: sampleAnswer,
+      note: sampleAnswer
+        ? "Saved. Sample answer with new memory is in sample_answer — verify it sounds right."
+        : "Saved. Provide a sample_question next time if you want me to demo the new behavior.",
+    },
+  };
+}
+
+/**
+ * Admin asks "what have I corrected you on?" — list recent self_critique
+ * learnings, both org-wide and (optionally) rep-scoped. Lets admin see
+ * their feedback is being persisted.
+ */
+async function doRecallMyMistakes(
+  session: { repId: number; role: string },
+  params: Record<string, unknown>,
+): Promise<{ ok: boolean; detail: Record<string, unknown> }> {
+  const limit = Math.max(1, Math.min(20, Number(params.limit) || 5));
+  const scope = params.scope === "rep" ? "rep" : params.scope === "org" ? "org" : "all";
+
+  const { supabase } = await import("@/lib/db");
+  let q = supabase
+    .from("helper_learnings")
+    .select("id, body, scope_rep_id, created_at, evidence, confidence")
+    .eq("kind", "self_critique")
+    .is("superseded_at", null)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (scope === "rep") q = q.eq("scope_rep_id", session.repId);
+  else if (scope === "org") q = q.is("scope_rep_id", null);
+  const { data, error } = await q;
+  if (error) {
+    return { ok: false, detail: { error: error.message } };
+  }
+  return {
+    ok: true,
+    detail: {
+      count: data?.length ?? 0,
+      critiques: (data ?? []).map((d) => ({
+        id: d.id,
+        body: d.body,
+        scope: d.scope_rep_id == null ? "org" : "rep",
+        created_at: d.created_at,
+        confidence: d.confidence,
+        from_admin: !!(d.evidence as { source?: string } | null)?.source && (d.evidence as { source?: string }).source === "admin_correction",
+      })),
+    },
+  };
+}
+
 async function doTrackPrediction(
   session: { repId: number; role: string },
   params: Record<string, unknown>,
@@ -932,6 +1064,12 @@ export async function POST(req: NextRequest) {
         break;
       case "reassign_leads_bulk":
         result = await doReassignLeadsBulk(session, proposal);
+        break;
+      case "learn_from_admin_correction":
+        result = await doLearnFromAdminCorrection(session, proposal);
+        break;
+      case "recall_my_mistakes":
+        result = await doRecallMyMistakes(session, proposal);
         break;
       default:
         result = { ok: false, detail: { error: `Unknown action: ${proposal.action}` } };
