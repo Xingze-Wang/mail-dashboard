@@ -73,6 +73,105 @@ interface SeedResult {
   skipped_send_reason?: string;
 }
 
+/**
+ * Build a personalized "experiment" mission for a rep, surfacing their
+ * strongest segment vs org baseline so they can double-down where
+ * they're already winning. Only fires Mondays (weekly cadence).
+ * Returns null if the rep doesn't have enough signal (<20 sends in 30d)
+ * — better no experiment mission than a noisy one.
+ *
+ * Decision: pick the segment with the largest positive (rep CTR − org CTR)
+ * delta, with ≥5 rep-side sends so we're not surfacing a 1-clicked-1-sent
+ * fluke. Cap at 1 experiment mission per rep per Monday.
+ */
+async function buildExperimentMission(
+  repId: number,
+  repName: string,
+): Promise<{ target: number; scope: Record<string, unknown>; description: string } | null> {
+  // Pull rep's 30d sends + their CTR per geo_binary + per direction.
+  // Cheap enough to call segment-funnels with repId filter; it caches.
+  const { computeSegmentFunnels } = await import("@/lib/segment-funnels");
+  const repFunnel = await computeSegmentFunnels({ repId, lookbackDays: 30 });
+  if (repFunnel.totals.delivered < 20) return null;          // need signal
+
+  const orgFunnel = await computeSegmentFunnels({ repId: null, lookbackDays: 30 });
+  const orgCtr = orgFunnel.totals.delivered > 0
+    ? orgFunnel.totals.clicked / orgFunnel.totals.delivered : 0.2;
+
+  // Combine geo_binary + direction segments. Each gets a (delta, n)
+  // tuple; we pick the best (delta) with n ≥ 5.
+  type Candidate = { dimension: string; segment: string; delta: number; ctr: number; n: number };
+  const candidates: Candidate[] = [];
+  for (const dim of repFunnel.dimensions) {
+    if (dim.dimension !== "geo_binary" && dim.dimension !== "direction" && dim.dimension !== "school_tier") continue;
+    for (const seg of dim.segments) {
+      // Bumped from n≥5 to n≥10 — at n=5 the CTR estimate has a ±15pp
+      // standard error, so the "delta" is dominated by noise. n=10
+      // keeps the bar reasonable for early-cohort reps.
+      if (seg.delivered < 10) continue;
+      if (seg.segment === "(no lead data)" || seg.segment === "(unknown)") continue;
+      candidates.push({
+        dimension: dim.dimension,
+        segment: seg.segment,
+        delta: seg.ctr - orgCtr,
+        ctr: seg.ctr,
+        n: seg.delivered,
+      });
+    }
+  }
+
+  // Fallback "explore" mission if no candidate has a meaningful delta.
+  // Better than silently dropping the qualitative mission for the rep —
+  // gives them a learning prompt instead of nothing.
+  if (candidates.length === 0 || candidates.sort((a, b) => b.delta - a.delta)[0].delta < 0.03) {
+    return {
+      target: 5,
+      scope: { kind: "explore", lookback_days: 30 },
+      description: [
+        `**本周探索** (${repName}): 你的 30 天数据还没显示出明显的强项 — 没问题, 我们用本周来找.`,
+        ``,
+        `**任务**: 本周从你 queue 里挑 5 条 lead, 选**跟你之前发过的不一样**的 — 不同 geo, 不同 school tier, 不同方向. 然后告诉 Leon "这周我试了 X 类", 让他帮你 track.`,
+        ``,
+        `(目的: 给你的 funnel 增加 segment diversity, 这样下周我们就能给你一个有针对性的 experiment 了.)`,
+      ].join("\n"),
+    };
+  }
+
+  const winner = candidates[0];
+
+  // Translate dimension to natural-language ask + a target N. Target
+  // scales with how strong the signal is — bigger delta → bigger push.
+  const target = winner.delta >= 0.10 ? 15 : winner.delta >= 0.05 ? 10 : 6;
+  const dimLabel =
+    winner.dimension === "geo_binary" ? "geo" :
+    winner.dimension === "direction" ? "方向" :
+    winner.dimension === "school_tier" ? "school tier" :
+    winner.dimension;
+
+  const description = [
+    `**本周实验** (${repName}): 你在 ${winner.segment} 这个 ${dimLabel} 上 CTR ${(winner.ctr * 100).toFixed(0)}%, 比 org 平均 (${(orgCtr * 100).toFixed(0)}%) 高 ${(winner.delta * 100).toFixed(0)}pp.`,
+    ``,
+    `**任务**: 本周从 ${winner.segment} 多发 ${target} 封, 让样本 N 再大一点 — 这是你的强项, 我们用你来验证.`,
+    ``,
+    `(数据来自过去 30 天 ${winner.n} 个 sample. delta 来自 segment-funnels.ts. cron 每周一早上 10 点 Beijing 重算.)`,
+  ].join("\n");
+
+  return {
+    target,
+    scope: {
+      kind: "experiment",
+      dimension: winner.dimension,
+      segment: winner.segment,
+      rep_ctr: winner.ctr,
+      org_ctr: orgCtr,
+      delta_pp: Math.round(winner.delta * 1000) / 10,
+      rep_n: winner.n,
+      lookback_days: 30,
+    },
+    description,
+  };
+}
+
 /** Shared seed logic. POST (admin) and GET (cron) both call this. */
 async function seedMissions(): Promise<{ today: string; results: SeedResult[] }> {
   const today = todayIso();
@@ -173,6 +272,28 @@ async function seedMissions(): Promise<{ today: string; results: SeedResult[] }>
         generated_by: "heuristic",
         status: "active",
       });
+    }
+
+    // Mondays only: add a qualitative "experiment" mission that gives
+    // each rep ONE focus area for the week beyond raw send counts.
+    // Surfaces their strongest segment vs org baseline so they can
+    // double-down where they're already winning. Skips reps without
+    // enough signal (<20 sends in 30d). See buildExperimentMission.
+    const isMonday = new Date().getUTCDay() === 1;
+    if (isMonday) {
+      const exp = await buildExperimentMission(repId, repName);
+      if (exp) {
+        rows.push({
+          rep_id: repId,
+          due_date: today,
+          kind: "experiment",
+          target: exp.target,
+          scope: exp.scope,
+          description: exp.description,
+          generated_by: "heuristic",
+          status: "active",
+        });
+      }
     }
 
     if (rows.length > 0) {
