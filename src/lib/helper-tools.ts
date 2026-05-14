@@ -166,7 +166,7 @@ export const TOOLS_PROMPT = `## 工具系统
 \`\`\`
 
 执行工具列表:
-- batch_send — 批量发邮件. 参数: { limit: number (最多50), override?: boolean }.
+- batch_send — 批量发邮件. 参数: { limit: number (最多200), override?: boolean }.
   默认先挑非 gated (>=7天), 不够再用 gated (override) 补. override:true = 全部当 override 发.
 - skip_lead — 跳过一个 lead (不再 surface 到 ready queue). 参数: { lead_id: string }.
 - flag_lead — 标记一个 lead. 参数: { lead_id: string, type: "bad_compute"|"wrong_author"|"wrong_direction"|"low_quality_email"|"right_lead_wrong_pitch"|"good_lead", severity: "soft"|"hard", reason?: string }.

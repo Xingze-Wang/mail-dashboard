@@ -132,7 +132,10 @@ function extractToolProposal(text: string): { cleaned: string; proposal: ToolPro
         }
       }
       if (parsed.action === "batch_send" && typeof parsed.limit === "number") {
-        parsed.limit = Math.max(1, Math.min(50, Math.floor(parsed.limit)));
+        // Bumped 50 → 200 to match trust-tier bulkBatchMax and the
+        // route's HARD_CAP. The downstream caps will still throttle
+        // by tier; this gate is just sanity.
+        parsed.limit = Math.max(1, Math.min(200, Math.floor(parsed.limit)));
       }
       if (parsed.action === "remember_about_rep") {
         const allowed = ["rep_pref", "tactic", "self_critique", "other"];

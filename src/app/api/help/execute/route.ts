@@ -25,7 +25,11 @@ export const maxDuration = 300;
  * result, so the thread history is auditable.
  */
 
-const HARD_CAP = 50; // never execute more than 50 sends in one proposal
+// Bumped 2026-05-14 alongside trust-tier bulkBatchMax (mature/admin
+// already 200; the bot's own action handler was the bottleneck).
+// Never execute more than this in one proposal regardless of what the
+// LLM asks for — the trust-tier per-rep cap is the per-rep ceiling.
+const HARD_CAP = 200;
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null;

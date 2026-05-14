@@ -90,6 +90,15 @@ export async function POST(req: Request) {
     }
   });
 
+  // Card-action callbacks expect an empty-object JSON body to ack
+  // without redrawing the card. Returning {ok:true} (the old default)
+  // caused Lark client to display 'Something went wrong code: 200345'
+  // because it tried to interpret the non-card JSON as a card payload.
+  // Plain message events still get the bookkeeping {ok:true} response;
+  // only card events get the empty-ack shape.
+  if (isCardAction) {
+    return NextResponse.json({}, { status: 200 });
+  }
   return NextResponse.json({ ok: true }, { status: 200 });
 }
 
