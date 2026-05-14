@@ -233,6 +233,7 @@ const dispatcher = new Lark.EventDispatcher({}).register({
     const tplAction = (v2.template_action as string | undefined) ?? "";
     const quotaAction = (v2.quota_action as string | undefined) ?? "";
     const congressAction = (v2.congress_action as string | undefined) ?? "";
+    const jitrAction = (v2.jitr_action as string | undefined) ?? "";
     let toastContent = "Received";
     if (oAction === "deny") toastContent = "Denied — sending notification…";
     else if (oAction === "approve_sales" || oAction === "approve_senior") toastContent = "Approved — provisioning + sending welcome email…";
@@ -246,6 +247,8 @@ const dispatcher = new Lark.EventDispatcher({}).register({
     else if (quotaAction === "dismiss") toastContent = "🗑 Dismissed";
     else if (congressAction === "accept") toastContent = "✓ Accepted proposal";
     else if (congressAction === "reject") toastContent = "❌ Rejected proposal";
+    else if (jitrAction === "accept") toastContent = "✓ Accepted offer";
+    else if (jitrAction === "dismiss") toastContent = "🗑 Dismissed";
     return { toast: { type: "success", content: toastContent } };
   },
 });

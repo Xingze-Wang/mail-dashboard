@@ -128,8 +128,18 @@ export async function POST(req: Request) {
         } else if ("congress_action" in value) {
           const card = await import("@/lib/admin-approval-cards");
           await card.processCongressCardAction(parsed);
-        } else {
+        } else if ("jitr_action" in value) {
           await agent.processJitrCardAction(parsed, "webhook");
+        } else {
+          // No known discriminator. Loud log so a missing dispatcher
+          // case doesn't fall into a silent-failure incident. Every
+          // card the app emits must register a discriminator in this
+          // switch AND in the worker (scripts/lark-bot-worker.ts).
+          console.error(
+            "[lark/webhook] unknown card action discriminator. value keys:",
+            Object.keys(value).join(","),
+            "— register a branch in BOTH webhook and worker.",
+          );
         }
       } else {
         await agent.processInboundLarkMessage(parsed, "webhook");
@@ -154,6 +164,7 @@ export async function POST(req: Request) {
     const tplAction = (value.template_action as string | undefined) ?? "";
     const quotaAction = (value.quota_action as string | undefined) ?? "";
     const congressAction = (value.congress_action as string | undefined) ?? "";
+    const jitrAction = (value.jitr_action as string | undefined) ?? "";
     let toastContent = "Received";
     if (oAction === "deny") toastContent = "Denied — sending notification…";
     else if (oAction === "approve_sales" || oAction === "approve_senior") toastContent = "Approved — provisioning + sending welcome email…";
@@ -167,6 +178,8 @@ export async function POST(req: Request) {
     else if (quotaAction === "dismiss") toastContent = "🗑 Dismissed";
     else if (congressAction === "accept") toastContent = "✓ Accepted proposal";
     else if (congressAction === "reject") toastContent = "❌ Rejected proposal";
+    else if (jitrAction === "accept") toastContent = "✓ Accepted offer";
+    else if (jitrAction === "dismiss") toastContent = "🗑 Dismissed";
     return NextResponse.json({
       toast: { type: "success", content: toastContent },
     }, { status: 200 });
