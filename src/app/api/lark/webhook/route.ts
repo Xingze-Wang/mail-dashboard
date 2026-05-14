@@ -84,6 +84,9 @@ export async function POST(req: Request) {
         if ("onboarding_action" in value) {
           const onboarding = await import("@/lib/onboarding");
           await onboarding.processOnboardingCardAction(parsed);
+        } else if ("admin_inbox_action" in value) {
+          const card = await import("@/lib/admin-inbox-card");
+          await card.processAdminInboxCardAction(parsed);
         } else {
           await agent.processJitrCardAction(parsed, "webhook");
         }
@@ -105,11 +108,14 @@ export async function POST(req: Request) {
   if (isCardAction) {
     const ev = (parsed as { event?: { action?: { value?: Record<string, unknown> } } }).event;
     const value = ev?.action?.value ?? {};
-    const action = (value.onboarding_action as string | undefined) ?? "";
-    const toastContent =
-      action === "deny" ? "已拒绝, 正在发拒绝通知…" :
-      action === "approve_sales" || action === "approve_senior" ? "已通过, 正在开账号 + 发欢迎邮件…" :
-      "已收到";
+    const oAction = (value.onboarding_action as string | undefined) ?? "";
+    const aInbox = (value.admin_inbox_action as string | undefined) ?? "";
+    let toastContent = "已收到";
+    if (oAction === "deny") toastContent = "已拒绝, 正在发拒绝通知…";
+    else if (oAction === "approve_sales" || oAction === "approve_senior") toastContent = "已通过, 正在开账号 + 发欢迎邮件…";
+    else if (aInbox === "acknowledge") toastContent = "✓ 已 ack";
+    else if (aInbox === "save_as_memory") toastContent = "💾 正在存入长期记忆…";
+    else if (aInbox === "dismiss") toastContent = "🗑 已 dismiss";
     return NextResponse.json({
       toast: { type: "success", content: toastContent },
     }, { status: 200 });

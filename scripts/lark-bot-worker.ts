@@ -179,11 +179,14 @@ const dispatcher = new Lark.EventDispatcher({}).register({
         const onboarding = await import("../src/lib/onboarding.ts");
         const result = await onboarding.processOnboardingCardAction({ event: innerEvent });
         console.log(`[worker] onboarding card action in ${Date.now() - t0}ms ok=${result.ok} reason=${result.reason ?? ""}`);
+      } else if ("admin_inbox_action" in value) {
+        const card = await import("../src/lib/admin-inbox-card.ts");
+        const result = await card.processAdminInboxCardAction({ event: innerEvent });
+        console.log(`[worker] admin_inbox card action in ${Date.now() - t0}ms ok=${result.ok} reason=${result.reason ?? ""}`);
       } else if ("jitr_action" in value) {
         const result = await processJitrCardAction({ event: innerEvent }, "ws");
         console.log(`[worker] jitr card action in ${Date.now() - t0}ms ok=${result.ok} reason=${result.reason ?? ""}`);
       } else {
-        // Neither key — log so we can see what the unknown card type was.
         console.error(`[worker] card action with unknown value keys: ${JSON.stringify(value).slice(0, 200)}`);
       }
     } catch (err) {
@@ -193,14 +196,16 @@ const dispatcher = new Lark.EventDispatcher({}).register({
     // - "" → SDK couldn't parse → code 200345
     // - {} → some Lark clients render code 200340 (unreachable)
     // - {toast: {...}} → client shows the toast, ack is unambiguous
-    // Keeping the same shape the HTTP webhook returns so both paths
-    // are interchangeable.
     const env2 = data as { event?: { action?: { value?: Record<string, unknown> } } };
-    const action = (env2.event?.action?.value?.onboarding_action as string | undefined) ?? "";
-    const toastContent =
-      action === "deny" ? "已拒绝, 正在发拒绝通知…" :
-      action === "approve_sales" || action === "approve_senior" ? "已通过, 正在开账号 + 发欢迎邮件…" :
-      "已收到";
+    const v2 = env2.event?.action?.value ?? {};
+    const oAction = (v2.onboarding_action as string | undefined) ?? "";
+    const aInbox = (v2.admin_inbox_action as string | undefined) ?? "";
+    let toastContent = "已收到";
+    if (oAction === "deny") toastContent = "已拒绝, 正在发拒绝通知…";
+    else if (oAction === "approve_sales" || oAction === "approve_senior") toastContent = "已通过, 正在开账号 + 发欢迎邮件…";
+    else if (aInbox === "acknowledge") toastContent = "✓ 已 ack";
+    else if (aInbox === "save_as_memory") toastContent = "💾 正在存入长期记忆…";
+    else if (aInbox === "dismiss") toastContent = "🗑 已 dismiss";
     return { toast: { type: "success", content: toastContent } };
   },
 });

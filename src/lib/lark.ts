@@ -22,7 +22,7 @@ import { supabase } from "@/lib/db";
 const LARK_BASE = "https://open.larksuite.com/open-apis"; // global
 const LARK_BASE_CN = "https://open.feishu.cn/open-apis"; // cn
 
-function pickBase(): string {
+export function pickBase(): string {
   // Default to global; opt into CN by setting LARK_REGION=cn
   return process.env.LARK_REGION === "cn" ? LARK_BASE_CN : LARK_BASE;
 }

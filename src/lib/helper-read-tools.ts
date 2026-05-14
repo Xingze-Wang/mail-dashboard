@@ -794,7 +794,37 @@ export async function runReadTool(
           .select("id, status")
           .single();
         if (error) return { tool: call.tool, result: { error: error.message } };
-        return { tool: call.tool, result: { ok: true, id: data.id, deduped: false } };
+
+        // Push a Lark interactive card to admin's DM with Ack /
+        // Save-as-memory / Dismiss buttons. This is the "admin inbox
+        // in Lark" the user asked for — most pings should be triageable
+        // in one tap from the same surface where Leon writes them.
+        // Best-effort: card failure doesn't block the inbox insert.
+        try {
+          const { sendAdminInboxCard } = await import("@/lib/admin-inbox-card");
+          // Optional: look up source rep name so the card surfaces it
+          let sourceRepName: string | null = null;
+          if (sourceRepId != null) {
+            const { data: sr } = await supabase
+              .from("sales_reps")
+              .select("name, lark_name")
+              .eq("id", sourceRepId)
+              .maybeSingle();
+            sourceRepName = (sr?.lark_name as string | null) ?? (sr?.name as string | null) ?? null;
+          }
+          await sendAdminInboxCard({
+            inbox_id: data.id as string,
+            kind,
+            headline,
+            body,
+            source_rep_id: sourceRepId ?? null,
+            source_rep_name: sourceRepName,
+          });
+        } catch (e) {
+          console.error("[record_admin_request] card push failed (non-blocking):", e);
+        }
+
+        return { tool: call.tool, result: { ok: true, id: data.id, deduped: false, card_sent: true } };
       }
       case "list_admin_inbox": {
         // Admin asks Leon "what have you been noticing?" — read pending
