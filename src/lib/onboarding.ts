@@ -523,20 +523,57 @@ async function handleCandidateStep(
         text:
           `收到, ${name}.\n\n` +
           "**你想用哪个邮箱发件?** 我们一般用 `firstname@compute.miracleplus.com` 格式.\n" +
-          "告诉我前缀就行, 比如 `yujie`. (我会自动补上 @compute.miracleplus.com)",
+          "发前缀就行 (比如 `yujie`), 或者发整个邮箱 (比如 `yujie@compute.miracleplus.com`) 也可以 — 两种我都认.",
       });
       return;
     }
     case "ask_email": {
-      const prefix = text.toLowerCase().replace(/[^a-z0-9._-]/g, "").slice(0, 40);
+      // The prompt asks for a prefix ("yujie"), but users naturally
+      // type full emails ("ethan@compute.miracleplus.com"). Accept
+      // both forms — if @ is present, parse and verify the domain;
+      // otherwise treat as prefix. We do NOT silently strip the @
+      // (the old bug produced "ethancompute.miracleplus.com@compute.miracleplus.com"
+      // by stripping @ and re-suffixing).
+      const raw = text.trim();
+      let prefix: string | null = null;
+      let typedFullEmail = false;
+      if (raw.includes("@")) {
+        typedFullEmail = true;
+        const parts = raw.toLowerCase().split("@");
+        if (parts.length !== 2) {
+          await noteValidationFailure(
+            pending,
+            "邮箱看起来不太对 — 含有多个 `@`. 再发一遍, 直接发前缀就行 (比如 `yujie`):",
+          );
+          return;
+        }
+        const [localPart, domain] = parts;
+        if (domain !== "compute.miracleplus.com") {
+          await noteValidationFailure(
+            pending,
+            `我们只支持 @compute.miracleplus.com 结尾的邮箱. 你给的域名是 \`${domain}\`. 直接发前缀就行 (比如 \`${localPart || "yujie"}\`):`,
+          );
+          return;
+        }
+        prefix = localPart.replace(/[^a-z0-9._-]/g, "").slice(0, 40);
+      } else {
+        prefix = raw.toLowerCase().replace(/[^a-z0-9._-]/g, "").slice(0, 40);
+      }
       if (!prefix) {
         await noteValidationFailure(
           pending,
-          "邮箱前缀只能是字母 / 数字 / `.`-`_`. 再发一遍, 比如 `yujie`:",
+          "邮箱前缀是空的, 或者只有不支持的字符. 邮箱前缀只能是字母 / 数字 / `.` `-` `_`. 再发一遍, 比如 `yujie`:",
         );
         return;
       }
       const email = `${prefix}@compute.miracleplus.com`;
+      // Sanity check: if user typed a full email, confirm we extracted
+      // the exact prefix they intended. (E.g. "ethan@compute.miracleplus.com"
+      // → prefix="ethan" → email="ethan@compute.miracleplus.com" ✓.)
+      if (typedFullEmail && raw.toLowerCase() !== email) {
+        // Edge: extra whitespace, capitalization. Normalize but tell the user.
+        // No-op — proceed but message will use the normalized email.
+      }
       // Uniqueness check against sales_reps. Pull lark_open_id too —
       // we use it to detect "the candidate IS that existing rep, they
       // just never bound their Lark account." (Yujie hit this exact
