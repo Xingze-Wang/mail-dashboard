@@ -228,34 +228,29 @@ function extractAnyProposal(text: string): { cleaned: string; proposal: ToolProp
   return { cleaned, proposal: null };
 }
 
+/**
+ * Lark-side wrapper around the shared auto-exec helper. Keep this thin
+ * — the actual safety judgment + DB writes live in
+ * src/lib/auto-execute-safe.ts so the web /api/help/ask path can reuse
+ * the same logic without duplication.
+ */
 async function autoExecuteSafeProposal(
   session: LarkSession,
   proposal: ToolProposal,
 ): Promise<string | null> {
-  if (proposal.action !== "remember_about_rep") return null;
-  const kindRaw = typeof proposal.kind === "string" ? proposal.kind : "other";
-  const allowed = ["rep_pref", "tactic", "self_critique", "other"] as const;
-  type Kind = (typeof allowed)[number];
-  const kind: Kind = (allowed as readonly string[]).includes(kindRaw) ? (kindRaw as Kind) : "other";
-  const body = typeof proposal.body === "string" ? proposal.body.trim() : "";
-  if (!body || body.length < 3 || body.length > 600) return null;
-  const scope = proposal.scope === "org" && session.role === "admin" ? "org" : "rep";
-  const scope_rep_id = scope === "org" ? null : session.repId;
-  try {
-    const learning = await recordLearning({
-      scope_rep_id,
-      kind,
-      body,
-      confidence: 0.8,
-      evidence: { source: "lark_chat", session_rep: session.repId },
-    });
-    if (!learning) return null;
-    return `\n\n— 记下来了 (kind: ${kind}): ${body.slice(0, 120)}${body.length > 120 ? "..." : ""}`;
-  } catch (err) {
-    console.error("[lark-agent] memory write failed", err);
-    return null;
-  }
+  const { tryAutoExecuteSafe } = await import("@/lib/auto-execute-safe");
+  const r = await tryAutoExecuteSafe(
+    {
+      repId: session.repId,
+      role: session.role,
+      repName: session.repName ?? null,
+      email: session.email ?? null,
+    },
+    proposal as Record<string, unknown> & { action: string },
+  );
+  return r.executed ? r.suffix : null;
 }
+
 
 function userMentionsPriorContext(text: string): boolean {
   const cues = ["之前", "上次", "刚才", "earlier", "you said", "前面", "刚刚", "你之前"];

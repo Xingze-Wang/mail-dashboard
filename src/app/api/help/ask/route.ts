@@ -417,11 +417,35 @@ ${lookupSummary}
   const { cleaned: textNoEvidence, evidence } = extractEvidence(finalText);
 
   const { cleaned, proposal, proposalError } = extractToolProposal(textNoEvidence);
+
+  // For SAFE DB-only proposals (remember_about_rep, record_admin_request,
+  // learn_from_admin_correction), auto-execute server-side instead of
+  // showing a confirm button. This gives parity with the Lark path —
+  // same actions fire automatically there too. See
+  // src/lib/auto-execute-safe.ts. Destructive actions (batch_send,
+  // send_lead_email) STILL flow through proposal → /pipeline confirm.
+  let autoExecSuffix = "";
+  let consumedProposal = false;
+  if (proposal && !proposalError) {
+    const { tryAutoExecuteSafe } = await import("@/lib/auto-execute-safe");
+    const out = await tryAutoExecuteSafe(
+      { repId: session.repId, role: session.role, repName: session.repName ?? null, email: session.email ?? null },
+      proposal as Record<string, unknown> & { action: string },
+    );
+    if (out.executed) {
+      autoExecSuffix = out.suffix;
+      consumedProposal = true;
+    }
+  }
+
   // If the model tried to propose an action with a bad lead_id, append
   // a hint to the answer so the user sees what went wrong and can rephrase.
   const finalAnswer = proposalError
     ? `${cleaned}\n\n⚠️ 我本来想执行一个操作, 但参数有问题 (${proposalError}). 请明确告诉我要操作哪条 lead (说名字或 paper title 就行, 我会先查).`
-    : cleaned;
+    : `${cleaned}${autoExecSuffix}`;
+  // If the proposal was auto-executed, don't surface it to the client
+  // as a confirm-pending UI affordance — it's already done.
+  const effectiveProposal = consumedProposal ? null : proposal;
 
   // Persist. Evidence is stored as part of the assistant message so the
   // chat history can re-render expandable cards on a page reload.
@@ -435,7 +459,7 @@ ${lookupSummary}
       conversation_id: conversationId,
       role: "assistant",
       text: finalAnswer,
-      tool_proposal: proposal,
+      tool_proposal: effectiveProposal,
       evidence: evidence.length > 0 ? evidence : null,
     };
     let { error: insertError } = await supabase.from("helper_messages").insert([userMsg, assistantMsg]);
@@ -459,7 +483,7 @@ ${lookupSummary}
 
   return NextResponse.json({
     answer: finalAnswer,
-    proposal,
+    proposal: effectiveProposal,
     evidence,
     model,
     toolTrail: toolTrail.map((t) => ({
