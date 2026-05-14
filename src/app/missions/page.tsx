@@ -144,37 +144,34 @@ export default function MissionsPage() {
           ? `${overallPct}% · 节奏稳.`
           : `${overallPct}% · 一步一步来.`;
 
+  // Friendlier weekday header. "今日 missions" was bland; new copy
+  // anchors on the day-of-week and uses the encouragement headline as
+  // the actual H1 so the page feels less like a TODO list and more
+  // like a daily plan. Pretty date in user's locale (zh-CN preferred).
+  const todayDate = new Date(data.today + "T00:00:00");
+  const dayOfWeekZh = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][todayDate.getDay()];
+  const monthDay = `${todayDate.getMonth() + 1}/${todayDate.getDate()}`;
+
   return (
     <div>
-      {/* Header — matches overview: page-title + small lead-count subtitle */}
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 24 }}>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 14 }}>
-          <h1 className="page-title">今日 missions</h1>
-          <span className="lead-count">{data.today}</span>
+      {/* Header — pretty date + the encouragement headline as the H1. */}
+      <div style={{ marginBottom: 20 }}>
+        <div style={{
+          fontSize: 11, color: "var(--text-tertiary)",
+          textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4,
+        }}>
+          {dayOfWeekZh} · {monthDay}
         </div>
-      </div>
-
-      {/* Encouragement strip — sets the tone for the page. Not a nag,
-          a quiet acknowledgement of where you are. */}
-      <div style={{
-        display: "flex", alignItems: "center", gap: 10, marginBottom: 20,
-        padding: "10px 14px",
-        background: allDone
-          ? "linear-gradient(135deg, rgba(16,185,129,0.08), rgba(16,185,129,0.04))"
-          : "linear-gradient(135deg, rgba(37,99,235,0.06), rgba(37,99,235,0.02))",
-        border: `1px solid ${allDone ? "rgba(16,185,129,0.25)" : "var(--border-light, #e5e7eb)"}`,
-        borderRadius: 8,
-      }}>
-        {allDone ? (
-          <Award style={{ width: 18, height: 18, color: "var(--green)" }} />
-        ) : totalProgress === 0 ? (
-          <Sunrise style={{ width: 18, height: 18, color: "var(--blue)" }} />
-        ) : (
-          <Sparkles style={{ width: 18, height: 18, color: "var(--blue)" }} />
-        )}
-        <span style={{ fontSize: 14, fontWeight: 500, color: "var(--text)" }}>
-          {headline}
-        </span>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          {allDone ? (
+            <Award style={{ width: 24, height: 24, color: "var(--green)" }} />
+          ) : totalProgress === 0 ? (
+            <Sunrise style={{ width: 24, height: 24, color: "var(--blue)" }} />
+          ) : (
+            <Sparkles style={{ width: 24, height: 24, color: "var(--blue)" }} />
+          )}
+          <h1 className="page-title" style={{ margin: 0 }}>{headline}</h1>
+        </div>
       </div>
 
       {/* Quarterly goals — slim banner, destination context */}
@@ -203,29 +200,85 @@ export default function MissionsPage() {
         </div>
       )}
 
-      {/* Stat cards — top-line numbers, mirror overview's stat-card grid */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 24 }}>
-        <div className="stat-card">
-          <div className="stat-label">Missions 今日</div>
-          <div className="stat-value">{data.my_today.length}</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-label">已完成</div>
-          <div className="stat-value" style={{ color: "var(--green)" }}>
-            {data.my_today.filter((m) => (m.progress_count ?? 0) >= m.target).length}
+      {/* Headline progress bar — one big number, one big bar, the
+          per-pool breakdown as small chips. Less cluttered than the
+          4-stat-card grid; the number that matters is "did I do
+          today's quota yet?". */}
+      <div style={{
+        background: "white", border: "1px solid var(--border)", borderRadius: 12,
+        padding: "16px 18px", marginBottom: 24,
+      }}>
+        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 10 }}>
+          <div>
+            <span style={{ fontSize: 32, fontWeight: 700, color: "var(--text)" }}>{totalProgress}</span>
+            <span style={{ fontSize: 18, color: "var(--text-tertiary)", marginLeft: 4 }}>/ {totalTarget}</span>
+            <span style={{ fontSize: 13, color: "var(--text-secondary)", marginLeft: 10 }}>今日完成</span>
+          </div>
+          <div style={{ display: "flex", gap: 6 }}>
+            {(() => {
+              // Derive the per-pool breakdown from the send-mission's scope.
+              // The mission scope.per_pool tells the rep "you have 30 cn, 20 overseas".
+              const sendMission = data.my_today.find((m) => m.kind === "send");
+              const pp = (sendMission?.scope as { per_pool?: Record<string, number> } | null)?.per_pool;
+              if (!pp) return null;
+              const POOL_LABEL: Record<string, string> = {
+                strong: "强势 strong",
+                normal_cn: "国内 .cn",
+                normal_overseas: "海外",
+                normal_edu: "美国 .edu",
+              };
+              const POOL_COLOR: Record<string, string> = {
+                strong: "#7c3aed",
+                normal_cn: "#dc2626",
+                normal_overseas: "#0ea5e9",
+                normal_edu: "#059669",
+              };
+              return Object.entries(pp)
+                .filter(([, v]) => (v as number) > 0)
+                .map(([k, v]) => (
+                  <span
+                    key={k}
+                    title={POOL_LABEL[k] ?? k}
+                    style={{
+                      fontSize: 11, padding: "3px 9px", borderRadius: 999,
+                      background: (POOL_COLOR[k] ?? "#64748b") + "18",
+                      color: POOL_COLOR[k] ?? "#64748b", fontWeight: 600,
+                      border: `1px solid ${(POOL_COLOR[k] ?? "#64748b") + "44"}`,
+                    }}
+                  >
+                    {POOL_LABEL[k] ?? k}: {v as number}
+                  </span>
+                ));
+            })()}
           </div>
         </div>
-        <div className="stat-card">
-          <div className="stat-label">总进度</div>
-          <div className="stat-value">{totalProgress}<span style={{ color: "var(--text-tertiary)", fontSize: "0.6em", fontWeight: 400 }}> / {totalTarget}</span></div>
+        <div style={{
+          height: 8, borderRadius: 999, background: "var(--bg-subtle, #f1f5f9)",
+          overflow: "hidden", position: "relative",
+        }}>
+          <div style={{
+            position: "absolute", inset: 0,
+            width: `${overallPct}%`,
+            background: allDone ? "var(--green, #10b981)" : "var(--blue, #2563eb)",
+            transition: "width 0.4s ease",
+          }} />
         </div>
-        <div className="stat-card">
-          <div className="stat-label">本周 focus</div>
-          <div className="stat-value" style={{ fontSize: 13, lineHeight: 1.4, fontWeight: 500 }}>
-            {data.team_focus?.theme ?? <span style={{ color: "var(--text-tertiary)" }}>未设</span>}
-          </div>
+        <div style={{
+          marginTop: 8, fontSize: 11, color: "var(--text-tertiary)",
+          display: "flex", justifyContent: "space-between",
+        }}>
+          <span>
+            {data.my_today.filter((m) => (m.progress_count ?? 0) >= m.target).length} / {data.my_today.length} missions 完成
+          </span>
+          <span>
+            {data.team_focus?.theme ?? "（本周 focus 未设）"}
+          </span>
         </div>
       </div>
+
+      {/* Quarterly goals were here in the old layout, but they're
+          destination context, not daily — moved below the progress bar
+          so the actionable thing (today's progress) is the first beat. */}
 
       {/* Team focus banner — only if set, with rationale */}
       {data.team_focus && (
