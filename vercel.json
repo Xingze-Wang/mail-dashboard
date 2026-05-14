@@ -21,6 +21,6 @@
     { "path": "/api/congress/monthly",        "schedule": "0 2 1 * *" },
     { "path": "/api/congress/postmortem-detect", "schedule": "0 3 * * *" },
     { "path": "/api/cron/congress-chime",      "schedule": "30 7 * * 1" },
-    { "path": "/api/pipeline/scan-fanout",     "schedule": "0 6 * * 1-5" }
+    { "path": "/api/pipeline/scan-fanout",     "schedule": "30 6 * * 1-5" }
   ]
 }
