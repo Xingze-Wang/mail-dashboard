@@ -204,18 +204,39 @@ const dispatcher = new Lark.EventDispatcher({}).register({
 // the SDK doesn't expose state hooks.
 let wsHealthy = false;
 let lastReconnectAt = 0;
+let lastHealthyAt = 0;
 const RECONNECT_COOLDOWN_MS = 30_000;
+// If we've been unhealthy for > UNHEALTHY_MAX_MS, hard-exit so launchd
+// (or whatever supervises us) restarts a fresh process. The SDK
+// occasionally enters a state where reconnect attempts log
+// "PingInterval undefined" without ever flipping wsHealthy back to
+// true; we observed this on 2026-05-14 (worker process alive but
+// WS dead, Leon silent for hours). Catching it by hard-exiting after
+// 5min unhealthy + watchdog cooldowns failed.
+const UNHEALTHY_MAX_MS = 5 * 60_000;
 
 const origLog = console.log.bind(console);
 const origErr = console.error.bind(console);
 console.log = (...args: unknown[]) => {
   const s = args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ");
-  if (s.includes("ws client ready")) wsHealthy = true;
+  if (s.includes("ws client ready")) {
+    wsHealthy = true;
+    lastHealthyAt = Date.now();
+  }
   origLog(...args);
 };
 console.error = (...args: unknown[]) => {
   const s = args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ");
-  if (s.includes("unable to connect") || s.includes("ws connect failed")) wsHealthy = false;
+  // Broaden the unhealthy signals: SDK has multiple ways to log a dead
+  // WS depending on which retry path it's in. Catch all of them.
+  const unhealthy =
+    s.includes("unable to connect") ||
+    s.includes("ws connect failed") ||
+    s.includes("system busy") ||
+    s.includes("PingInterval") ||
+    s.includes("ws read error") ||
+    s.includes("ws closed");
+  if (unhealthy) wsHealthy = false;
   origErr(...args);
 };
 
@@ -238,9 +259,17 @@ startWS();
 setInterval(() => {
   if (wsHealthy) return;
   const now = Date.now();
+  // Last-resort: if we've been unhealthy for > UNHEALTHY_MAX_MS, hard
+  // exit so the supervisor (launchd/pm2/manual nohup loop) restarts a
+  // fresh process. SDK soft-reconnect can deadlock in ways even our
+  // recreate-WSClient watchdog doesn't recover from.
+  if (lastHealthyAt > 0 && now - lastHealthyAt > UNHEALTHY_MAX_MS) {
+    console.error(`[worker] WATCHDOG: ws unhealthy for >${UNHEALTHY_MAX_MS/1000}s — hard exit so supervisor restarts`);
+    process.exit(2);
+  }
   if (now - lastReconnectAt < RECONNECT_COOLDOWN_MS) return;
   lastReconnectAt = now;
-  console.log("[worker] WATCHDOG: ws unhealthy, restarting...");
+  console.log("[worker] WATCHDOG: ws unhealthy, soft-restart attempt...");
   try {
     const ws = wsClient as unknown as { stop?: () => void };
     ws.stop?.();
