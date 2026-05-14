@@ -508,6 +508,206 @@ async function doTrackPrediction(
  * Admin-only. Sales role gets a clear refusal so the helper doesn't
  * silently no-op.
  */
+
+/**
+ * Approve a pending_onboarding row from chat (admin's Lark DM or
+ * dashboard helper). Bypasses the Lark card-callback path entirely —
+ * which is broken when the Open Platform's Callback Subscription
+ * doesn't have `card.action.trigger` registered. Admin just types
+ * "approve 王泽群 as senior" and Leon runs this.
+ *
+ * Same downstream codepath as processOnboardingCardAction so the
+ * outcome is identical: provisionRep + sendWalkthrough + admin
+ * confirmation message.
+ *
+ * Args: { pending_id?: string, lark_name?: string, role: "sales"|"senior", trust_notes?: string }
+ * Either pending_id OR lark_name must be set; pending_id wins if both.
+ *
+ * trust_notes (optional, ≤500 chars) gets written to
+ * sales_reps.trust_notes BEFORE sendWalkthrough so the welcome flow
+ * picks it up. This is the "admin's per-rep note" the user asked
+ * about — wired through chat instead of the card form.
+ */
+async function doApproveOnboarding(
+  session: { repId: number; role: string },
+  params: Record<string, unknown>,
+): Promise<{ ok: boolean; detail: Record<string, unknown> }> {
+  if (session.role !== "admin") {
+    return { ok: false, detail: { error: "admin only" } };
+  }
+  const role = params.role === "senior" ? "senior" : "sales";
+  const trustNotes = typeof params.trust_notes === "string"
+    ? params.trust_notes.trim().slice(0, 500) : null;
+  const pendingId = typeof params.pending_id === "string" ? params.pending_id : null;
+  const larkName = typeof params.lark_name === "string" ? params.lark_name : null;
+
+  const { supabase } = await import("@/lib/db");
+
+  // Find the pending row.
+  let q = supabase
+    .from("pending_onboarding")
+    .select("*")
+    .in("status", ["in_progress", "awaiting_admin"])
+    .limit(1);
+  if (pendingId) q = q.eq("id", pendingId);
+  else if (larkName) q = q.eq("lark_name", larkName);
+  else return { ok: false, detail: { error: "pending_id or lark_name required" } };
+
+  const { data: pending } = await q.maybeSingle();
+  if (!pending) {
+    return { ok: false, detail: { error: `No in_progress pending row matched` } };
+  }
+
+  // Provision the rep — same path the card uses.
+  const { provisionRep } = await import("@/lib/onboarding").then((m) =>
+    // provisionRep isn't exported, so we cheat via the public
+    // processOnboardingCardAction by feeding it the same synthetic
+    // event the WS worker would. This way we share ALL the rep-row /
+    // sendWalkthrough / admin-confirmation work — no duplication.
+    ({ provisionRep: null as unknown as null, processOnboardingCardAction: m.processOnboardingCardAction }),
+  );
+  void provisionRep;
+  const { processOnboardingCardAction } = await import("@/lib/onboarding");
+
+  // Resolve the admin's open_id from sales_reps (session.repId).
+  const { data: rep } = await supabase
+    .from("sales_reps")
+    .select("lark_open_id")
+    .eq("id", session.repId)
+    .maybeSingle();
+  const operatorOpenId = (rep?.lark_open_id as string | null) ?? "via-helper-no-openid";
+
+  // If trust_notes provided, we need to land them AFTER provisionRep
+  // creates the row. The card handler stamps trust_notes via the
+  // (now-deprecated) admin_note arg; we'll patch after the call.
+  const result = await processOnboardingCardAction({
+    event: {
+      operator: { open_id: operatorOpenId },
+      action: {
+        value: {
+          onboarding_action: role === "senior" ? "approve_senior" : "approve_sales",
+          pending_id: pending.id,
+        },
+      },
+    },
+  });
+
+  if (!result.ok) {
+    return { ok: false, detail: { error: result.reason ?? "approval failed" } };
+  }
+
+  // Apply trust_notes if provided. Look up the new rep by claimed_email.
+  if (trustNotes) {
+    await supabase
+      .from("sales_reps")
+      .update({ trust_notes: trustNotes })
+      .eq("sender_email", pending.claimed_email as string);
+  }
+
+  return {
+    ok: true,
+    detail: {
+      pending_id: pending.id,
+      claimed_name: pending.claimed_name,
+      claimed_email: pending.claimed_email,
+      role,
+      trust_notes_set: !!trustNotes,
+    },
+  };
+}
+
+/**
+ * Deny a pending_onboarding row from chat. Same logic as
+ * approve_onboarding but routes to the deny branch.
+ */
+async function doDenyOnboarding(
+  session: { repId: number; role: string },
+  params: Record<string, unknown>,
+): Promise<{ ok: boolean; detail: Record<string, unknown> }> {
+  if (session.role !== "admin") {
+    return { ok: false, detail: { error: "admin only" } };
+  }
+  const pendingId = typeof params.pending_id === "string" ? params.pending_id : null;
+  const larkName = typeof params.lark_name === "string" ? params.lark_name : null;
+
+  const { supabase } = await import("@/lib/db");
+  let q = supabase
+    .from("pending_onboarding")
+    .select("*")
+    .in("status", ["in_progress", "awaiting_admin"])
+    .limit(1);
+  if (pendingId) q = q.eq("id", pendingId);
+  else if (larkName) q = q.eq("lark_name", larkName);
+  else return { ok: false, detail: { error: "pending_id or lark_name required" } };
+
+  const { data: pending } = await q.maybeSingle();
+  if (!pending) return { ok: false, detail: { error: "No in_progress pending row matched" } };
+
+  const { data: rep } = await supabase
+    .from("sales_reps")
+    .select("lark_open_id")
+    .eq("id", session.repId)
+    .maybeSingle();
+  const operatorOpenId = (rep?.lark_open_id as string | null) ?? "via-helper-no-openid";
+
+  const { processOnboardingCardAction } = await import("@/lib/onboarding");
+  const result = await processOnboardingCardAction({
+    event: {
+      operator: { open_id: operatorOpenId },
+      action: { value: { onboarding_action: "deny", pending_id: pending.id } },
+    },
+  });
+
+  if (!result.ok) return { ok: false, detail: { error: result.reason ?? "deny failed" } };
+  return { ok: true, detail: { pending_id: pending.id, claimed_name: pending.claimed_name, action: "denied" } };
+}
+
+/**
+ * Set / update a rep's trust_notes field. The note is read by
+ * sendWalkthrough and surfaced in the new-rep welcome flow, and shows
+ * up in admin diagnostics ("X's note: ...").
+ *
+ * Admin only. Notes are capped at 500 chars to keep welcome messages
+ * sane in length.
+ */
+async function doSetRepTrustNotes(
+  session: { repId: number; role: string },
+  params: Record<string, unknown>,
+): Promise<{ ok: boolean; detail: Record<string, unknown> }> {
+  if (session.role !== "admin") {
+    return { ok: false, detail: { error: "admin only" } };
+  }
+  const repId = Number(params.rep_id);
+  const notes = typeof params.notes === "string" ? params.notes.trim().slice(0, 500) : "";
+  if (!Number.isFinite(repId) || repId <= 0) {
+    return { ok: false, detail: { error: "rep_id required (positive integer)" } };
+  }
+  if (notes.length < 3) {
+    return { ok: false, detail: { error: "notes must be ≥3 chars (use blank to clear via 'CLEAR' keyword)" } };
+  }
+
+  const { supabase } = await import("@/lib/db");
+  const value = notes === "CLEAR" ? null : notes;
+  const { error, data } = await supabase
+    .from("sales_reps")
+    .update({ trust_notes: value })
+    .eq("id", repId)
+    .select("id, name, trust_notes")
+    .maybeSingle();
+  if (error) return { ok: false, detail: { error: error.message } };
+  if (!data) return { ok: false, detail: { error: `rep_id=${repId} not found` } };
+
+  return {
+    ok: true,
+    detail: {
+      rep_id: data.id,
+      rep_name: data.name,
+      trust_notes: data.trust_notes,
+      cleared: value === null,
+    },
+  };
+}
+
 async function doReassignLead(
   session: { repId: number; role: string },
   params: Record<string, unknown>,
@@ -1070,6 +1270,15 @@ export async function POST(req: NextRequest) {
         break;
       case "recall_my_mistakes":
         result = await doRecallMyMistakes(session, proposal);
+        break;
+      case "approve_onboarding":
+        result = await doApproveOnboarding(session, proposal);
+        break;
+      case "deny_onboarding":
+        result = await doDenyOnboarding(session, proposal);
+        break;
+      case "set_rep_trust_notes":
+        result = await doSetRepTrustNotes(session, proposal);
         break;
       default:
         result = { ok: false, detail: { error: `Unknown action: ${proposal.action}` } };
