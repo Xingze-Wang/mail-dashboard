@@ -189,7 +189,7 @@ export default function CongressLivePage({ params }: { params: Promise<{ id: str
                   className="mb-2 p-2 bg-blue-50 border-l-2 border-blue-400 rounded text-xs"
                 >
                   <div className="font-medium text-blue-900 mb-0.5">
-                    {i.author_name} 中途插话 · before {p.display}
+                    {i.author_name} interjected · before {p.display}
                   </div>
                   <p className="text-blue-800 whitespace-pre-wrap">{i.body}</p>
                 </div>
@@ -249,13 +249,13 @@ export default function CongressLivePage({ params }: { params: Promise<{ id: str
       {run.status === "running" && (
         <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
           <div className="flex items-center gap-1.5 mb-2 text-xs font-medium text-slate-700">
-            <Sparkles className="w-3.5 h-3.5 text-blue-600" /> 插话 — 下一个 persona 会读到
+            <Sparkles className="w-3.5 h-3.5 text-blue-600" /> Interject — the next persona will read this
           </div>
           <textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             rows={3}
-            placeholder="例如: '你们没考虑 Fudan 0% 这条 n=5, CI 是 [0%, 43%], 这不是 systemic, 是 sample 问题'"
+            placeholder="e.g. 'You overlooked the Fudan 0% data point — n=5, CI is [0%, 43%], so this isn't systemic, it's a sample-size issue'"
             className="w-full text-sm border border-slate-300 rounded px-3 py-2 bg-white"
           />
           <div className="mt-2 flex items-center gap-2">
@@ -268,7 +268,7 @@ export default function CongressLivePage({ params }: { params: Promise<{ id: str
               {submitting ? "Submitting…" : "Submit interjection"}
             </button>
             <span className="text-[11px] text-slate-500">
-              下一个 persona ({run.current_idx != null ? run.roster[run.current_idx]?.display : "—"}) 会在 prompt 里看到这条.
+              The next persona ({run.current_idx != null ? run.roster[run.current_idx]?.display : "—"}) will see this in their prompt.
             </span>
           </div>
         </div>

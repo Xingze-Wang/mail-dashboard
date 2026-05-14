@@ -782,9 +782,10 @@ function SegmentScatter({ funnels }: { funnels: SegmentFunnels }) {
         Segment strategy quadrants
       </h3>
       <p style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 12 }}>
-        每个点 = 一个 segment. 横轴 = CTR (subject + opener 抓住眼球), 纵轴 = click→WeChat
-        转化 (body + CTA 留住兴趣). 虚线 = 全部 baseline. 右上 = 金矿; 右下 = subject 误导
-        (打开了但留不住); 左上 = subject 弱但内容对; 左下 = 别浪费时间.
+        Each dot = one segment. X = CTR (subject + opener earn the click), Y = click→WeChat
+        conversion (body + CTA hold the interest). Dashed lines = overall baseline. Top-right = goldmine;
+        bottom-right = subject mis-sells (clicks but no follow-through); top-left = weak subject but right content;
+        bottom-left = don&rsquo;t waste time.
       </p>
       <div style={{ width: "100%", height: 320 }}>
         <ResponsiveContainer width="100%" height="100%">
@@ -922,19 +923,16 @@ function Diagnosis({ dom, ovs, totals }: { dom: SegmentStats; ovs: SegmentStats;
   const ctrWinner = ovs.ctr > dom.ctr ? "overseas" : "domestic";
   const convWinner = ovs.postClickConv > dom.postClickConv ? "overseas" : "domestic";
   const sentencesEn: string[] = [];
-  const sentencesZh: string[] = [];
 
   if (ctrRatio >= 1.3 || convRatio >= 1.3) {
     if (ctrWinner !== convWinner) {
       sentencesEn.push(`The two audiences win at opposite ends of the funnel: ${ctrWinner} clicks ${ctrRatio.toFixed(1)}× more, but ${convWinner} converts ${convRatio.toFixed(1)}× more after clicking.`);
-      sentencesZh.push(`两个群体的赢点完全不同: ${ctrWinner === "overseas" ? "海外" : "国内"}点击率高 ${ctrRatio.toFixed(1)}×，但${convWinner === "overseas" ? "海外" : "国内"}点击后转化高 ${convRatio.toFixed(1)}×。`);
     } else {
       sentencesEn.push(`${ctrWinner === "overseas" ? "Overseas" : "Domestic"} wins both stages — ${ctrRatio.toFixed(1)}× CTR and ${convRatio.toFixed(1)}× post-click. Look at what differs in tone or pitch and apply it to the other audience.`);
     }
   }
   if (ovs.ctr > dom.ctr * 1.5 && dom.postClickConv > ovs.postClickConv * 1.5) {
     sentencesEn.push("Implication: overseas drafts need a tighter body+CTA (curiosity → commitment); domestic drafts need a stronger opener + subject (earn the click).");
-    sentencesZh.push("写邮件的方向: 海外稿件要把正文+CTA 收紧，把好奇心转成行动；国内稿件要把开头和 subject 写得更有钩子，先把点击赚到。");
   }
 
   if (sentencesEn.length === 0) return null;
@@ -945,9 +943,6 @@ function Diagnosis({ dom, ovs, totals }: { dom: SegmentStats; ovs: SegmentStats;
       </div>
       {sentencesEn.map((s, i) => (
         <p key={`en-${i}`} style={{ fontSize: 12.5, lineHeight: 1.6, marginBottom: 4 }}>{s}</p>
-      ))}
-      {sentencesZh.map((s, i) => (
-        <p key={`zh-${i}`} style={{ fontSize: 12.5, lineHeight: 1.6, color: "var(--text-secondary)" }}>{s}</p>
       ))}
     </div>
   );

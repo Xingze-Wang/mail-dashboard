@@ -246,6 +246,21 @@ Speak in your role. 200 words max. Cite specific numbers/quotes from the evidenc
   }
   console.log(`persisted: tactical_proposals.id=${row.id}`);
 
+  // Send the interactive admin card (Accept / Reject / Open dashboard).
+  // We still send the plain-text summary below as a fallback so the
+  // change_spec JSON is in the chat scrollback for later reference.
+  try {
+    const { sendTacticalProposalCard } = await import("../src/lib/admin-approval-cards.ts");
+    await sendTacticalProposalCard({
+      proposal_id: row.id as string,
+      title: synthJson.title!,
+      rationale: (personas.adversary as string | undefined ?? "").slice(0, 1500),
+    });
+    console.log("admin card sent");
+  } catch (e) {
+    console.error("admin card failed (non-fatal):", e);
+  }
+
   const summary = [
     `📋 Weekly Tactical Congress proposal`,
     ``,

@@ -739,10 +739,10 @@ function TaskCard({ row, task }: { row: RunDetail["rows"][0]; task: "analyze" | 
           )}
           {task === "intro" && (
             <>
-              <Badge ok={grade.threePart as boolean | undefined} label="三段论" />
-              <Badge ok={grade.noBannedSym as boolean | undefined} label="符号干净" />
-              <Badge ok={grade.refsTitle as boolean | undefined} label="引用标题" />
-              <Badge ok={grade.plausibleLength as boolean | undefined} label={`长度 ${grade.chars}字`} />
+              <Badge ok={grade.threePart as boolean | undefined} label="3-part" />
+              <Badge ok={grade.noBannedSym as boolean | undefined} label="clean symbols" />
+              <Badge ok={grade.refsTitle as boolean | undefined} label="cites title" />
+              <Badge ok={grade.plausibleLength as boolean | undefined} label={`length ${grade.chars} chars`} />
             </>
           )}
         </div>
@@ -901,17 +901,17 @@ function CompareOutputs({ detail }: { detail: RunDetail }) {
                       <div style={{ display: "flex", gap: 4 }}>
                         {task === "analyze" && (
                           <>
-                            <Badge ok={grade.correctNeedsCompute as boolean | undefined} label="算力" />
-                            <Badge ok={grade.correctLevel as boolean | undefined} label="等级" />
-                            <Badge ok={grade.correctDirection as boolean | undefined} label="方向" />
-                            <Badge ok={grade.correctChinese as boolean | undefined} label="中国人" />
+                            <Badge ok={grade.correctNeedsCompute as boolean | undefined} label="compute" />
+                            <Badge ok={grade.correctLevel as boolean | undefined} label="level" />
+                            <Badge ok={grade.correctDirection as boolean | undefined} label="direction" />
+                            <Badge ok={grade.correctChinese as boolean | undefined} label="chinese" />
                           </>
                         )}
                         {task === "intro" && (
                           <>
-                            <Badge ok={grade.threePart as boolean | undefined} label="三段论" />
-                            <Badge ok={grade.refsTitle as boolean | undefined} label="标题" />
-                            <Badge ok={grade.plausibleLength as boolean | undefined} label={`${grade.chars}字`} />
+                            <Badge ok={grade.threePart as boolean | undefined} label="3-part" />
+                            <Badge ok={grade.refsTitle as boolean | undefined} label="title" />
+                            <Badge ok={grade.plausibleLength as boolean | undefined} label={`${grade.chars} chars`} />
                           </>
                         )}
                       </div>

@@ -86,15 +86,15 @@ interface AuthMe {
 const SLOT_GROUPS = [
   {
     title: "1. Selection logic",
-    desc: "决定这个 template 在什么时候被选中. segment_default 是这个 template 默认服务的 segment (cn / overseas / edu / null=fallback).",
+    desc: "Decides when this template gets picked. segment_default is the segment this template serves by default (cn / overseas / edu / null=fallback).",
     accent: "neutral" as const,
     fields: [
-      { key: "segment_default", label: "Segment default", multiline: false, placeholder: "cn / overseas / edu / (空 = 全局)" },
+      { key: "segment_default", label: "Segment default", multiline: false, placeholder: "cn / overseas / edu / (blank = global)" },
     ] as const,
   },
   {
     title: "2. Prompt (LLM-generated paragraph)",
-    desc: "intro_prompt 是 Gemini 收到的指令, 用来生成第 2 段 (个性化开场). 占位符 {{title}} 和 {{abstract}} 会被替换成具体 paper 信息. 这个 prompt 本身不会出现在邮件里 — 真正出现的是 Gemini 用 prompt 生成的内容.",
+    desc: "intro_prompt is the instruction Gemini receives to generate paragraph 2 (the personalized opener). Placeholders {{title}} and {{abstract}} get replaced with the actual paper info. The prompt itself never appears in the email — only Gemini's output does.",
     accent: "ai" as const,
     fields: [
       { key: "intro_prompt", label: "intro_prompt", multiline: true, rows: 16, placeholder: "" },
@@ -102,7 +102,7 @@ const SLOT_GROUPS = [
   },
   {
     title: "3. Fixed text (other paragraphs)",
-    desc: "其余段落都是模板字符串, 占位符如 {{REP_NAME}} {{closing_name}} {{title}} 等在 send 时刻替换. 不要删占位符.",
+    desc: "Other paragraphs are template strings — placeholders like {{REP_NAME}} {{closing_name}} {{title}} get substituted at send time. Don't delete placeholders.",
     accent: "neutral" as const,
     fields: [
       { key: "subject_format", label: "Subject", multiline: false, placeholder: "Invitation to Apply - {{title}}的潜在算力支持机会" },
@@ -322,16 +322,16 @@ export default function TemplateEditPage({ params }: { params: Promise<{ id: str
           </div>
           <p className="text-sm text-slate-500 mt-1">
             <Link href={`/templates/${id}/inspect`} className="text-blue-600 inline-flex items-center gap-1">
-              <ExternalLink className="w-3 h-3" /> 看渲染
+              <ExternalLink className="w-3 h-3" /> Render
             </Link>
             {" · "}
             <Link href={`/templates/${id}/judge`} className="text-blue-600 inline-flex items-center gap-1">
-              <ExternalLink className="w-3 h-3" /> 打分
+              <ExternalLink className="w-3 h-3" /> Rate
             </Link>
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {savedAt && <span className="text-xs text-emerald-600">已保存 {savedAt}</span>}
+          {savedAt && <span className="text-xs text-emerald-600">Saved {savedAt}</span>}
           {isLocked ? (
             <button
               disabled
@@ -347,7 +347,7 @@ export default function TemplateEditPage({ params }: { params: Promise<{ id: str
               className="inline-flex items-center gap-1.5 px-4 py-2 bg-slate-900 text-white rounded text-sm disabled:opacity-40"
             >
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : isAdmin ? <Save className="w-4 h-4" /> : <Send className="w-4 h-4" />}
-              {saving ? (isAdmin ? "保存中…" : "提交中…") : dirty ? (isAdmin ? "保存修改" : "提交审核") : "无改动"}
+              {saving ? (isAdmin ? "Saving…" : "Submitting…") : dirty ? (isAdmin ? "Save changes" : "Submit for review") : "No changes"}
             </button>
           )}
         </div>
@@ -359,7 +359,7 @@ export default function TemplateEditPage({ params }: { params: Promise<{ id: str
         <div className="mb-6 space-y-2.5">
           <h2 className="text-sm font-medium text-slate-900 flex items-center gap-1.5">
             <Sparkles className="w-4 h-4 text-amber-600" />
-            {isAdmin ? `待审核改动 (${pending.length})` : `已提交待审核 (${pending.length})`}
+            {isAdmin ? `Pending changes (${pending.length})` : `Submitted for review (${pending.length})`}
           </h2>
           {pending.map((p) => {
             const isMine = p.submitted_by_rep_id === me?.repId;
@@ -375,13 +375,13 @@ export default function TemplateEditPage({ params }: { params: Promise<{ id: str
               >
                 <div className="flex items-baseline gap-2 mb-2">
                   <span className="text-xs font-medium text-slate-900">
-                    {p.submitter_name} 提议改{" "}
+                    {p.submitter_name} proposed change to{" "}
                     <span className="font-mono">{SLOT_LABEL[p.slot_key] ?? p.slot_key}</span>
                   </span>
                   <span className="text-[10px] text-slate-500">
                     {new Date(p.submitted_at).toLocaleString()}
                   </span>
-                  {isMine && <span className="text-[10px] text-blue-700">(你的提交)</span>}
+                  {isMine && <span className="text-[10px] text-blue-700">(your submission)</span>}
                   {p.gate_verdict && (
                     <span className={`text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ${verdictColor.text} bg-white/70`}>
                       gate: {p.gate_verdict}
@@ -396,13 +396,13 @@ export default function TemplateEditPage({ params }: { params: Promise<{ id: str
                 {/* Diff: old → new, side by side */}
                 <div className="grid grid-cols-2 gap-2 mb-2">
                   <div className="bg-white/60 rounded p-2">
-                    <div className="text-[10px] uppercase font-medium text-slate-500 mb-1">现在</div>
+                    <div className="text-[10px] uppercase font-medium text-slate-500 mb-1">Current</div>
                     <pre className="text-xs whitespace-pre-wrap font-mono text-slate-700 line-clamp-6">
                       {p.old_value ?? "(empty)"}
                     </pre>
                   </div>
                   <div className="bg-white/60 rounded p-2">
-                    <div className="text-[10px] uppercase font-medium text-slate-500 mb-1">提议</div>
+                    <div className="text-[10px] uppercase font-medium text-slate-500 mb-1">Proposed</div>
                     <pre className="text-xs whitespace-pre-wrap font-mono text-slate-900 line-clamp-6">
                       {p.new_value ?? "(empty)"}
                     </pre>
@@ -438,7 +438,7 @@ export default function TemplateEditPage({ params }: { params: Promise<{ id: str
                     </button>
                     <button
                       onClick={() => {
-                        const note = window.prompt("Reject 原因 (optional):") ?? undefined;
+                        const note = window.prompt("Reject reason (optional):") ?? undefined;
                         void review(p.id, "reject", note);
                       }}
                       disabled={reviewBusyId === p.id}
@@ -458,12 +458,12 @@ export default function TemplateEditPage({ params }: { params: Promise<{ id: str
         <div className="mb-5 p-3 bg-amber-50 border border-amber-200 rounded text-sm text-amber-900 flex items-start gap-2">
           <Lock className="w-4 h-4 mt-0.5 shrink-0" />
           <div>
-            <div className="font-medium mb-1">{data.status === "active" ? "Active template — admin 不能直接改" : "Archived template"}</div>
+            <div className="font-medium mb-1">{data.status === "active" ? "Active template — admin can't edit in place" : "Archived template"}</div>
             <p className="text-amber-800">
-              生产 traffic 在用这个 template. 想改的话有两条路:
+              Production traffic uses this template. To change it, two options:
               {" "}
-              <Link href="/templates/bench" className="font-medium underline">去 bench fork</Link>
-              {" "}做实验, 或者让 sales 提交一个 edit 进 review queue.
+              <Link href="/templates/bench" className="font-medium underline">fork in bench</Link>
+              {" "}to experiment, or have sales submit an edit into the review queue.
             </p>
           </div>
         </div>
@@ -474,11 +474,11 @@ export default function TemplateEditPage({ params }: { params: Promise<{ id: str
       {!isAdmin && !isLocked && (
         <div className="mb-5 p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-900">
           <div className="font-medium mb-1 flex items-center gap-1.5">
-            <Send className="w-4 h-4" /> 你的修改会进 admin review queue
+            <Send className="w-4 h-4" /> Your edits go into the admin review queue
           </div>
           <p className="text-blue-800 text-xs">
-            保存按钮显示 "提交审核". 系统会跑 prose gate (e.g. 检查是不是太销售腔, 有没有 您, etc.)
-            然后 admin 看 diff 决定要不要 merge 进 live template. Approve 之前 production 不变.
+            Save button shows &quot;Submit for review&quot;. The system runs a prose gate (e.g. checks for sales-speak, formal pronouns, etc.),
+            then admin reviews the diff and decides whether to merge into the live template. Production stays the same until approve.
           </p>
         </div>
       )}
@@ -501,7 +501,7 @@ export default function TemplateEditPage({ params }: { params: Promise<{ id: str
               <div>
                 <span className="font-medium">{SLOT_LABEL[g.slot] ?? g.slot}</span> ·{" "}
                 <span className="uppercase">{g.verdict}</span>
-                {g.issues > 0 && <span> · {g.issues} 个问题</span>}
+                {g.issues > 0 && <span> · {g.issues} issues</span>}
                 <p className="text-xs opacity-80 mt-1">{g.tone}</p>
               </div>
             </div>
@@ -568,13 +568,13 @@ export default function TemplateEditPage({ params }: { params: Promise<{ id: str
       {!isAdmin && !isLocked && (
         <div className="mb-5">
           <label className="block text-xs font-medium text-slate-700 mb-1">
-            理由 (会显示给 admin reviewer, 可选)
+            Rationale (shown to admin reviewer, optional)
           </label>
           <textarea
             value={rationale}
             onChange={(e) => setRationale(e.target.value)}
             rows={2}
-            placeholder="例如: cn 群体反馈 '同行' 比 'researcher' 自然得多, 想试一下"
+            placeholder="e.g. cn audience feedback says 'peer' reads more naturally than 'researcher', want to try"
             className="w-full text-sm border border-slate-300 rounded px-3 py-2"
           />
         </div>
@@ -588,13 +588,13 @@ export default function TemplateEditPage({ params }: { params: Promise<{ id: str
             className="inline-flex items-center gap-1.5 px-4 py-2 bg-slate-900 text-white rounded text-sm disabled:opacity-40"
           >
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : isAdmin ? <Save className="w-4 h-4" /> : <Send className="w-4 h-4" />}
-            {saving ? (isAdmin ? "保存中…" : "提交中…") : dirty ? (isAdmin ? "保存修改" : "提交审核") : "无改动"}
+            {saving ? (isAdmin ? "Saving…" : "Submitting…") : dirty ? (isAdmin ? "Save changes" : "Submit for review") : "No changes"}
           </button>
           <Link
             href="/templates/bench"
             className="inline-flex items-center gap-1.5 px-3 py-2 border border-slate-300 rounded text-sm hover:bg-slate-50"
           >
-            <GitFork className="w-4 h-4" /> 在 bench 创建 fork
+            <GitFork className="w-4 h-4" /> Fork in bench
           </Link>
         </div>
       )}

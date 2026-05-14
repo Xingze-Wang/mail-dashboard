@@ -142,7 +142,7 @@ export default function CutPage({ params }: { params: Promise<{ dim: string }> }
           <span style={{ fontSize: 16, lineHeight: "20px" }}>✨</span>
           <div style={{ flex: 1, fontSize: 13, color: "var(--text)", lineHeight: 1.55 }}>
             <div style={{ fontSize: 11, color: "#7c3aed", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>
-              今日重对齐 · {data.realignment.effective_date}
+              Realigned today · {data.realignment.effective_date}
             </div>
             {data.realignment.movement && (
               <div style={{ marginBottom: 4, fontFamily: "monospace", fontSize: 12 }}>

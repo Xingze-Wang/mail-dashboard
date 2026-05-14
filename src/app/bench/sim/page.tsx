@@ -46,7 +46,7 @@ const PRESET_COMPANIES: Omit<CompanyConfig, "id" | "created_at">[] = [
     deliberation_style: "conservative",
     model_roster: { ...DEFAULT_ROSTER, weekly_synth_model: "gemini-2.5-flash", monthly_synth_model: "claude-sonnet-4-6" },
     persona_overrides: {
-      adversary: { system: "你的工作是 attack 任何提议的改动. 你极度悲观. 默认 defer.", question: "What is the single most likely failure mode? Give a concrete scenario where this causes net harm." },
+      adversary: { system: "Your job is to attack any proposed change. You are extremely pessimistic. Default to defer.", question: "What is the single most likely failure mode? Give a concrete scenario where this causes net harm." },
     },
     customer_profile: { segment: "gov_lab", communication_style: "formal" },
     color: "#64748b",

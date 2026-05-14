@@ -553,7 +553,7 @@ export function ReviewPane({ leads, onExit, onSent, onSkipped, initialLeadId }: 
               className="dx-override-toggle"
               title={
                 quotaExhausted
-                  ? `今日 override 额度已用完 (${quota!.used}/${quota!.cap})。Beijing 00:00 重置。`
+                  ? `Today's override quota used up (${quota!.used}/${quota!.cap}). Resets at Beijing 00:00.`
                   : `Lead is ${ageLabel(lead.createdAt)}${usageLabel ? " · quota" + usageLabel : ""}`
               }
               style={quotaExhausted ? { opacity: 0.55, cursor: "not-allowed" } : undefined}
@@ -773,11 +773,11 @@ export function ReviewPane({ leads, onExit, onSent, onSkipped, initialLeadId }: 
 // ─────────── Edit reason modal ───────────
 
 const EDIT_REASON_OPTIONS: Array<{ key: string; label: string; hint?: string }> = [
-  { key: "ai_misunderstood", label: "AI 对论文理解不对" },
-  { key: "format",           label: "格式 / 标点不舒服" },
-  { key: "too_verbose",      label: "太啰嗦" },
-  { key: "too_robotic",      label: "太套路 / 不像人话" },
-  { key: "individual_taste", label: "想换说法（个人偏好）" },
+  { key: "ai_misunderstood", label: "AI misread the paper" },
+  { key: "format",           label: "Format / punctuation feels off" },
+  { key: "too_verbose",      label: "Too verbose" },
+  { key: "too_robotic",      label: "Too formulaic / doesn't sound human" },
+  { key: "individual_taste", label: "Want a different phrasing (personal taste)" },
 ];
 
 function EditReasonModal({
@@ -1116,12 +1116,12 @@ function AuthorSwitcher({
 // Hints below set sales expectations honestly so they don't think
 // "bad_compute" is gospel.
 const FLAG_OPTIONS: { type: string; label: string; hint: string; skipsLead: boolean }[] = [
-  { type: "low_quality_email",      label: "Email 写得不好",      hint: "草稿不像人话 / 错别字 / AI 味重 — 训练 email-quality scorer",   skipsLead: false },
-  { type: "wrong_author",           label: "作者搞错了",          hint: "应该发给一作不是教授（用上面 Switch 更直接）",                  skipsLead: false },
-  { type: "wrong_direction",        label: "方向标错了",          hint: "我们的方向分类不对，会修正",                                   skipsLead: false },
-  { type: "right_lead_wrong_pitch", label: "Lead 对，话术不对",   hint: "Persuasion angle 错了 — 训练 angle picker",                    skipsLead: false },
-  { type: "bad_compute",            label: "不该需要算力（直觉）", hint: "你的判断会被记录给 admin 看，但不直接喂训练（因为 sales 看 abstract 不一定准）", skipsLead: true  },
-  { type: "good_lead",              label: "👍 直觉是好 lead",    hint: "你的判断会被记录，但 lead 好坏最终看实际转化数据",              skipsLead: false },
+  { type: "low_quality_email",      label: "Email is poorly written", hint: "Draft doesn't sound human / typos / AI-flavored — trains email-quality scorer", skipsLead: false },
+  { type: "wrong_author",           label: "Wrong author",            hint: "Should go to first author, not advisor (use the Switch above instead)", skipsLead: false },
+  { type: "wrong_direction",        label: "Wrong direction tag",     hint: "Our direction taxonomy got this wrong — will be corrected", skipsLead: false },
+  { type: "right_lead_wrong_pitch", label: "Lead is right, pitch is wrong", hint: "Persuasion angle is off — trains the angle picker", skipsLead: false },
+  { type: "bad_compute",            label: "Shouldn't need compute (gut)", hint: "Your call gets logged for admin, but doesn't feed training directly (sales reading abstracts isn't always reliable)", skipsLead: true  },
+  { type: "good_lead",              label: "👍 Gut-feel good lead",   hint: "Your call gets logged, but final lead quality is judged by conversion data", skipsLead: false },
 ];
 
 function FlagButton({ leadId, onSkipped }: { leadId: string; onSkipped: () => void }) {

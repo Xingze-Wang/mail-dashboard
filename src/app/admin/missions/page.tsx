@@ -302,20 +302,20 @@ export default function AdminMissionsPage() {
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 28 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 14 }}>
           <h1 className="page-title">Mission system</h1>
-          <span className="lead-count">admin · 审核 + bulk-approve</span>
+          <span className="lead-count">admin · review + bulk-approve</span>
         </div>
       </div>
 
       {/* Stat cards — quick scan of the queue */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 28 }}>
         <div className="stat-card">
-          <div className="stat-label">待审核 focus</div>
+          <div className="stat-label">Pending focus</div>
           <div className="stat-value" style={{ color: proposedFocuses.length > 0 ? "var(--blue)" : undefined }}>
             {proposedFocuses.length}
           </div>
         </div>
         <div className="stat-card">
-          <div className="stat-label">待审核 missions</div>
+          <div className="stat-label">Pending missions</div>
           <div className="stat-value" style={{ color: proposedMissions.length > 0 ? "var(--blue)" : undefined }}>
             {proposedMissions.length}
           </div>
@@ -334,7 +334,7 @@ export default function AdminMissionsPage() {
       {proposedFocuses.length > 0 && (
         <div style={{ marginBottom: 28 }}>
           <h3 style={{ fontSize: 13, fontWeight: 600, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12 }}>
-            待审核 team focus
+            Pending team focus
           </h3>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {proposedFocuses.map((f) => {
@@ -359,7 +359,7 @@ export default function AdminMissionsPage() {
                   )}
                   <p style={{ fontSize: 11, color: "var(--text-tertiary)", margin: "0 0 12px" }}>
                     <Calendar style={{ width: 11, height: 11, display: "inline", verticalAlign: "middle" }} />
-                    {" "}{weekMissions.length} 个 mission rows tied to this focus
+                    {" "}{weekMissions.length} mission rows tied to this focus
                   </p>
                   <div style={{ display: "flex", gap: 8 }}>
                     <button
@@ -390,7 +390,7 @@ export default function AdminMissionsPage() {
       {sortedWeeks.length > 0 && (
         <div style={{ marginBottom: 28 }}>
           <h3 style={{ fontSize: 13, fontWeight: 600, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12 }}>
-            待审核 missions (按周)
+            Pending missions (by week)
           </h3>
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             {sortedWeeks.map((week) => {
@@ -459,7 +459,7 @@ export default function AdminMissionsPage() {
       {(activeFocuses.length > 0 || activeMissions.length > 0) && (
         <div>
           <h3 style={{ fontSize: 13, fontWeight: 600, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12 }}>
-            当前 active
+            Currently active
           </h3>
           {activeFocuses.length > 0 && (
             <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
@@ -483,9 +483,9 @@ export default function AdminMissionsPage() {
       {(proposedFocuses.length === 0 && sortedWeeks.length === 0 && activeFocuses.length === 0 && activeMissions.length === 0) && (
         <div className="section-card" style={{ padding: 24, textAlign: "center" }}>
           <p style={{ fontSize: 13, color: "var(--text-secondary)", margin: 0 }}>
-            还没有 proposed 或 active 的 missions. 等下次 weekly congress 跑出提议, 或者{" "}
+            No proposed or active missions yet. Wait for the next weekly congress to emit proposals, or{" "}
             <a href="/api/missions/heuristic-seed" style={{ color: "var(--blue)" }}>POST /api/missions/heuristic-seed</a>
-            {" "}临时种几个.
+            {" "}to seed a few manually.
           </p>
         </div>
       )}

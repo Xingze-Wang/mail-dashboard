@@ -19,12 +19,12 @@ import Link from "next/link";
 import { Loader2, AlertCircle, Check } from "lucide-react";
 
 const DIMS = [
-  { key: "politeness",       label: "Politeness",       help: "卑微 1 ↔ 平等 10 ↔ 傲慢 1" },
-  { key: "clarity",          label: "Clarity",          help: "30 秒能不能 get 到 — 不清楚 1, 清楚 10" },
-  { key: "peer_register",    label: "Peer register",    help: "销售腔 1 ↔ 平等同行 10" },
-  { key: "brand_fit",        label: "Brand fit",        help: "务实/坦然/简朴/谦逊 四性贴合度" },
-  { key: "factual_accuracy", label: "Factual accuracy", help: "Program facts 是否符合事实" },
-  { key: "naturalness",      label: "Naturalness",      help: "LLM 一眼看出 1 ↔ 真人写的 10" },
+  { key: "politeness",       label: "Politeness",       help: "subservient 1 ↔ peer 10 ↔ arrogant 1" },
+  { key: "clarity",          label: "Clarity",          help: "Can a reader get it in 30s — unclear 1, clear 10" },
+  { key: "peer_register",    label: "Peer register",    help: "sales-speak 1 ↔ peer-to-peer 10" },
+  { key: "brand_fit",        label: "Brand fit",        help: "Fit with pragmatic / candid / simple / humble" },
+  { key: "factual_accuracy", label: "Factual accuracy", help: "Whether program facts are accurate" },
+  { key: "naturalness",      label: "Naturalness",      help: "Obvious LLM 1 ↔ written by a human 10" },
 ] as const;
 type Dim = typeof DIMS[number]["key"];
 
@@ -136,19 +136,19 @@ export default function JudgePage({ params }: { params: Promise<{ id: string }> 
   return (
     <div className="max-w-3xl mx-auto p-6">
       <div className="mb-5">
-        <h1 className="text-2xl font-semibold text-slate-900">人工评分</h1>
+        <h1 className="text-2xl font-semibold text-slate-900">Human rating</h1>
         <p className="text-sm text-slate-500 mt-1">
-          按 6 个维度 1-10 打分. 跟 AI 评分横向比较, 累积出来的差异就是校准数据 — 我们以后用它来训练
-          一个"听起来像人话"的打分模型.{" "}
-          <Link href={`/templates/${id}/inspect`} className="text-blue-600">先看 inspect 渲染</Link>
-          {" "}再回来打分.
+          Rate 6 dimensions 1-10. Side-by-side with the AI&apos;s rating — accumulated diffs are the calibration data we&apos;ll later use to train
+          a &quot;sounds human&quot; scoring model.{" "}
+          <Link href={`/templates/${id}/inspect`} className="text-blue-600">Inspect the render first</Link>
+          {" "}then come back to rate.
         </p>
       </div>
 
       {ai && (
         <div className="mb-4 p-3 bg-purple-50 border border-purple-200 rounded text-xs">
           <div className="flex items-center gap-2 mb-1">
-            <span className="font-medium text-purple-900">AI ({ai.model_id ?? "?"}) 已评:</span>
+            <span className="font-medium text-purple-900">AI ({ai.model_id ?? "?"}) rated:</span>
             <span className="text-purple-700">{new Date(ai.updated_at).toLocaleString()}</span>
           </div>
           {ai.reasoning && <p className="text-purple-800 leading-relaxed">{ai.reasoning}</p>}
@@ -180,7 +180,7 @@ export default function JudgePage({ params }: { params: Promise<{ id: string }> 
               <span className="text-lg font-semibold text-slate-900">{scores[dim.key]}</span>
               <span className="text-xs text-slate-500">/10</span>
               {ai && Math.abs(scores[dim.key] - ai[dim.key]) >= 3 && (
-                <div className="text-[10px] text-amber-700 mt-0.5">差 {Math.abs(scores[dim.key] - ai[dim.key])}</div>
+                <div className="text-[10px] text-amber-700 mt-0.5">Δ {Math.abs(scores[dim.key] - ai[dim.key])}</div>
               )}
             </div>
           </div>
@@ -188,12 +188,12 @@ export default function JudgePage({ params }: { params: Promise<{ id: string }> 
 
         <div>
           <label className="block text-xs font-medium text-slate-700 mb-1">
-            为什么这么打 (optional)
+            Why this score (optional)
           </label>
           <textarea
             value={reasoning}
             onChange={(e) => setReasoning(e.target.value)}
-            placeholder="例: AI 给 8 分但我觉得只有 4 分, 因为这段读起来还是太销售腔..."
+            placeholder="e.g. AI gave 8 but I think 4 — this paragraph still reads too sales-y..."
             rows={4}
             className="w-full text-sm border border-slate-300 rounded px-2 py-1.5"
           />
@@ -205,11 +205,11 @@ export default function JudgePage({ params }: { params: Promise<{ id: string }> 
             disabled={saving}
             className="px-4 py-2 bg-slate-900 text-white rounded text-sm hover:bg-slate-800 disabled:opacity-50"
           >
-            {saving ? "Saving…" : data.my_rating ? "更新评分" : "保存评分"}
+            {saving ? "Saving…" : data.my_rating ? "Update rating" : "Save rating"}
           </button>
           {savedAt && (
             <span className="inline-flex items-center gap-1 text-sm text-emerald-600">
-              <Check className="w-4 h-4" /> 已保存 {savedAt}
+              <Check className="w-4 h-4" /> Saved {savedAt}
             </span>
           )}
         </div>
@@ -218,7 +218,7 @@ export default function JudgePage({ params }: { params: Promise<{ id: string }> 
       {data.all_human_ratings.length > 1 && (
         <div className="mt-6">
           <h2 className="text-sm font-medium text-slate-700 mb-2">
-            其他人的评分 ({data.all_human_ratings.length - (data.my_rating ? 1 : 0)})
+            Other raters ({data.all_human_ratings.length - (data.my_rating ? 1 : 0)})
           </h2>
           <div className="space-y-1">
             {data.all_human_ratings

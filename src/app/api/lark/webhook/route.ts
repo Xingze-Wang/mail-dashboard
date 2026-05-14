@@ -87,6 +87,15 @@ export async function POST(req: Request) {
         } else if ("admin_inbox_action" in value) {
           const card = await import("@/lib/admin-inbox-card");
           await card.processAdminInboxCardAction(parsed);
+        } else if ("template_action" in value) {
+          const card = await import("@/lib/admin-approval-cards");
+          await card.processTemplateCardAction(parsed);
+        } else if ("quota_action" in value) {
+          const card = await import("@/lib/admin-approval-cards");
+          await card.processQuotaCardAction(parsed);
+        } else if ("congress_action" in value) {
+          const card = await import("@/lib/admin-approval-cards");
+          await card.processCongressCardAction(parsed);
         } else {
           await agent.processJitrCardAction(parsed, "webhook");
         }
@@ -110,12 +119,22 @@ export async function POST(req: Request) {
     const value = ev?.action?.value ?? {};
     const oAction = (value.onboarding_action as string | undefined) ?? "";
     const aInbox = (value.admin_inbox_action as string | undefined) ?? "";
-    let toastContent = "已收到";
-    if (oAction === "deny") toastContent = "已拒绝, 正在发拒绝通知…";
-    else if (oAction === "approve_sales" || oAction === "approve_senior") toastContent = "已通过, 正在开账号 + 发欢迎邮件…";
-    else if (aInbox === "acknowledge") toastContent = "✓ 已 ack";
-    else if (aInbox === "save_as_memory") toastContent = "💾 正在存入长期记忆…";
-    else if (aInbox === "dismiss") toastContent = "🗑 已 dismiss";
+    const tplAction = (value.template_action as string | undefined) ?? "";
+    const quotaAction = (value.quota_action as string | undefined) ?? "";
+    const congressAction = (value.congress_action as string | undefined) ?? "";
+    let toastContent = "Received";
+    if (oAction === "deny") toastContent = "Denied — sending notification…";
+    else if (oAction === "approve_sales" || oAction === "approve_senior") toastContent = "Approved — provisioning + sending welcome email…";
+    else if (aInbox === "acknowledge") toastContent = "✓ Acknowledged";
+    else if (aInbox === "save_as_memory") toastContent = "💾 Saving to long-term memory…";
+    else if (aInbox === "dismiss") toastContent = "🗑 Dismissed";
+    else if (tplAction === "approve_draft") toastContent = "✓ Approved as draft";
+    else if (tplAction === "activate") toastContent = "🚀 Activating template…";
+    else if (tplAction === "reject") toastContent = "❌ Rejected — reply with reason";
+    else if (quotaAction === "apply") toastContent = "✓ Applying quota…";
+    else if (quotaAction === "dismiss") toastContent = "🗑 Dismissed";
+    else if (congressAction === "accept") toastContent = "✓ Accepted proposal";
+    else if (congressAction === "reject") toastContent = "❌ Rejected proposal";
     return NextResponse.json({
       toast: { type: "success", content: toastContent },
     }, { status: 200 });

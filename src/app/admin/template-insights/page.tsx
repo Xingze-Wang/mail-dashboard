@@ -116,27 +116,27 @@ export default function TemplateInsightsPage() {
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-slate-900">Template scoring calibration</h1>
         <p className="text-sm text-slate-500 mt-1 leading-relaxed">
-          AI 评分 vs 人工评分 在各维度上的差异. 系统性偏差 (AI 一致地对某个维度过高/过低评分) 是校准信号 —
-          以后可以用累积的标注数据训练一个"听起来像不像人话"的打分模型.
+          AI scores vs human scores across each dimension. Systematic bias (AI consistently rating a dimension too high/low) is a calibration signal —
+          accumulated labels can later train a "does this sound human" scoring model.
           {" "}
           <span className="text-slate-600">
-            {data.totals.n_templates_paired} 个模板有 AI + 人工双方评分 ·
-            {" "}{data.totals.n_total_ratings} 总评分行
+            {data.totals.n_templates_paired} templates have both AI + human ratings ·
+            {" "}{data.totals.n_total_ratings} total rating rows
           </span>
         </p>
       </div>
 
       {/* Per-dimension systematic bias */}
       <div className="mb-8">
-        <h2 className="text-base font-medium text-slate-800 mb-3">维度级别的系统性偏差</h2>
+        <h2 className="text-base font-medium text-slate-800 mb-3">Per-dimension systematic bias</h2>
         <p className="text-xs text-slate-500 mb-3">
-          Mean(human) − Mean(AI) per dimension. 正数 = humans rate higher than AI thinks
-          (AI 低估了这个维度). 负数 = AI rates higher than humans agree
-          (AI 高估了; 这是更需要警惕的方向, 意味着 AI 在自己的盲点上也很自信).
+          Mean(human) − Mean(AI) per dimension. Positive = humans rate higher than AI thinks
+          (AI under-rates this dimension). Negative = AI rates higher than humans agree
+          (AI over-rates; this is the direction to watch — AI is confident in its blind spots).
         </p>
         {data.perDimension.length === 0 || data.perDimension.every((d) => d.n_templates === 0) ? (
           <div className="bg-slate-50 border border-slate-200 rounded p-4 text-center text-sm text-slate-500">
-            还没有人工评分数据. 去 <Link href="/templates" className="text-blue-600">/templates</Link> 选一个 proposal, 进 inspect, 再点 judge.
+            No human ratings yet. Go to <Link href="/templates" className="text-blue-600">/templates</Link>, pick a proposal, open inspect, then click judge.
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -180,7 +180,7 @@ export default function TemplateInsightsPage() {
         </h2>
         {data.perTemplate.length === 0 ? (
           <div className="bg-slate-50 border border-slate-200 rounded p-4 text-center text-sm text-slate-500">
-            没有 AI + 人工双评的模板.
+            No templates with both AI and human ratings.
           </div>
         ) : (
           <div className="space-y-3">

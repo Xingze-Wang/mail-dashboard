@@ -105,9 +105,9 @@ function buildSignalChips(lead: DiscoveryLead): Array<{ label: string; variant?:
           : signals.cn_founder
             ? "CN founder"
             : signals.zh_readme
-              ? "中文 README"
+              ? "CN README"
               : signals.chinese_bio
-                ? "中文 bio"
+                ? "CN bio"
                 : "CN-based";
     chips.push({ label, variant: "cn" });
   }

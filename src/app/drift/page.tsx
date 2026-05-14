@@ -30,11 +30,11 @@ interface Counts {
 }
 
 const CATEGORY_LABEL: Record<string, string> = {
-  ai_misunderstood: "AI 理解错",
-  format: "格式",
-  too_verbose: "啰嗦",
-  too_robotic: "AI腔",
-  individual_taste: "个人偏好",
+  ai_misunderstood: "AI misunderstood",
+  format: "Format",
+  too_verbose: "Too verbose",
+  too_robotic: "AI-speak",
+  individual_taste: "Individual taste",
 };
 
 const CATEGORY_COLOR: Record<string, string> = {
@@ -882,15 +882,15 @@ function PatternCard({
       {/* Before / after diff */}
       <div className="grid grid-cols-2 gap-3 px-5 py-4">
         <div className="rounded-lg border border-red-100 bg-red-50 p-3 dark:border-red-900/40 dark:bg-red-950/20">
-          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-red-400 dark:text-red-500">AI 写的</div>
+          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-red-400 dark:text-red-500">AI wrote</div>
           <p className="text-[13px] leading-relaxed text-red-900 dark:text-red-200 whitespace-pre-wrap break-words">
             {p.ai_phrase}
           </p>
         </div>
         <div className="rounded-lg border border-emerald-100 bg-emerald-50 p-3 dark:border-emerald-900/40 dark:bg-emerald-950/20">
-          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-500 dark:text-emerald-500">Sales 改成</div>
+          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-500 dark:text-emerald-500">Sales edited to</div>
           <p className="text-[13px] leading-relaxed text-emerald-900 dark:text-emerald-200 whitespace-pre-wrap break-words">
-            {p.sales_phrase || "(删除)"}
+            {p.sales_phrase || "(deleted)"}
           </p>
         </div>
       </div>
@@ -997,12 +997,12 @@ interface HumanSignalsPayload {
 // reach into FLAG_OPTIONS in ReviewPane (that file's the UI for creating
 // flags; this is the reporting view). Duplicate string map is fine at 6 keys.
 const CORRECTION_LABEL: Record<string, string> = {
-  bad_compute: "不该需要算力",
-  wrong_author: "作者搞错",
-  wrong_direction: "方向标错",
-  low_quality_email: "Email 写得不好",
-  right_lead_wrong_pitch: "Lead 对, 话术不对",
-  good_lead: "👍 直觉好 lead",
+  bad_compute: "Shouldn't need compute",
+  wrong_author: "Wrong author",
+  wrong_direction: "Wrong direction tag",
+  low_quality_email: "Email is poorly written",
+  right_lead_wrong_pitch: "Lead is right, pitch is wrong",
+  good_lead: "👍 Gut-feel good lead",
 };
 
 // Minimum sample size before any aggregate proportion is worth trusting.
@@ -1098,8 +1098,8 @@ function HumanSignalsView() {
             lineHeight: 1.55,
           }}
         >
-          <strong>样本还太少 ({totalSignals}&nbsp;条)</strong>
-          &nbsp;—&nbsp; 低于 {HONEST_SAMPLE_THRESHOLD} 条没法得出稳定结论。下面的列表可以当原始信号看，但不要据此给 prompt 打补丁。累计到 {HONEST_SAMPLE_THRESHOLD}+ 条之后再跑 miner。
+          <strong>Sample still too small ({totalSignals})</strong>
+          &nbsp;—&nbsp; below {HONEST_SAMPLE_THRESHOLD} signals nothing here is statistically meaningful. Read the list as raw signal, but don&apos;t patch prompts from it yet. Wait until you have {HONEST_SAMPLE_THRESHOLD}+ before running the miner.
         </div>
       )}
 
@@ -1122,7 +1122,7 @@ function HumanSignalsView() {
             onClick={kickoffTraining}
             disabled={tooThin || training}
             title={tooThin
-              ? `样本太少 (${totalSignals}/${HONEST_SAMPLE_THRESHOLD}) — 再等 ${HONEST_SAMPLE_THRESHOLD - totalSignals} 条人类信号再 train。`
+              ? `Sample too small (${totalSignals}/${HONEST_SAMPLE_THRESHOLD}) — wait for ${HONEST_SAMPLE_THRESHOLD - totalSignals} more human signals before training.`
               : "Dispatch a new scorer training run on GitHub Actions. 3-8 min."}
             style={{
               fontSize: 12,
@@ -1197,7 +1197,7 @@ function HumanSignalsView() {
           is worth reading, even if we can't aggregate it. */}
       <Section title={`Edit notes (${edits.length})`}>
         {edits.length === 0 ? (
-          <EmptyHint text="还没有 sales 改过草稿。当 sales 在 Review 里编辑 subject/body 再按 Send, 这里会出现带 reasons + 可选 note 的行。" />
+          <EmptyHint text="No sales edits yet. When sales edits subject/body in Review and presses Send, rows with reasons + optional notes will appear here." />
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {edits.map((e) => (
@@ -1209,7 +1209,7 @@ function HumanSignalsView() {
 
       <Section title={`Correction flags (${corrections.length})`}>
         {corrections.length === 0 ? (
-          <EmptyHint text="还没有 sales 在 Review 里点过 🚩 Flag。当 sales 觉得 lead 有问题 (作者错/方向错/话术不对/etc.) 按那个按钮, 这里会出现记录。" />
+          <EmptyHint text="No sales flags yet. When sales hits 🚩 Flag in Review (wrong author / direction / pitch / etc.), the record will appear here." />
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {corrections.map((c) => (
@@ -1249,7 +1249,7 @@ function EditRow({ edit }: { edit: HumanSignalsEdit }) {
           <span style={{ fontSize: 11, color: "var(--muted)" }}>· {edit.rep_name ?? `rep #${edit.assigned_rep_id}`}</span>
         )}
         {edit.draft_edit_distance !== null && (
-          <span style={{ fontSize: 11, color: "var(--muted)" }}>· {edit.draft_edit_distance}字 edit distance</span>
+          <span style={{ fontSize: 11, color: "var(--muted)" }}>· {edit.draft_edit_distance} chars edit distance</span>
         )}
         {(edit.edit_reasons ?? []).map((r) => (
           <span
@@ -1306,8 +1306,8 @@ function CorrectionRow({ correction }: { correction: HumanSignalsCorrection }) {
         }}>
           {CORRECTION_LABEL[correction.type] ?? correction.type}
         </span>
-        {isHard && <span style={{ fontSize: 10, color: "#DC2626", fontWeight: 600 }}>HARD · 已拉黑</span>}
-        {correction.skip && <span style={{ fontSize: 10, color: "var(--muted)" }}>· 同时 skip</span>}
+        {isHard && <span style={{ fontSize: 10, color: "#DC2626", fontWeight: 600 }}>HARD · blocklisted</span>}
+        {correction.skip && <span style={{ fontSize: 10, color: "var(--muted)" }}>· also skip</span>}
       </div>
       <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 4 }}>lead {correction.lead_id.slice(0, 8)}</div>
       {correction.reason ? (

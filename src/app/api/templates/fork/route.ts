@@ -132,5 +132,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 409 });
   }
 
+  // Fire-and-forget admin DM card so the proposal gets seen even if
+  // nobody is watching /templates. Failure here must NOT block the
+  // fork response — Lark outages are an operational footgun.
+  try {
+    const { sendTemplateProposalCard } = await import("@/lib/admin-approval-cards");
+    await sendTemplateProposalCard({
+      template_id: inserted.id as string,
+      template_name: inserted.name as string,
+      proposed_by: newRow.proposed_by ?? null,
+      proposed_reason: newRow.proposed_reason ?? null,
+    });
+  } catch (e) {
+    console.error("[templates/fork] card send failed (non-fatal):", e);
+  }
+
   return NextResponse.json({ ok: true, fork: inserted });
 }

@@ -394,7 +394,7 @@ function DetailView({
               )}
               {structured.mainIdea && (
                 <BriefSection
-                  label="主要想法"
+                  label="Main idea"
                   body={structured.mainIdea}
                   onCopy={() => copyToClipboard(structured.mainIdea, "main")}
                   copied={copiedKey === "main"}
@@ -402,7 +402,7 @@ function DetailView({
               )}
               {structured.coreInnovation && (
                 <BriefSection
-                  label="核心创新"
+                  label="Core innovation"
                   body={structured.coreInnovation}
                   onCopy={() => copyToClipboard(structured.coreInnovation, "core")}
                   copied={copiedKey === "core"}
@@ -411,7 +411,7 @@ function DetailView({
               {structured.questions.length > 0 && (
                 <div>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-                    <div style={sectionLabel}>可以聊的技术问题</div>
+                    <div style={sectionLabel}>Technical questions to discuss</div>
                     <CopyBtn
                       onClick={() => copyToClipboard(structured.questions.map((q, i) => `${i + 1}. ${q}`).join("\n"), "qs")}
                       copied={copiedKey === "qs"}
@@ -435,7 +435,7 @@ function DetailView({
               )}
               {structured.approach && (
                 <BriefSection
-                  label="怎么切入"
+                  label="How to approach"
                   body={structured.approach}
                   onCopy={() => copyToClipboard(structured.approach, "approach")}
                   copied={copiedKey === "approach"}
@@ -843,21 +843,21 @@ function briefToPlain(s: {
   return [
     s.paper,
     "",
-    `【主要想法】${s.mainIdea}`,
+    `[Main idea] ${s.mainIdea}`,
     "",
-    `【核心创新】${s.coreInnovation}`,
+    `[Core innovation] ${s.coreInnovation}`,
     "",
-    "【可以聊的技术问题】",
+    "[Technical questions to discuss]",
     ...s.questions.map((q, i) => `${i + 1}. ${q}`),
     "",
-    `【怎么切入】${s.approach}`,
+    `[How to approach] ${s.approach}`,
   ].join("\n");
 }
 
 const ANGLE_META: Record<"ethos" | "logos" | "pathos", { label: string; emoji: string; bg: string; border: string; color: string; sub: string }> = {
-  ethos:  { label: "Ethos",  emoji: "🏛", bg: "#FAF5FF", border: "#E9D5FF", color: "#6B21A8", sub: "权威/背书" },
-  logos:  { label: "Logos",  emoji: "📊", bg: "#EFF6FF", border: "#BFDBFE", color: "#1E40AF", sub: "理性/数据" },
-  pathos: { label: "Pathos", emoji: "❤️", bg: "#FFF1F2", border: "#FECDD3", color: "#9F1239", sub: "共情/赋能" },
+  ethos:  { label: "Ethos",  emoji: "🏛", bg: "#FAF5FF", border: "#E9D5FF", color: "#6B21A8", sub: "authority / endorsement" },
+  logos:  { label: "Logos",  emoji: "📊", bg: "#EFF6FF", border: "#BFDBFE", color: "#1E40AF", sub: "reason / data" },
+  pathos: { label: "Pathos", emoji: "❤️", bg: "#FFF1F2", border: "#FECDD3", color: "#9F1239", sub: "empathy / empowerment" },
 };
 
 function PersuasionCallout({ angle, hint }: { angle: "ethos" | "logos" | "pathos"; hint: string }) {

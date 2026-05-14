@@ -138,28 +138,28 @@ const STATUS_META: Record<EmailTemplateRow["status"], { label: string; color: st
     color: "#047857",
     bg: "#ecfdf5",
     ring: "#a7f3d0",
-    description: "在跑生产流量",
+    description: "Running production traffic",
   },
   approved_draft: {
     label: "Approved draft",
     color: "#1d4ed8",
     bg: "#eff6ff",
     ring: "#bfdbfe",
-    description: "Admin 看过文案, 等审核 routing",
+    description: "Admin approved prose, waiting on routing",
   },
   proposal: {
     label: "Proposal",
     color: "#a16207",
     bg: "#fefce8",
     ring: "#fde68a",
-    description: "Congress 起草, 等 admin 决定",
+    description: "Congress drafted, awaiting admin decision",
   },
   archived: {
     label: "Archived",
     color: "#475569",
     bg: "#f8fafc",
     ring: "#cbd5e1",
-    description: "已归档, 不再使用",
+    description: "Archived, no longer used",
   },
 };
 
@@ -191,9 +191,9 @@ function humanTitle(t: EmailTemplateRow): string {
     const slot = t.proposed_evidence.slot_swapped;
     const slotPretty = SLOT_LABEL[slot] ?? slot;
     if (t.proposed_by === "congress") {
-      return `${slotPretty} 改写 (congress)`;
+      return `${slotPretty} rewrite (congress)`;
     }
-    return `${slotPretty} 改写`;
+    return `${slotPretty} rewrite`;
   }
   // Active/global templates: just use the name as-is
   return t.name;
@@ -244,13 +244,13 @@ function TemplateLibrary() {
   return (
     <div>
       <div style={{ marginBottom: 24 }}>
-        <h2 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>邮件模板库</h2>
+        <h2 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>Email template library</h2>
         <p style={{ fontSize: 13, color: "var(--text-tertiary)", margin: "6px 0 0", lineHeight: 1.6 }}>
-          多段落模板系统, 支持 segment 路由 + congress 自动起草新提案. 点任意一行进 inspect 看
+          Multi-paragraph template system with segment routing + congress-drafted proposals. Click any row to inspect
           {" "}
-          mail 客户端风格的渲染. 用 <Link href="/templates/bench" style={{ color: "var(--blue)" }}>bench</Link>
-          {" "}横向对比, 或者去 <Link href="/congress" style={{ color: "var(--blue)" }}>congress</Link>
-          {" "}看在飞的假设.
+          a mail-client-style render. Compare side-by-side in <Link href="/templates/bench" style={{ color: "var(--blue)" }}>bench</Link>
+          {", "}or jump to <Link href="/congress" style={{ color: "var(--blue)" }}>congress</Link>
+          {" "}to see open hypotheses.
         </p>
       </div>
 
@@ -259,7 +259,7 @@ function TemplateLibrary() {
       {!loading && rows.length === 0 && (
         <div className="section-card" style={{ padding: 24, textAlign: "center" }}>
           <p style={{ fontSize: 14, color: "var(--text-tertiary)", margin: 0 }}>
-            还没有模板. 等 congress cron 跑出第一批提案.
+            No templates yet. Wait for the congress cron to emit the first batch of proposals.
           </p>
         </div>
       )}
@@ -338,7 +338,7 @@ function TemplateLibrary() {
                         </span>
                       )}
                       <span style={{ marginLeft: "auto", fontSize: 13, color: "var(--blue)" }}>
-                        {isExpanded ? "收起 ▴" : "展开 ▾"}
+                        {isExpanded ? "Collapse ▴" : "Expand ▾"}
                       </span>
                     </div>
 
@@ -352,7 +352,7 @@ function TemplateLibrary() {
                       }}>
                         <Sparkles className="h-3.5 w-3.5" style={{ flexShrink: 0 }} />
                         <span>
-                          {t.pending_edits.latest_submitter ?? "Someone"} 提议改{" "}
+                          {t.pending_edits.latest_submitter ?? "Someone"} proposed change to{" "}
                           <span style={{ fontFamily: "monospace", fontWeight: 500 }}>
                             {t.pending_edits.latest_slot
                               ? (SLOT_LABEL[t.pending_edits.latest_slot] ?? t.pending_edits.latest_slot)
@@ -405,7 +405,7 @@ function TemplateLibrary() {
                           fontSize: 10, fontWeight: 600, color: "#6b7280",
                           textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6,
                         }}>
-                          {SLOT_LABEL[swapped.slot] ?? swapped.slot} · 新版本
+                          {SLOT_LABEL[swapped.slot] ?? swapped.slot} · new version
                         </div>
                         <div>
                           {swapped.text.length > 280 ? swapped.text.slice(0, 280) + "…" : swapped.text}
@@ -451,7 +451,7 @@ function TemplateLibrary() {
                                   textDecoration: "none", border: "1px solid #bfdbfe",
                                 }}
                               >
-                                批准 / Activate →
+                                Approve / Activate →
                               </Link>
                             </>
                           )}
@@ -616,7 +616,7 @@ function ExpandedTemplate({ t, swappedSlot }: { t: EmailTemplateRow; swappedSlot
                   textAlign: "right",
                 }}>
                   {RENDERED_SLOT_LABEL[slot] ?? slot}
-                  {isSwapped && <div style={{ fontWeight: 600, marginTop: 2, color: "#a16207" }}>· 这次改的</div>}
+                  {isSwapped && <div style={{ fontWeight: 600, marginTop: 2, color: "#a16207" }}>· changed here</div>}
                   <div style={{ fontWeight: 500, marginTop: 2, opacity: 0.65, fontSize: 9 }}>{kindStyle.label}</div>
                 </div>
                 <div
@@ -777,12 +777,12 @@ function InlineRejectButton({ templateId, templateName }: { templateId: string; 
               {templateName}
             </div>
             <p style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.55, margin: "0 0 10px" }}>
-              理由会进 next congress 的 evidence pack — synthesizer 看到&ldquo;上次提了 X 被 admin 用 Y 理由拒了&rdquo;就不会再提同类的. 越具体越好.
+              Your reason goes into the next congress&rsquo;s evidence pack — the synthesizer sees &ldquo;proposed X, admin rejected with Y&rdquo; and avoids re-proposing the same kind. Be specific.
             </p>
             <textarea
               value={reason}
               onChange={(e) => setReason(e.target.value)}
-              placeholder="为什么拒？(≥10 字)"
+              placeholder="Why reject? (≥10 chars)"
               rows={4}
               autoFocus
               onClick={(e) => e.stopPropagation()}

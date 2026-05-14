@@ -177,7 +177,7 @@ export default function ProposalReviewPage({ params }: { params: Promise<{ id: s
               <div key={key} style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: 14, marginBottom: 14, alignItems: "start" }}>
                 <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: isSwapped ? "#a16207" : "#94a3b8", textAlign: "right", paddingTop: 4 }}>
                   {SLOT_LABEL[key]}
-                  {isSwapped && <div style={{ marginTop: 2 }}>· 改这里</div>}
+                  {isSwapped && <div style={{ marginTop: 2 }}>· changed</div>}
                 </div>
                 <div style={{ whiteSpace: "pre-wrap", padding: isSwapped ? "10px 12px" : 0, background: isSwapped ? "#fefce8" : "transparent", borderLeft: isSwapped ? "3px solid #fde68a" : "none", borderRadius: isSwapped ? 4 : 0, fontSize: 14, lineHeight: 1.7, color: "#1f2937" }}>
                   {text}

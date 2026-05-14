@@ -769,12 +769,12 @@ function ApprovalBar({
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <div className="text-xs font-bold uppercase tracking-wide text-amber-700 mb-1">
-            {template.status === "proposal" ? "审核 — 第一步" : "激活 — 第二步"}
+            {template.status === "proposal" ? "Review — step 1" : "Activate — step 2"}
           </div>
           <div className="text-sm text-amber-900">
             {template.status === "proposal"
-              ? "Congress 起草. 看一遍 prose, 觉得 OK 就 approve. Approve 不会让 production 用 — 只是说文字过关."
-              : "Prose 已 approved. 选一个 segment 然后 activate, 现有的 segment 老 template 会自动 archive."}
+              ? "Congress drafted this. Read the prose; if it reads OK, approve. Approve doesn't push to production — it just says the prose passes."
+              : "Prose has been approved. Pick a segment then activate; the current template for that segment will auto-archive."}
           </div>
         </div>
 
@@ -836,15 +836,15 @@ function ApprovalBar({
               Reject this proposal
             </h2>
             <p className="text-xs text-slate-500 mb-3 leading-relaxed">
-              你的理由会进 next congress 的 evidence pack —
-              synthesizer 看到 "上次提了类似 X, 被 admin 用 Y 理由拒了" 就不会再提同类的.
-              所以越具体越好 (e.g. "校园 tier3 cn group 转化率反而比 tier1 高,
-              不要按 tier 分人去推送" 比 "不好" 强 100 倍).
+              Your reason goes into the next congress's evidence pack —
+              the synthesizer reads &quot;last time we proposed X and admin rejected it for Y&quot; and avoids re-proposing the same thing.
+              So be specific (e.g. &quot;tier3 cn group converts higher than tier1,
+              don't segment by tier&quot; is 100× better than &quot;not good&quot;).
             </p>
             <textarea
               value={rejectReason}
               onChange={(e) => setRejectReason(e.target.value)}
-              placeholder="为什么拒? (≥10 字)"
+              placeholder="Why reject? (≥10 chars)"
               rows={5}
               className="w-full text-sm border border-slate-300 rounded p-2 focus:outline-none focus:ring-2 focus:ring-amber-300"
               autoFocus

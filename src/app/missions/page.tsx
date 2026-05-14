@@ -75,12 +75,12 @@ interface MissionsResponse {
 }
 
 const KIND_META: Record<string, { label: string; Icon: typeof Send }> = {
-  send: { label: "发邮件", Icon: Send },
-  reply: { label: "回复 inbound", Icon: MessageSquare },
-  mark_wechat: { label: "标记微信", Icon: MessageCircle },
-  review_proposals: { label: "审 proposal", Icon: FileText },
-  review_template_edits: { label: "审 template edits", Icon: FileText },
-  custom: { label: "自定义", Icon: Sparkles },
+  send: { label: "Send emails", Icon: Send },
+  reply: { label: "Reply to inbound", Icon: MessageSquare },
+  mark_wechat: { label: "Mark WeChat", Icon: MessageCircle },
+  review_proposals: { label: "Review proposals", Icon: FileText },
+  review_template_edits: { label: "Review template edits", Icon: FileText },
+  custom: { label: "Custom", Icon: Sparkles },
 };
 
 function progressPct(count: number | null, target: number): number {
@@ -135,21 +135,21 @@ export default function MissionsPage() {
   // vibes when all done; warm momentum copy when in progress; gentle
   // welcome when just starting.
   const headline = allDone
-    ? "今天的 mission 都完成了 — 漂亮."
+    ? "All of today's missions done — nice."
     : totalProgress === 0
-      ? "新的一天开始 — 慢慢来."
+      ? "A fresh day — take it slow."
       : overallPct >= 75
-        ? `${overallPct}% 了 · 收尾不远了.`
+        ? `${overallPct}% · almost there.`
         : overallPct >= 33
-          ? `${overallPct}% · 节奏稳.`
-          : `${overallPct}% · 一步一步来.`;
+          ? `${overallPct}% · steady pace.`
+          : `${overallPct}% · one step at a time.`;
 
   // Friendlier weekday header. "今日 missions" was bland; new copy
   // anchors on the day-of-week and uses the encouragement headline as
   // the actual H1 so the page feels less like a TODO list and more
   // like a daily plan. Pretty date in user's locale (zh-CN preferred).
   const todayDate = new Date(data.today + "T00:00:00");
-  const dayOfWeekZh = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][todayDate.getDay()];
+  const dayOfWeekZh = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][todayDate.getDay()];
   const monthDay = `${todayDate.getMonth() + 1}/${todayDate.getDate()}`;
 
   return (
@@ -212,7 +212,7 @@ export default function MissionsPage() {
           <div>
             <span style={{ fontSize: 32, fontWeight: 700, color: "var(--text)" }}>{totalProgress}</span>
             <span style={{ fontSize: 18, color: "var(--text-tertiary)", marginLeft: 4 }}>/ {totalTarget}</span>
-            <span style={{ fontSize: 13, color: "var(--text-secondary)", marginLeft: 10 }}>今日完成</span>
+            <span style={{ fontSize: 13, color: "var(--text-secondary)", marginLeft: 10 }}>done today</span>
           </div>
           <div style={{ display: "flex", gap: 6 }}>
             {(() => {
@@ -222,10 +222,10 @@ export default function MissionsPage() {
               const pp = (sendMission?.scope as { per_pool?: Record<string, number> } | null)?.per_pool;
               if (!pp) return null;
               const POOL_LABEL: Record<string, string> = {
-                strong: "强势 strong",
-                normal_cn: "国内 .cn",
-                normal_overseas: "海外",
-                normal_edu: "美国 .edu",
+                strong: "strong",
+                normal_cn: ".cn",
+                normal_overseas: "overseas",
+                normal_edu: ".edu",
               };
               const POOL_COLOR: Record<string, string> = {
                 strong: "#7c3aed",
@@ -268,10 +268,10 @@ export default function MissionsPage() {
           display: "flex", justifyContent: "space-between",
         }}>
           <span>
-            {data.my_today.filter((m) => (m.progress_count ?? 0) >= m.target).length} / {data.my_today.length} missions 完成
+            {data.my_today.filter((m) => (m.progress_count ?? 0) >= m.target).length} / {data.my_today.length} missions complete
           </span>
           <span>
-            {data.team_focus?.theme ?? "（本周 focus 未设）"}
+            {data.team_focus?.theme ?? "(no focus set this week)"}
           </span>
         </div>
       </div>
@@ -286,7 +286,7 @@ export default function MissionsPage() {
           <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 6 }}>
             <Flag style={{ width: 14, height: 14, color: "var(--blue)" }} />
             <span style={{ fontSize: 11, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-              本周 focus · week of {data.team_focus.week_starting}
+              focus this week · week of {data.team_focus.week_starting}
             </span>
             <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>({data.team_focus.set_by})</span>
           </div>
@@ -301,7 +301,7 @@ export default function MissionsPage() {
               href={`/congress/${data.team_focus.congress_run_id}/live`}
               style={{ fontSize: 12, color: "var(--blue)", display: "inline-block", marginTop: 8 }}
             >
-              看 congress 推理过程 →
+              See congress reasoning →
             </Link>
           )}
         </div>
@@ -318,9 +318,9 @@ export default function MissionsPage() {
             borderRadius: 8, color: "#94a3b8", fontSize: 13,
           }}>
             {data.team_focus?.status === "proposed" ? (
-              <>本周的 missions 还在 admin 那里待批准. 你可以先 ping admin, 或者过 1-2 小时再看.</>
+              <>This week&apos;s missions are still waiting on admin approval. Ping admin, or check back in 1-2 hours.</>
             ) : (
-              <>今天还没有 missions. 系统每天早上 7 点 (Beijing) 自动生成, 9 点分配 leads. 如果到 9:30 还是空的, ping admin 看看你的 daily quota 是不是没设.</>
+              <>No missions yet today. The system generates them at 7am Beijing and allocates leads at 9am. If it&apos;s still empty by 9:30, ping admin to check your daily quota.</>
             )}
           </section>
         ) : (
@@ -339,7 +339,7 @@ export default function MissionsPage() {
                     Mission accomplished.
                   </div>
                   <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
-                    {totalProgress} actions today across {data.my_today.length} missions. 早休息一下,明天再来.
+                    {totalProgress} actions today across {data.my_today.length} missions. Rest up — see you tomorrow.
                   </div>
                 </div>
               </div>
@@ -406,7 +406,7 @@ export default function MissionsPage() {
       {data.team_today.length > 0 && (
         <div>
           <h3 style={{ fontSize: 13, fontWeight: 600, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12 }}>
-            团队今天
+            Team today
           </h3>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 8 }}>
             {data.team_today.map((m) => {
