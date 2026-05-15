@@ -400,6 +400,20 @@ export async function processAdminInboxCardAction(rawEvent: unknown): Promise<{
       else sideEffectToast = `⚠️ tool approve failed: ${r.error?.slice(0, 60) ?? ""}`;
     }
 
+    // Side effect: dynamic_write proposal approved + executed
+    if (typeof evidence.dynamic_write_id === "string") {
+      const { applyDynamicWrite } = await import("@/lib/dynamic-writes");
+      const r = await applyDynamicWrite({
+        write_id: evidence.dynamic_write_id,
+        approved_by_rep_id: rep.id,
+      });
+      if (r.ok) {
+        sideEffectToast = `✅ DB write executed (${r.rows_affected ?? "?"} 行)`;
+      } else {
+        sideEffectToast = `⚠️ DB write failed: ${r.error?.slice(0, 80) ?? "unknown"}`;
+      }
+    }
+
     // For idea/observation: auto-classify into skill vs memory vs both
     let classificationToast: string | null = null;
     if (inbox.kind === "idea" || inbox.kind === "observation") {
@@ -449,6 +463,14 @@ export async function processAdminInboxCardAction(rawEvent: unknown): Promise<{
       const { rejectDynamicTool } = await import("@/lib/dynamic-tools");
       await rejectDynamicTool({
         tool_id: evidence.dynamic_tool_id,
+        rejected_by_rep_id: rep.id,
+        reason: "rejected via Lark card (reason pending)",
+      });
+    }
+    if (typeof evidence.dynamic_write_id === "string") {
+      const { rejectDynamicWrite } = await import("@/lib/dynamic-writes");
+      await rejectDynamicWrite({
+        write_id: evidence.dynamic_write_id,
         rejected_by_rep_id: rep.id,
         reason: "rejected via Lark card (reason pending)",
       });

@@ -909,6 +909,79 @@ export async function runReadTool(
         if (error) return { tool: call.tool, result: { error: error.message } };
         return { tool: call.tool, result: { ok: true, status, count: (data ?? []).length, proposals: data ?? [] } };
       }
+      case "propose_db_write": {
+        // Leon proposes a DB write (INSERT/UPDATE/DELETE). Inserts a
+        // pending row in dynamic_writes + pushes Lark Yes/No card to
+        // admin. On Yes the SQL runs through _run_write_sql RPC
+        // (whitelist-guarded), gets logged in db_write_log.
+        //
+        // This is what replaces "你去 supabase 跑这条 SQL" — Leon
+        // writes the SQL itself, admin one-clicks.
+        const description = String(args.description ?? "").trim();
+        const sqlTemplate = String(args.sql_template ?? "").trim();
+        const proposalReason = String(args.proposal_reason ?? "").trim();
+        const name = typeof args.name === "string" ? args.name.trim() : undefined;
+        const paramValues = Array.isArray(args.param_values)
+          ? (args.param_values as unknown[]).map((v) => {
+              if (typeof v === "number" || typeof v === "boolean" || typeof v === "string") return v;
+              return String(v);
+            })
+          : [];
+        if (!description || !sqlTemplate || !proposalReason) {
+          return { tool: call.tool, result: { error: "description, sql_template, proposal_reason all required" } };
+        }
+        const { proposeDynamicWrite } = await import("@/lib/dynamic-writes");
+        const r = await proposeDynamicWrite({
+          name,
+          description,
+          sql_template: sqlTemplate,
+          param_values: paramValues,
+          proposal_reason: proposalReason,
+          proposed_by_rep_id: session.repId,
+        });
+        if (!r.ok) return { tool: call.tool, result: { error: r.error } };
+        return {
+          tool: call.tool,
+          result: {
+            ok: true,
+            id: r.id,
+            inbox_id: r.inbox_id,
+            target_table: r.target_table,
+            message: `Pushed DB-write proposal to admin Lark card. Tell user: 我把 SQL 写好推给 admin 了, 等他点 Yes 就执行.`,
+          },
+        };
+      }
+      case "list_dynamic_writes": {
+        const { listDynamicWrites } = await import("@/lib/dynamic-writes");
+        const status = ["pending", "approved", "rejected", "applied", "apply_failed", "all"].includes(
+          String(args.status ?? ""),
+        )
+          ? (String(args.status) as "pending" | "approved" | "rejected" | "applied" | "apply_failed" | "all")
+          : "pending";
+        const limit = Math.max(1, Math.min(100, Number(args.limit) || 20));
+        const rows = await listDynamicWrites({ status, limit });
+        return {
+          tool: call.tool,
+          result: {
+            status,
+            count: rows.length,
+            writes: rows.map((w) => ({
+              id: w.id,
+              name: w.name,
+              description: w.description,
+              target_table: w.target_table,
+              status: w.status,
+              sql_template: w.sql_template,
+              param_values: w.param_values,
+              proposal_reason: w.proposal_reason,
+              proposed_at: w.proposed_at,
+              applied_at: w.applied_at,
+              apply_error: w.apply_error,
+              apply_result: w.apply_result,
+            })),
+          },
+        };
+      }
       case "propose_tool": {
         // Leon authors a new SQL-backed tool. Inserts into dynamic_tools
         // (status=pending) and pushes an admin Lark card with Yes/No.
