@@ -122,19 +122,48 @@ export async function GET(req: NextRequest) {
   }
 
   // ── Today's narrative brief (LLM-generated nightly) ──────────────
-  // Single-row read per visit. If the cron hasn't fired yet today or
-  // the LLM failed, this is null and the page just hides the block.
-  const { data: brief } = await supabase
-    .from("daily_rep_brief")
-    .select("goal, reasoning, bullets, admin_overrode, admin_note, computed_at")
-    .eq("rep_id", session.repId)
-    .eq("brief_date", today)
-    .maybeSingle();
+  // For sales reps: their own brief.
+  // For admin: all reps' briefs (org overview), keyed by rep_id.
+  // The /missions page renders different shapes based on which shows up.
+  let myBrief: Record<string, unknown> | null = null;
+  let teamBriefs: Array<{ rep_id: number; rep_name: string; goal: string; reasoning: string; bullets: string[] }> = [];
+
+  if (session.role === "admin") {
+    const { data: allBriefs } = await supabase
+      .from("daily_rep_brief")
+      .select("rep_id, goal, reasoning, bullets, admin_overrode, computed_at")
+      .eq("brief_date", today);
+    if (allBriefs && allBriefs.length > 0) {
+      // Hydrate rep names
+      const repIds = Array.from(new Set(allBriefs.map((b) => b.rep_id)));
+      const { data: repRows } = await supabase
+        .from("sales_reps")
+        .select("id, name")
+        .in("id", repIds);
+      const nameById = new Map((repRows ?? []).map((r) => [r.id, r.name as string]));
+      teamBriefs = allBriefs.map((b) => ({
+        rep_id: b.rep_id as number,
+        rep_name: nameById.get(b.rep_id as number) ?? `rep#${b.rep_id}`,
+        goal: b.goal as string,
+        reasoning: b.reasoning as string,
+        bullets: (b.bullets as string[]) ?? [],
+      }));
+    }
+  } else {
+    const { data: brief } = await supabase
+      .from("daily_rep_brief")
+      .select("goal, reasoning, bullets, admin_overrode, admin_note, computed_at")
+      .eq("rep_id", session.repId)
+      .eq("brief_date", today)
+      .maybeSingle();
+    myBrief = brief ?? null;
+  }
 
   return NextResponse.json({
     today,
     week_starting: monday,
-    today_brief: brief ?? null,
+    today_brief: myBrief,
+    team_briefs: teamBriefs,
     quarterly: goals ?? [],
     team_focus: focusThisWeek,
     my_today: (myToday ?? []) as MissionRow[],

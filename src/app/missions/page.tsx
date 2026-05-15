@@ -74,10 +74,19 @@ interface DailyBrief {
   computed_at?: string;
 }
 
+interface TeamBrief {
+  rep_id: number;
+  rep_name: string;
+  goal: string;
+  reasoning: string;
+  bullets: string[];
+}
+
 interface MissionsResponse {
   today: string;
   week_starting: string;
-  today_brief: DailyBrief | null;
+  today_brief: DailyBrief | null;     // populated for sales reps
+  team_briefs: TeamBrief[];           // populated for admin (all reps)
   quarterly: QuarterlyGoal[];
   team_focus: TeamFocus | null;
   my_today: MyMission[];
@@ -183,6 +192,10 @@ export default function MissionsPage() {
           <h1 className="page-title" style={{ margin: 0 }}>{headline}</h1>
         </div>
       </div>
+
+      {/* Admin view: management-game team grid. Rich cards w/ health
+          badges. Click any card to drill in. */}
+      {data.team_briefs && data.team_briefs.length > 0 && <TeamOverviewSection />}
 
       {/* Today's narrative brief — LLM-written nightly, surfaces what
           matters today + 2-3 tactical bullets. Hidden gracefully if
@@ -511,6 +524,346 @@ export default function MissionsPage() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Admin team-overview cards (management-game vibe) ──────────────
+
+interface RepOverviewCard {
+  rep_id: number;
+  rep_name: string;
+  role: string;
+  today_goal: string | null;
+  today_reasoning: string | null;
+  today_bullets: string[];
+  sent_7d: number;
+  replied_7d: number;
+  wechat_7d: number;
+  ready_queue: number;
+  sends_today: number;
+  missions_total: number;
+  missions_done: number;
+  last_activity_at: string | null;
+  recent_escalations_7d: number;
+  recent_learnings_7d: number;
+  health: "healthy" | "watch" | "stuck";
+  health_reason: string;
+}
+
+const HEALTH_COLOR: Record<RepOverviewCard["health"], { bg: string; border: string; text: string; dot: string }> = {
+  healthy: { bg: "var(--green-bg)", border: "var(--green)", text: "var(--green)", dot: "var(--green)" },
+  watch:   { bg: "var(--gold-bg)",  border: "var(--gold)",  text: "var(--gold)",  dot: "var(--gold)" },
+  stuck:   { bg: "var(--coral-bg)", border: "var(--coral)", text: "var(--coral)", dot: "var(--coral)" },
+};
+
+function TeamOverviewSection() {
+  const [reps, setReps] = useState<RepOverviewCard[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [drillRepId, setDrillRepId] = useState<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const r = await fetch("/api/admin/team-overview", { credentials: "include", cache: "no-store" });
+        if (!r.ok) return;
+        const j = await r.json();
+        if (!cancelled) setReps(j.reps ?? []);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    void load();
+    const iv = setInterval(load, 60_000);
+    return () => { cancelled = true; clearInterval(iv); };
+  }, []);
+
+  if (loading) {
+    return (
+      <div style={{ marginBottom: 16 }}>
+        <SectionLabel>Team today</SectionLabel>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 12 }}>
+          {[1, 2, 3].map((i) => <div key={i} className="skeleton" style={{ height: 160, borderRadius: 10 }} />)}
+        </div>
+      </div>
+    );
+  }
+  if (reps.length === 0) return null;
+
+  return (
+    <div style={{ marginBottom: 20 }}>
+      <SectionLabel>Team today</SectionLabel>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 12 }}>
+        {reps.map((r) => <RepCard key={r.rep_id} rep={r} onClick={() => setDrillRepId(r.rep_id)} />)}
+      </div>
+      {drillRepId != null && <RepDrillModal repId={drillRepId} onClose={() => setDrillRepId(null)} />}
+    </div>
+  );
+}
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{
+      fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)",
+      textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10,
+    }}>{children}</div>
+  );
+}
+
+function RepCard({ rep, onClick }: { rep: RepOverviewCard; onClick: () => void }) {
+  const c = HEALTH_COLOR[rep.health];
+  const lastActHours = rep.last_activity_at
+    ? Math.round((Date.now() - new Date(rep.last_activity_at).getTime()) / 3_600_000)
+    : null;
+  return (
+    <button
+      onClick={onClick}
+      className="section-card"
+      style={{
+        padding: 16, textAlign: "left", cursor: "pointer",
+        width: "100%", border: "1px solid var(--border)",
+        borderLeft: `3px solid ${c.border}`,
+        background: "var(--card)",
+        transition: "all 0.15s ease",
+        fontFamily: "inherit",
+      }}
+      onMouseEnter={(e) => { e.currentTarget.style.borderColor = c.border; e.currentTarget.style.boxShadow = "var(--shadow-md)"; }}
+      onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.boxShadow = "var(--shadow-sm)"; }}
+    >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ width: 6, height: 6, borderRadius: "50%", background: c.dot, display: "inline-block" }} />
+          <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>{rep.rep_name}</span>
+          <span style={{ fontSize: 10, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.04em" }}>{rep.role}</span>
+        </div>
+      </div>
+      {rep.today_goal && (
+        <div style={{
+          fontFamily: "var(--font-heading)", fontSize: 14,
+          color: "var(--text)", marginBottom: 8, lineHeight: 1.35,
+          letterSpacing: "-0.01em",
+          display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
+          overflow: "hidden",
+        }}>
+          {rep.today_goal}
+        </div>
+      )}
+      {/* KPI stats */}
+      <div style={{
+        display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 4,
+        marginBottom: 8, fontFamily: "var(--font-heading)",
+      }}>
+        <Stat label="Sends 7d" value={rep.sent_7d} />
+        <Stat label="Replies" value={rep.replied_7d} />
+        <Stat label="WeChat" value={rep.wechat_7d} valueColor="var(--green)" />
+      </div>
+      {/* Bottom strip: health reason + ready queue */}
+      <div style={{
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        fontSize: 11, color: c.text, paddingTop: 8, borderTop: "1px solid var(--border-light)",
+      }}>
+        <span style={{ fontWeight: 500 }}>{rep.health_reason}</span>
+        <span style={{ color: "var(--text-tertiary)" }}>
+          {rep.ready_queue} ready
+          {lastActHours != null && lastActHours < 9999 && (
+            <> · {lastActHours < 1 ? "<1h" : lastActHours < 24 ? `${lastActHours}h` : `${Math.round(lastActHours / 24)}d`} ago</>
+          )}
+        </span>
+      </div>
+    </button>
+  );
+}
+
+function Stat({ label, value, valueColor }: { label: string; value: number; valueColor?: string }) {
+  return (
+    <div>
+      <div style={{
+        fontSize: 18, fontWeight: 600, color: valueColor ?? "var(--text)",
+        letterSpacing: "-0.02em", lineHeight: 1,
+      }}>{value}</div>
+      <div style={{ fontSize: 10, color: "var(--text-tertiary)", letterSpacing: "0.04em", marginTop: 2 }}>{label}</div>
+    </div>
+  );
+}
+
+interface RepDrillData {
+  today: string;
+  rep: { id: number; name: string; role: string; email: string };
+  brief: { goal: string; reasoning: string; bullets: string[] } | null;
+  missions: Array<{ kind: string; target: number; progress: number; description: string | null }>;
+  recent_emails: Array<{ id: string; status: string; subject: string; recipient: string; created_at: string }>;
+  recent_escalations: Array<{ raw_text: string; asked_at: string }>;
+  learnings: Array<{ kind: string; body: string; created_at: string }>;
+  recent_inbound: Array<{ sender: string; subject: string; snippet: string; received_at: string }>;
+  recent_wechat: Array<{ recipient: string; paper_title: string; wechat_at: string }>;
+}
+
+function RepDrillModal({ repId, onClose }: { repId: number; onClose: () => void }) {
+  const [data, setData] = useState<RepDrillData | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/admin/team-overview/${repId}`, { credentials: "include" })
+      .then((r) => r.json())
+      .then((j) => { if (!cancelled) setData(j); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [repId]);
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)",
+        zIndex: 50, display: "flex", alignItems: "flex-start", justifyContent: "center",
+        padding: "60px 20px", overflowY: "auto",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "var(--card)", borderRadius: "var(--radius)",
+          maxWidth: 720, width: "100%", boxShadow: "var(--shadow-md)",
+          padding: "24px 28px", maxHeight: "85vh", overflowY: "auto",
+        }}
+      >
+        {loading || !data ? (
+          <div style={{ textAlign: "center", padding: 40, color: "var(--text-tertiary)" }}>Loading…</div>
+        ) : (
+          <>
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 20 }}>
+              <div>
+                <div style={{
+                  fontFamily: "var(--font-heading)", fontSize: 24, fontWeight: 600,
+                  letterSpacing: "-0.02em", color: "var(--text)",
+                }}>
+                  {data.rep.name}
+                </div>
+                <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2 }}>
+                  {data.rep.role} · {data.rep.email}
+                </div>
+              </div>
+              <button onClick={onClose} style={{
+                background: "none", border: "none", fontSize: 24, color: "var(--text-tertiary)",
+                cursor: "pointer", lineHeight: 1, padding: "0 4px",
+              }}>×</button>
+            </div>
+
+            {data.brief && (
+              <Block title="Today">
+                <div style={{
+                  fontFamily: "var(--font-heading)", fontSize: 16,
+                  color: "var(--text)", marginBottom: 6, lineHeight: 1.35,
+                }}>{data.brief.goal}</div>
+                <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.5, marginBottom: 8 }}>
+                  {data.brief.reasoning}
+                </div>
+                {data.brief.bullets.length > 0 && (
+                  <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: "var(--text)", lineHeight: 1.6 }}>
+                    {data.brief.bullets.map((b, i) => <li key={i}>{b}</li>)}
+                  </ul>
+                )}
+              </Block>
+            )}
+
+            {data.missions.length > 0 && (
+              <Block title="Today's missions">
+                {data.missions.map((m, i) => (
+                  <div key={i} style={{
+                    display: "flex", alignItems: "center", justifyContent: "space-between",
+                    padding: "6px 0", borderBottom: i < data.missions.length - 1 ? "1px solid var(--border-light)" : "none",
+                    fontSize: 13,
+                  }}>
+                    <span style={{ color: "var(--text)" }}>{m.description || m.kind}</span>
+                    <span style={{ fontFamily: "monospace", color: m.progress >= m.target ? "var(--green)" : "var(--text-secondary)" }}>
+                      {m.progress} / {m.target}
+                    </span>
+                  </div>
+                ))}
+              </Block>
+            )}
+
+            {data.recent_emails.length > 0 && (
+              <Block title="Last 15 sends">
+                {data.recent_emails.slice(0, 8).map((e) => (
+                  <DrillRow key={e.id}
+                    left={e.subject?.slice(0, 60) || "(no subject)"}
+                    right={`${e.status} · ${new Date(e.created_at).toLocaleString()}`}
+                  />
+                ))}
+              </Block>
+            )}
+
+            {data.recent_inbound.length > 0 && (
+              <Block title="Recent replies in">
+                {data.recent_inbound.map((m, i) => (
+                  <DrillRow key={i}
+                    left={`${m.sender} — ${m.subject?.slice(0, 50) || ""}`}
+                    right={new Date(m.received_at).toLocaleString()}
+                  />
+                ))}
+              </Block>
+            )}
+
+            {data.recent_wechat.length > 0 && (
+              <Block title="Recent WeChat conversions">
+                {data.recent_wechat.map((w, i) => (
+                  <DrillRow key={i}
+                    left={`${w.recipient}: ${w.paper_title?.slice(0, 50) || ""}`}
+                    right={new Date(w.wechat_at).toLocaleString()}
+                  />
+                ))}
+              </Block>
+            )}
+
+            {data.recent_escalations.length > 0 && (
+              <Block title="Recent escalations to Leon">
+                {data.recent_escalations.map((e, i) => (
+                  <DrillRow key={i}
+                    left={e.raw_text.slice(0, 80)}
+                    right={new Date(e.asked_at).toLocaleString()}
+                  />
+                ))}
+              </Block>
+            )}
+
+            {data.learnings.length > 0 && (
+              <Block title="What Leon learned about this rep">
+                {data.learnings.map((l, i) => (
+                  <DrillRow key={i} left={`[${l.kind}] ${l.body.slice(0, 80)}`} right="" />
+                ))}
+              </Block>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Block({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <div style={{
+        fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)",
+        textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8,
+      }}>{title}</div>
+      <div>{children}</div>
+    </div>
+  );
+}
+
+function DrillRow({ left, right }: { left: string; right: string }) {
+  return (
+    <div style={{
+      display: "flex", justifyContent: "space-between", alignItems: "baseline",
+      padding: "5px 0", fontSize: 12, gap: 12,
+      borderBottom: "1px solid var(--border-light)",
+    }}>
+      <span style={{ color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{left}</span>
+      <span style={{ color: "var(--text-tertiary)", whiteSpace: "nowrap", fontSize: 11 }}>{right}</span>
     </div>
   );
 }

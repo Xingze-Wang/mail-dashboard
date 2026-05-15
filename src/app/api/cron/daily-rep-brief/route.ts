@@ -118,11 +118,14 @@ export async function GET(req: NextRequest) {
   const today = new Date().toISOString().slice(0, 10);
   const t0 = Date.now();
 
+  // Briefs are for sales/senior reps. Admin's /missions surfaces the
+  // team grid (all reps' briefs) instead — admin doesn't need a personal
+  // "today" line, they need org overview.
   const { data: reps } = await supabase
     .from("sales_reps")
     .select("id, name, role")
     .eq("active", true)
-    .in("role", ["sales", "senior", "admin"]);
+    .in("role", ["sales", "senior"]);
 
   const results: Array<{ rep_id: number; ok: boolean; error?: string }> = [];
   for (const r of reps ?? []) {
