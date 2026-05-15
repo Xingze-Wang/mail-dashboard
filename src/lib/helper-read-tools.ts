@@ -495,6 +495,37 @@ export async function runReadTool(
           },
         };
       }
+      case "explain_ontology": {
+        // Expose the named entity/action registry so Leon (and the LLM
+        // behind it) reasons about the domain in human terms — not in
+        // raw table.column terms.
+        const { ONTOLOGY, getEntity, listEntities, entityForTable, relationshipsTargeting } =
+          await import("@/lib/ontology");
+        const mode = String(args.mode ?? "list");
+
+        if (mode === "list") {
+          return { tool: call.tool, result: { entities: listEntities() } };
+        }
+        if (mode === "entity") {
+          const key = String(args.key ?? "");
+          const e = getEntity(key as "rep" | "lead" | "email" | "conversion" | "mission" | "template" | "learning" | "task" | "document");
+          if (!e) return { tool: call.tool, result: { error: `unknown entity '${key}'. Use mode=list to see available.` } };
+          return { tool: call.tool, result: { entity: e } };
+        }
+        if (mode === "by_table") {
+          const table = String(args.table ?? "");
+          const e = entityForTable(table);
+          if (!e) return { tool: call.tool, result: { error: `no entity owns table '${table}'.` } };
+          return { tool: call.tool, result: { entity: e } };
+        }
+        if (mode === "inverse") {
+          const target = String(args.target ?? "");
+          const rels = relationshipsTargeting(target as "rep" | "lead" | "email" | "conversion" | "mission" | "template" | "learning" | "task" | "document");
+          return { tool: call.tool, result: { relationships_targeting: target, links: rels } };
+        }
+        // Default: full dump
+        return { tool: call.tool, result: { ontology: ONTOLOGY } };
+      }
       case "explain_app_feature": {
         // Look up sections of docs/APP_OVERVIEW_EN.md by topic.
         // Lets Leon answer "how do I use X" / "what does this page show"

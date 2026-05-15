@@ -100,26 +100,21 @@ console.log(`  deliveryRate    = ${totalSent > 0 ? ((totalDelivered / totalSent)
 console.log(`  clickRate       = ${totalDelivered > 0 ? ((totalClicked / totalDelivered) * 100).toFixed(1) : 0}%`);
 
 // Ground truth via webhook_events (canonical append-only log)
-const events = await drainAll(() => sb.from("webhook_events").select("resend_id, type"));
+const events = await drainAll(() => sb.from("webhook_events").select("email_id, type"));
 const eventsByEmail = new Map();
 for (const ev of events) {
-  if (!ev.resend_id) continue;
-  const set = eventsByEmail.get(ev.resend_id) ?? new Set();
+  if (!ev.email_id) continue;
+  const set = eventsByEmail.get(ev.email_id) ?? new Set();
   set.add(ev.type);
-  eventsByEmail.set(ev.resend_id, set);
+  eventsByEmail.set(ev.email_id, set);
 }
-console.log(`\nwebhook_events: ${events.length} rows, distinct resend_ids=${eventsByEmail.size}`);
+console.log(`\nwebhook_events: ${events.length} rows, distinct email_ids=${eventsByEmail.size}`);
 const evTypes = {};
 for (const ev of events) evTypes[ev.type] = (evTypes[ev.type] ?? 0) + 1;
 console.log(`  events by type:`, evTypes);
 
-// Map resend_id back to email_id via emails table
-const emailByResendId = new Map();
-const { data: er } = await sb.from("emails").select("id, resend_id").not("resend_id", "is", null);
-for (const r of er ?? []) emailByResendId.set(r.resend_id, r.id);
-
 let groundClicked = 0, groundBounced = 0, groundDelivered = 0, groundOpened = 0, groundComplained = 0;
-for (const [resendId, types] of eventsByEmail) {
+for (const [, types] of eventsByEmail) {
   if (types.has("email.clicked") || types.has("clicked")) groundClicked++;
   if (types.has("email.bounced") || types.has("bounced")) groundBounced++;
   if (types.has("email.delivered") || types.has("delivered")) groundDelivered++;
