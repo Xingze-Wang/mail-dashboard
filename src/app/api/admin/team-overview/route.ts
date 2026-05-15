@@ -49,6 +49,17 @@ export interface RepOverviewCard {
   health_reason: string;
 }
 
+/**
+ * Pure data fetcher — same numbers the GET handler returns, but
+ * callable from internal code paths (e.g. the stuck-rep-alarm cron)
+ * without needing to fake an admin HTTP request.
+ */
+export async function computeTeamOverview(): Promise<{ today: string; reps: RepOverviewCard[] }> {
+  const today = new Date().toISOString().slice(0, 10);
+  const since7d = new Date(Date.now() - 7 * 86_400_000).toISOString();
+  return _computeOverviewInner(today, since7d);
+}
+
 export async function GET(req: NextRequest) {
   if (!(await isAdmin(req))) {
     return NextResponse.json({ error: "admin only" }, { status: 403 });
@@ -56,6 +67,10 @@ export async function GET(req: NextRequest) {
 
   const today = new Date().toISOString().slice(0, 10);
   const since7d = new Date(Date.now() - 7 * 86_400_000).toISOString();
+  return NextResponse.json(await _computeOverviewInner(today, since7d));
+}
+
+async function _computeOverviewInner(today: string, since7d: string): Promise<{ today: string; reps: RepOverviewCard[] }> {
 
   // 1. All active sales/senior reps
   const { data: reps } = await supabase
@@ -66,7 +81,7 @@ export async function GET(req: NextRequest) {
     .order("id");
 
   if (!reps || reps.length === 0) {
-    return NextResponse.json({ today, reps: [] });
+    return { today, reps: [] };
   }
 
   const repIds = reps.map((r) => r.id);
@@ -241,5 +256,5 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  return NextResponse.json({ today, reps: cards });
+  return { today, reps: cards };
 }
