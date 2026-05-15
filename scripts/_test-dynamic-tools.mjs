@@ -11,6 +11,7 @@ for (const line of envFile.split("\n")) {
   const m = line.match(/^([A-Z_][A-Z_0-9]*)="?(.*?)"?$/);
   if (m) process.env[m[1]] = m[2];
 }
+process.env.SMOKE_NO_CARDS = "1";  // don't pollute admin's Lark DM
 
 const { supabase } = await import("/Users/xingzewang/Desktop/mail/src/lib/db.ts");
 const { runReadTool } = await import("/Users/xingzewang/Desktop/mail/src/lib/helper-read-tools.ts");

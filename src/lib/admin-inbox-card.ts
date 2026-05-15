@@ -124,6 +124,16 @@ function buildHelperNote(_kind: string) {
 /**
  * Push an interactive card to admin's Lark DM.
  */
+/**
+ * Test-mode escape hatch: set SMOKE_NO_CARDS=1 in env to skip the actual
+ * Lark push while still letting the rest of the code path run. Smoke
+ * tests should set this so they don't pollute admin's real DM with
+ * cards backed by rows that get deleted on cleanup.
+ */
+function isSmokeNoCards(): boolean {
+  return process.env.SMOKE_NO_CARDS === "1";
+}
+
 export async function sendAdminInboxCard(args: {
   inbox_id: string;
   kind: string;
@@ -133,6 +143,10 @@ export async function sendAdminInboxCard(args: {
   source_rep_name?: string | null;
   evidence?: Record<string, unknown> | null;  // for provenance inference
 }): Promise<string | null> {
+  if (isSmokeNoCards()) {
+    console.log("[admin-inbox-card] SMOKE_NO_CARDS=1 — skipping Lark push for inbox", args.inbox_id);
+    return null;
+  }
   const adminOpenId = await getAdminOpenId();
   if (!adminOpenId) {
     console.error("[admin-inbox-card] admin has no lark_open_id, skipping card");
@@ -259,9 +273,49 @@ export async function processAdminInboxCardAction(rawEvent: unknown): Promise<{
     .select("id, kind, headline, body, status, source_rep_id, evidence")
     .eq("id", inboxId)
     .maybeSingle();
-  if (!inbox) return { ok: true, reason: "inbox row gone", toast: "已经不在了" };
+  if (!inbox) {
+    // Row was deleted (e.g. by a smoke-test cleanup). Tell admin
+    // explicitly so they don't think their click did nothing.
+    try {
+      const { getTenantAccessToken, pickBase } = await import("@/lib/lark");
+      const token = await getTenantAccessToken();
+      if (token && operatorOpenId) {
+        await fetch(`${pickBase()}/im/v1/messages?receive_id_type=open_id`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            receive_id: operatorOpenId,
+            msg_type: "text",
+            content: JSON.stringify({
+              text: `⚠️ 你点的那张卡的 inbox 行已经不在数据库里了 (可能是 smoke test 清掉的). 你的点击没有副作用. 如果还想 follow up, 直接跟我说.`,
+            }),
+          }),
+          signal: AbortSignal.timeout(10_000),
+        });
+      }
+    } catch {/* best-effort */}
+    return { ok: true, reason: "inbox row gone", toast: "⚠️ 这张卡已被清理 (smoke test)" };
+  }
   if (inbox.status !== "new" && inbox.status !== "acknowledged") {
-    return { ok: true, reason: `already decided: ${inbox.status}`, toast: `已是 ${inbox.status}` };
+    try {
+      const { getTenantAccessToken, pickBase } = await import("@/lib/lark");
+      const token = await getTenantAccessToken();
+      if (token && operatorOpenId) {
+        await fetch(`${pickBase()}/im/v1/messages?receive_id_type=open_id`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            receive_id: operatorOpenId,
+            msg_type: "text",
+            content: JSON.stringify({
+              text: `⚠️ 你点的卡之前已经 ${inbox.status === "dismissed" ? "被 dismiss" : inbox.status === "done" ? "处理完" : "标记为 " + inbox.status} 了 — 这次点击没有再次生效. 那条卡是: "${(inbox.headline ?? "").slice(0, 80)}"`,
+            }),
+          }),
+          signal: AbortSignal.timeout(10_000),
+        });
+      }
+    } catch {/* best-effort */}
+    return { ok: true, reason: `already decided: ${inbox.status}`, toast: `⚠️ 这张已是 ${inbox.status}` };
   }
 
   // Yes path: unified across all kinds. For kind=request just acknowledge

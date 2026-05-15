@@ -12,6 +12,10 @@ for (const line of envFile.split("\n")) {
   const m = line.match(/^([A-Z_][A-Z_0-9]*)="?(.*?)"?$/);
   if (m) process.env[m[1]] = m[2];
 }
+// Don't push real Lark cards to admin's DM during smoke. Without this,
+// the test deletes rows during cleanup, leaving stale cards in your DM
+// that look clickable but no longer have a backing inbox row.
+process.env.SMOKE_NO_CARDS = "1";
 
 const { supabase } = await import("/Users/xingzewang/Desktop/mail/src/lib/db.ts");
 const { sendAdminInboxCard, processAdminInboxCardAction } = await import(
