@@ -170,34 +170,43 @@ export default function AdminIntentPage() {
   const isLiveTask = !!taskId;
   const isTerminal = task && (task.status === "completed" || task.status === "aborted" || task.status === "failed");
 
+  // Needs-clarification = planner returned 0 steps. Treat as a question
+  // back to admin, not a failed plan.
+  const needsClarification = !!plan && plan.steps.length === 0;
+
   return (
-    <div className="max-w-3xl mx-auto p-6">
-      <div className="flex items-center gap-3 mb-6">
-        <Sparkles className="w-7 h-7 text-indigo-600" />
-        <div>
-          <h1 className="text-2xl font-semibold text-slate-900">Intent</h1>
-          <p className="text-sm text-slate-500">
-            告诉 Leon 你要什么. 它拆成步骤, 你审一遍, 低风险步骤自动跑, 风险步骤等你 ✓.
+    <div className="max-w-3xl mx-auto px-6 py-6">
+      {/* Header */}
+      <div className="flex items-start gap-3 pb-4 mb-6 border-b border-slate-200">
+        <div className="w-9 h-9 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+          <Sparkles className="w-5 h-5" />
+        </div>
+        <div className="flex-1 min-w-0 pt-0.5">
+          <h1 className="text-xl font-semibold text-slate-900 leading-tight">Intent</h1>
+          <p className="text-sm text-slate-500 mt-0.5">
+            告诉 Leon 你要什么 — 它拆成步骤, 你审一遍, ⚡ auto 步骤自动跑, 🛡 review 步骤等你 ✓.
           </p>
         </div>
       </div>
 
       {/* Intent input — hidden once a task is live */}
       {!isLiveTask && (
-        <div className="space-y-3 mb-4">
-          <label className="block">
-            <span className="text-sm font-medium text-slate-700 mb-1.5 block">目标</span>
+        <div className="bg-white border border-slate-200 rounded-lg shadow-sm p-5 mb-4">
+          <label className="block mb-3">
+            <span className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2 block">目标</span>
             <textarea
               value={intent}
               onChange={(e) => setIntent(e.target.value)}
               disabled={planning || submitting}
               placeholder="e.g. 给所有 cn 的 strong lead 重新归档给 Yujie, 然后给 Yujie 发个 summary"
-              rows={4}
-              className="w-full px-3 py-2 border border-slate-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
+              rows={3}
+              className="w-full px-3 py-2 border border-slate-300 rounded-md text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 disabled:opacity-60 disabled:bg-slate-50"
             />
           </label>
-          <details>
-            <summary className="text-xs text-slate-500 cursor-pointer hover:text-slate-700">+ 加约束 (optional)</summary>
+          <details className="mb-4">
+            <summary className="text-xs text-slate-500 cursor-pointer hover:text-slate-700 select-none">
+              + 加约束 / 红线 (optional)
+            </summary>
             <textarea
               value={constraints}
               onChange={(e) => setConstraints(e.target.value)}
@@ -207,61 +216,96 @@ export default function AdminIntentPage() {
               className="mt-2 w-full px-3 py-2 border border-slate-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
             />
           </details>
-          <button
-            onClick={() => void generatePlan()}
-            disabled={planning || submitting || !intent.trim()}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 text-sm disabled:opacity-50"
-          >
-            {planning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-            {plan ? "重新 plan" : "Plan it"}
-          </button>
+          <div className="flex items-center justify-between gap-2">
+            <button
+              onClick={() => void generatePlan()}
+              disabled={planning || submitting || !intent.trim()}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 text-sm font-medium shadow-sm disabled:opacity-50 disabled:cursor-not-allowed transition"
+            >
+              {planning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+              {plan ? "重新 plan" : "Plan it"}
+            </button>
+            {plan && (
+              <button
+                onClick={resetAll}
+                className="text-xs text-slate-500 hover:text-slate-700"
+              >
+                清空重来
+              </button>
+            )}
+          </div>
         </div>
       )}
 
       {error && (
-        <div className="mb-4 px-3 py-2 bg-red-50 border border-red-200 rounded-md flex items-start gap-2">
+        <div className="mb-4 px-3 py-2.5 bg-red-50 border border-red-200 rounded-md flex items-start gap-2">
           <AlertCircle className="w-4 h-4 text-red-600 mt-0.5 shrink-0" />
           <p className="text-sm text-red-800">{error}</p>
         </div>
       )}
 
-      {/* Plan preview (pre-submit) */}
-      {plan && !isLiveTask && (
-        <div className="border border-slate-200 rounded-lg p-4 bg-white mb-4">
-          <div className="mb-3">
-            <p className="text-xs font-medium text-slate-500 mb-1">GOAL</p>
-            <p className="text-slate-900 font-medium">{plan.goal}</p>
+      {/* Clarification needed (0-step plan) */}
+      {needsClarification && !isLiveTask && plan && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4 shadow-sm">
+          <div className="flex items-start gap-2.5">
+            <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-amber-900 mb-1">Leon 想先问清楚</p>
+              <p className="text-sm text-amber-900 mb-1">
+                <span className="text-amber-700 text-xs">理解的目标:</span> {plan.goal}
+              </p>
+              {plan.rationale && (
+                <p className="text-sm text-amber-900 leading-relaxed">{plan.rationale}</p>
+              )}
+              <p className="text-xs text-amber-700 mt-2">
+                在上面的 "目标" 框里补充细节, 然后再点 "重新 plan".
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Plan preview (pre-submit, ≥1 step) */}
+      {plan && plan.steps.length > 0 && !isLiveTask && (
+        <div className="bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden mb-4">
+          <div className="px-5 py-3 border-b border-slate-100 bg-slate-50">
+            <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">Goal</p>
+            <p className="text-slate-900 font-medium leading-snug">{plan.goal}</p>
           </div>
           {plan.rationale && (
-            <div className="mb-4 px-3 py-2 bg-indigo-50 border-l-2 border-indigo-300 rounded-r">
-              <p className="text-[11px] font-medium text-indigo-700 mb-0.5">为什么这么拆</p>
-              <p className="text-sm text-indigo-900">{plan.rationale}</p>
+            <div className="px-5 py-3 bg-indigo-50/50 border-b border-slate-100">
+              <p className="text-[11px] font-medium text-indigo-700 mb-0.5 uppercase tracking-wide">为什么这么拆</p>
+              <p className="text-sm text-indigo-900 leading-relaxed">{plan.rationale}</p>
             </div>
           )}
-          <p className="text-xs font-medium text-slate-500 mb-2">STEPS ({plan.steps.length})</p>
-          <div className="space-y-2">
-            {plan.steps.map((s, i) => (
-              <PreviewStepCard
-                key={i}
-                index={i}
-                step={s}
-                onIntent={(v) => updatePreviewStep(i, "intent", v)}
-                onVerification={(v) => updatePreviewStep(i, "verification", v)}
-                onToggleRisk={() => togglePreviewRisk(i)}
-                onRemove={() => removePreviewStep(i)}
-              />
-            ))}
+          <div className="px-5 py-3">
+            <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2.5">
+              Steps · {plan.steps.length}
+            </p>
+            <div className="space-y-2">
+              {plan.steps.map((s, i) => (
+                <PreviewStepCard
+                  key={i}
+                  index={i}
+                  step={s}
+                  onIntent={(v) => updatePreviewStep(i, "intent", v)}
+                  onVerification={(v) => updatePreviewStep(i, "verification", v)}
+                  onToggleRisk={() => togglePreviewRisk(i)}
+                  onRemove={() => removePreviewStep(i)}
+                />
+              ))}
+            </div>
           </div>
-          <div className="mt-4 pt-3 border-t border-slate-200 flex items-center gap-2">
+          <div className="px-5 py-3 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-2">
             <button
               onClick={() => void submitPlan()}
-              disabled={submitting || plan.steps.length === 0}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 text-sm disabled:opacity-50"
+              disabled={submitting}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 text-sm font-medium shadow-sm disabled:opacity-50 transition"
             >
               {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
               开始执行
             </button>
-            <span className="text-xs text-slate-500">⚡ auto 步骤自动跑, 🛡 review 步骤等你 ✓</span>
+            <span className="text-xs text-slate-500">提交后 Leon 在你 Lark 推卡确认</span>
           </div>
         </div>
       )}
@@ -269,16 +313,36 @@ export default function AdminIntentPage() {
       {/* Live task view */}
       {isLiveTask && task && (
         <div className="space-y-3">
-          {/* Header */}
-          <div className="border border-slate-200 rounded-lg p-4 bg-white">
-            <div className="flex items-start justify-between gap-3 mb-2">
-              <p className="text-slate-900 font-medium">{task.goal}</p>
-              <StatusBadge status={task.status} />
+          {/* Task header — progress bar + status */}
+          <div className="bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden">
+            <div className="px-5 py-3.5">
+              <div className="flex items-start justify-between gap-3 mb-2.5">
+                <p className="text-slate-900 font-medium leading-snug">{task.goal}</p>
+                <StatusBadge status={task.status} />
+              </div>
+              <div className="flex items-center gap-2 text-xs text-slate-500">
+                <span>
+                  Step {Math.min(task.current_step + 1, task.steps.length)} / {task.steps.length}
+                </span>
+                <span className="text-slate-300">·</span>
+                <span>开始于 {new Date(task.approved_at ?? task.created_at).toLocaleTimeString()}</span>
+              </div>
             </div>
-            <p className="text-xs text-slate-500">
-              {task.current_step + 1} / {task.steps.length} 步 · 开始于{" "}
-              {new Date(task.approved_at ?? task.created_at).toLocaleTimeString()}
-            </p>
+            {/* Progress bar */}
+            <div className="h-1 bg-slate-100 relative overflow-hidden">
+              <div
+                className={`absolute inset-y-0 left-0 transition-all duration-500 ${
+                  task.status === "completed" ? "bg-emerald-500"
+                  : task.status === "aborted" || task.status === "failed" ? "bg-red-400"
+                  : "bg-indigo-500"
+                }`}
+                style={{
+                  width: task.status === "completed"
+                    ? "100%"
+                    : `${Math.min(100, (task.step_results.length / task.steps.length) * 100)}%`,
+                }}
+              />
+            </div>
           </div>
 
           {/* Step cards */}
@@ -314,16 +378,37 @@ export default function AdminIntentPage() {
 
           {/* Terminal state */}
           {isTerminal && (
-            <div className={`border rounded-lg p-3 ${task.status === "completed" ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-slate-50"}`}>
-              <p className="text-sm font-medium mb-1">
-                {task.status === "completed" ? "🏁 任务完成" : task.status === "aborted" ? "⏹ 任务已 abort" : "⚠️ 任务失败"}
+            <div className={`border rounded-lg shadow-sm p-4 ${
+              task.status === "completed" ? "border-emerald-200 bg-emerald-50"
+              : task.status === "aborted" ? "border-slate-200 bg-slate-50"
+              : "border-red-200 bg-red-50"
+            }`}>
+              <p className={`text-sm font-medium mb-1.5 ${
+                task.status === "completed" ? "text-emerald-900"
+                : task.status === "aborted" ? "text-slate-700"
+                : "text-red-900"
+              }`}>
+                {task.status === "completed" ? "🏁 任务完成"
+                : task.status === "aborted" ? "⏹ 任务已 abort"
+                : "⚠️ 任务失败"}
               </p>
               {task.abort_reason && (
-                <p className="text-xs text-slate-600">{task.abort_reason}</p>
+                <p className="text-xs text-slate-600 mb-2">{task.abort_reason}</p>
               )}
-              <button onClick={resetAll} className="mt-2 text-xs underline text-slate-700 hover:text-slate-900">
-                新一个任务
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={resetAll}
+                  className="text-xs font-medium text-indigo-700 hover:text-indigo-900 underline-offset-2 hover:underline"
+                >
+                  新一个任务 →
+                </button>
+                <button
+                  onClick={() => router.push("/admin/inbox")}
+                  className="text-xs text-slate-500 hover:text-slate-700"
+                >
+                  去 inbox 看记录
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -344,33 +429,41 @@ function PreviewStepCard(props: {
 }) {
   const risk = props.step.risk_level ?? "review";
   const RiskIcon = risk === "auto" ? Zap : ShieldAlert;
-  const riskBg = risk === "auto" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-700 border-amber-200";
+  const riskBg = risk === "auto"
+    ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
+    : "bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100";
   return (
-    <div className="border border-slate-200 rounded p-2.5 bg-slate-50">
-      <div className="flex items-start gap-2">
-        <span className="text-xs font-medium text-slate-500 w-6 mt-1.5 shrink-0">#{props.index + 1}</span>
-        <div className="flex-1 space-y-1.5">
+    <div className="border border-slate-200 rounded-md p-2.5 bg-white hover:border-slate-300 transition group">
+      <div className="flex items-start gap-2.5">
+        <span className="text-xs font-semibold text-slate-400 w-5 mt-2 shrink-0 tabular-nums">{props.index + 1}</span>
+        <div className="flex-1 min-w-0 space-y-1.5">
           <input
-            type="text" value={props.step.intent}
+            type="text"
+            value={props.step.intent}
             onChange={(e) => props.onIntent(e.target.value)}
-            className="w-full px-2 py-1 bg-white border border-slate-200 rounded text-sm"
+            className="w-full px-2 py-1 bg-transparent border border-transparent rounded text-sm text-slate-900 hover:border-slate-200 focus:outline-none focus:border-indigo-300 focus:bg-white"
           />
           <input
-            type="text" value={props.step.verification ?? ""}
+            type="text"
+            value={props.step.verification ?? ""}
             onChange={(e) => props.onVerification(e.target.value)}
-            placeholder="期望看到什么 (verification, optional)"
-            className="w-full px-2 py-1 bg-white border border-slate-200 rounded text-xs text-slate-700 placeholder-slate-400"
+            placeholder="期望看到什么 (optional)"
+            className="w-full px-2 py-1 bg-transparent border border-transparent rounded text-xs text-slate-600 placeholder-slate-400 hover:border-slate-200 focus:outline-none focus:border-indigo-300 focus:bg-white"
           />
         </div>
         <button
           onClick={props.onToggleRisk}
-          className={`inline-flex items-center gap-1 px-2 py-1 rounded border text-[11px] font-medium ${riskBg} hover:opacity-80`}
-          title={risk === "auto" ? "Low risk — auto-runs" : "Risky — requires admin ✓"}
+          className={`inline-flex items-center gap-1 px-2 py-1 rounded border text-[11px] font-medium transition shrink-0 ${riskBg}`}
+          title={risk === "auto" ? "Low risk — 自动跑" : "Risky — 等你 ✓"}
         >
           <RiskIcon className="w-3 h-3" />
-          {risk === "auto" ? "auto" : "review"}
+          {risk}
         </button>
-        <button onClick={props.onRemove} className="text-xs text-slate-400 hover:text-red-600" title="Remove step">
+        <button
+          onClick={props.onRemove}
+          className="text-slate-300 hover:text-red-500 text-base leading-none shrink-0 px-1 opacity-0 group-hover:opacity-100 transition"
+          title="Remove step"
+        >
           ×
         </button>
       </div>
@@ -397,33 +490,35 @@ function LiveStepCard(props: {
     props.state === "done" ? "border-emerald-200 bg-emerald-50/40"
     : props.state === "failed" ? "border-red-200 bg-red-50/40"
     : props.state === "running" ? "border-indigo-200 bg-indigo-50/40"
-    : props.state === "awaiting" ? "border-amber-300 bg-amber-50/40 ring-2 ring-amber-200"
+    : props.state === "awaiting" ? "border-amber-300 bg-amber-50/40 ring-2 ring-amber-200/60 shadow-sm"
     : "border-slate-200 bg-white";
   return (
-    <div className={`border rounded-lg p-3 transition ${border}`}>
+    <div className={`border rounded-lg p-3.5 transition ${border}`}>
       <div className="flex items-start gap-3">
         <StepStateIcon state={props.state} />
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap mb-1">
-            <span className="text-xs font-medium text-slate-500">#{props.index + 1}</span>
+          <div className="flex items-center gap-1.5 flex-wrap mb-1.5">
+            <span className="text-xs font-semibold text-slate-400 tabular-nums">#{props.index + 1}</span>
             <RiskChip risk={risk} />
             <StepStateChip state={props.state} />
           </div>
-          <p className="text-sm text-slate-900">{props.step.intent}</p>
+          <p className="text-sm text-slate-900 leading-snug">{props.step.intent}</p>
           {props.step.verification && (
-            <p className="text-xs text-slate-500 mt-0.5">期望: {props.step.verification}</p>
+            <p className="text-xs text-slate-500 mt-1">
+              <span className="text-slate-400">期望:</span> {props.step.verification}
+            </p>
           )}
           {props.result && (
-            <div className="mt-2 px-2.5 py-1.5 bg-white border border-slate-200 rounded text-xs">
-              <p className="font-medium text-slate-700 mb-0.5">结果</p>
-              <p className="text-slate-600">{props.result.summary}</p>
+            <div className="mt-2.5 px-2.5 py-2 bg-white border border-slate-200 rounded-md text-xs">
+              <p className="font-medium text-slate-500 uppercase tracking-wide mb-1 text-[10px]">结果</p>
+              <p className="text-slate-700 leading-relaxed">{props.result.summary}</p>
             </div>
           )}
           {props.notesForThisStep.length > 0 && (
             <div className="mt-2 space-y-1">
               {props.notesForThisStep.map((n, k) => (
-                <div key={k} className="px-2 py-1 bg-amber-50 border-l-2 border-amber-300 rounded-r text-xs text-amber-900">
-                  📌 {n.text}
+                <div key={k} className="px-2.5 py-1.5 bg-amber-50 border-l-2 border-amber-400 rounded-r text-xs text-amber-900">
+                  <span className="text-amber-600 mr-1">📌</span> {n.text}
                 </div>
               ))}
             </div>
@@ -431,33 +526,38 @@ function LiveStepCard(props: {
 
           {/* Note input + approve/abort — only when awaiting */}
           {props.state === "awaiting" && (
-            <div className="mt-3 space-y-2">
-              <div className="flex items-center gap-1.5">
-                <MessageSquare className="w-3 h-3 text-slate-400" />
+            <div className="mt-3 pt-3 border-t border-amber-200 space-y-2.5">
+              <div className="flex items-center gap-2">
+                <MessageSquare className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                 <input
                   type="text"
                   value={props.noteDraft}
                   onChange={(e) => props.onNoteChange(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter" && props.noteDraft.trim()) props.onSaveNote(); }}
                   placeholder="可选: 给这一步留个 note (按 Enter 保存)"
-                  className="flex-1 px-2 py-1 bg-white border border-slate-200 rounded text-xs"
+                  className="flex-1 px-2 py-1 bg-white border border-slate-200 rounded text-xs focus:outline-none focus:border-amber-400"
                 />
                 {props.noteDraft.trim() && (
-                  <button onClick={props.onSaveNote} className="text-xs text-indigo-600 underline">save</button>
+                  <button
+                    onClick={props.onSaveNote}
+                    className="text-xs font-medium text-amber-700 hover:text-amber-900"
+                  >
+                    save
+                  </button>
                 )}
               </div>
               <div className="flex gap-2">
                 <button
                   onClick={props.onApprove}
-                  className="inline-flex items-center gap-1 px-3 py-1 bg-emerald-600 text-white rounded text-xs hover:bg-emerald-700"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white rounded-md text-xs font-medium shadow-sm hover:bg-emerald-700 transition"
                 >
-                  <Check className="w-3 h-3" /> Approve
+                  <Check className="w-3.5 h-3.5" /> Approve
                 </button>
                 <button
                   onClick={props.onAbort}
-                  className="inline-flex items-center gap-1 px-3 py-1 bg-red-50 text-red-700 border border-red-200 rounded text-xs hover:bg-red-100"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white text-red-700 border border-red-200 rounded-md text-xs font-medium hover:bg-red-50 transition"
                 >
-                  <X className="w-3 h-3" /> Abort task
+                  <X className="w-3.5 h-3.5" /> Abort task
                 </button>
               </div>
             </div>
