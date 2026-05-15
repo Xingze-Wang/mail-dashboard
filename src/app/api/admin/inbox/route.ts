@@ -70,14 +70,48 @@ export async function POST(req: NextRequest) {
 
   const body = (await req.json().catch(() => ({}))) as {
     id?: string;
-    status?: string;
+    status?: string;     // legacy direct-status path (kept for old dashboard buttons)
+    action?: string;     // new path — mirrors Lark card buttons (yes/no/skill/memory/both/neither)
   };
-  if (!body.id || !body.status) {
-    return NextResponse.json({ error: "id + status required" }, { status: 400 });
+  if (!body.id) {
+    return NextResponse.json({ error: "id required" }, { status: 400 });
   }
-  // Whitelist statuses — migration 058 has a CHECK constraint, but we
-  // duplicate it here so we get a friendly 400 instead of a 500 with a
-  // raw Postgres error message.
+
+  // New path: an action verb that matches the Lark card. Delegates to
+  // processAdminInboxCardAction so web + Lark always produce the same
+  // side effects (helper_learnings rows, status transitions, etc).
+  // North-star rule: same outcome whether you click in /admin/inbox
+  // or on the Lark card.
+  if (body.action) {
+    const allowedActions = new Set(["yes", "no", "skill", "memory", "both", "neither"]);
+    if (!allowedActions.has(body.action)) {
+      return NextResponse.json({ error: "invalid action" }, { status: 400 });
+    }
+    // Look up admin's open_id so we can reuse the same dispatcher.
+    const { data: me } = await supabase
+      .from("sales_reps")
+      .select("lark_open_id")
+      .eq("id", admin.repId)
+      .maybeSingle();
+    const operatorOpenId = me?.lark_open_id;
+    if (!operatorOpenId) {
+      // Web admin without a Lark open_id — apply directly via a synthetic event.
+      return NextResponse.json({ error: "admin missing lark_open_id; ask Xingze to link" }, { status: 400 });
+    }
+    const { processAdminInboxCardAction } = await import("@/lib/admin-inbox-card");
+    const result = await processAdminInboxCardAction({
+      event: {
+        operator: { open_id: operatorOpenId },
+        action: { value: { admin_inbox_action: body.action, inbox_id: body.id } },
+      },
+    });
+    return NextResponse.json(result);
+  }
+
+  // Legacy path: direct status update.
+  if (!body.status) {
+    return NextResponse.json({ error: "status or action required" }, { status: 400 });
+  }
   const allowed = new Set(["new", "acknowledged", "dismissed", "done"]);
   if (!allowed.has(body.status)) {
     return NextResponse.json({ error: "invalid status" }, { status: 400 });

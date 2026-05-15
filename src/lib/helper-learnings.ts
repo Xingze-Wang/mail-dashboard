@@ -6,7 +6,10 @@
 
 import { supabase } from "@/lib/db";
 
-export type LearningKind = "rep_pref" | "tactic" | "self_critique" | "other";
+// 'skill' = activatable procedure, surfaced prominently every session.
+// 'tactic' / 'self_critique' = memory-style, may move to relevance-loaded later.
+// 'rep_pref' = per-rep preference. 'other' = catch-all.
+export type LearningKind = "rep_pref" | "tactic" | "self_critique" | "skill" | "other";
 
 export interface HelperLearning {
   id: string;
@@ -80,13 +83,19 @@ export function formatLearningsForPrompt(learnings: HelperLearning[]): string {
     grouped.set(l.kind, arr);
   }
   const labels: Record<LearningKind, string> = {
+    skill: "可激活的 skill (admin 让我下次这么做)",
     rep_pref: "rep 偏好",
     tactic: "战术经验",
     self_critique: "助手自检",
     other: "其他",
   };
+  // Order matters — skills first so they're visually salient when the
+  // model scans the system prompt.
+  const order: LearningKind[] = ["skill", "rep_pref", "tactic", "self_critique", "other"];
   const sections: string[] = [];
-  for (const [kind, items] of grouped) {
+  for (const kind of order) {
+    const items = grouped.get(kind);
+    if (!items?.length) continue;
     const lines = items.slice(0, 6).map((l) => `- ${l.body}`).join("\n");
     sections.push(`### ${labels[kind] ?? kind}\n${lines}`);
   }

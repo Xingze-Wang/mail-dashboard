@@ -1,22 +1,21 @@
 // Lark interactive card for admin_inbox items.
 //
-// Use case: every time Leon writes a `record_admin_request` (kind = request /
-// observation / idea), instead of (or in addition to) just letting it pile up
-// in the dashboard inbox, push a Lark card to admin's DM with three buttons:
+// Buttons branch on inbox.kind:
+//   - kind=request  → [✅ Yes] [❌ No]                   (a TODO Leon needs go-ahead on)
+//   - kind=observation|idea → [Skill] [Memory] [Both] [Neither]   (a learning to triage)
 //
-//   [✓ Acknowledged]   — mark status='acknowledged' (admin saw it, not actioned)
-//   [💾 Save as memory] — promote to helper_learnings (kind=self_critique or
-//                         tactic, scope=org-wide) so Leon learns from it
-//   [🗑 Dismiss]        — mark status='dismissed' (not actionable / noise)
+// "Yes" on a request = ack + (optional follow-up later);
+// "No" = dismiss. Yes/No is binary because requests are go/no-go.
 //
-// The card-action callback is dispatched in the existing /api/lark/webhook
-// + lark-bot-worker, alongside onboarding_action and jitr_action; we
-// discriminate via `value.admin_inbox_action`.
+// Skill / Memory / Both / Neither on observations + ideas:
+//   - Skill   = procedure Leon should activate in the right context
+//               (loaded every session — small budget, must be high-signal)
+//   - Memory  = qualitative fact, loaded by relevance (FTS, future work)
+//   - Both    = activatable AND worth recalling — promote into both kinds
+//   - Neither = noise, don't keep
 //
-// Why a card vs the dashboard inbox: admin already lives in Lark; opening
-// /admin/inbox to triage a single ping is too much friction. One-click
-// triage from where the notification arrives is the OpenClaw-style UX
-// the user asked for.
+// The dispatcher lives in lark-bot-worker + /api/lark/webhook; it routes
+// `value.admin_inbox_action` into processAdminInboxCardAction below.
 
 import { supabase } from "@/lib/db";
 import { getTenantAccessToken, pickBase } from "@/lib/lark";
@@ -44,14 +43,65 @@ const KIND_LABEL: Record<string, string> = {
   idea: "Idea",
 };
 
+// All possible click actions encoded in card buttons.
+export type AdminInboxAction = "yes" | "no" | "skill" | "memory" | "both" | "neither";
+
+function buildButtonsForKind(kind: string, inboxId: string) {
+  const isRequest = kind === "request";
+  if (isRequest) {
+    return [
+      {
+        tag: "button",
+        text: { tag: "plain_text", content: "✅ Yes" },
+        type: "primary",
+        value: { admin_inbox_action: "yes", inbox_id: inboxId },
+      },
+      {
+        tag: "button",
+        text: { tag: "plain_text", content: "❌ No" },
+        type: "danger",
+        value: { admin_inbox_action: "no", inbox_id: inboxId },
+      },
+    ];
+  }
+  // observation / idea (or anything else) → Skill / Memory / Both / Neither
+  return [
+    {
+      tag: "button",
+      text: { tag: "plain_text", content: "🛠 Skill" },
+      type: "primary",
+      value: { admin_inbox_action: "skill", inbox_id: inboxId },
+    },
+    {
+      tag: "button",
+      text: { tag: "plain_text", content: "💾 Memory" },
+      type: "default",
+      value: { admin_inbox_action: "memory", inbox_id: inboxId },
+    },
+    {
+      tag: "button",
+      text: { tag: "plain_text", content: "⚡ Both" },
+      type: "default",
+      value: { admin_inbox_action: "both", inbox_id: inboxId },
+    },
+    {
+      tag: "button",
+      text: { tag: "plain_text", content: "🗑 Neither" },
+      type: "danger",
+      value: { admin_inbox_action: "neither", inbox_id: inboxId },
+    },
+  ];
+}
+
+function buildHelperNote(kind: string) {
+  if (kind === "request") {
+    return "Yes = 同意/已处理. No = 不做/不相关.";
+  }
+  return "Skill = 我下次该这么做 (always loaded). Memory = 记住这个事实 (relevance-loaded). Both = 两个都存. Neither = 噪音, 不留.";
+}
+
 /**
- * Push an interactive card to admin's Lark DM. Called from the
- * record_admin_request flow right after the admin_inbox row is
- * inserted. Returns the message_id if the push succeeded.
- *
- * Best-effort: a failed push doesn't break record_admin_request —
- * the row still exists in the dashboard inbox. We just lose the
- * one-tap convenience.
+ * Push an interactive card to admin's Lark DM.
  */
 export async function sendAdminInboxCard(args: {
   inbox_id: string;
@@ -91,33 +141,13 @@ export async function sendAdminInboxCard(args: {
       },
       {
         tag: "action",
-        actions: [
-          {
-            tag: "button",
-            text: { tag: "plain_text", content: "✓ Acknowledged" },
-            type: "primary",
-            value: { admin_inbox_action: "acknowledge", inbox_id: args.inbox_id },
-          },
-          {
-            tag: "button",
-            text: { tag: "plain_text", content: "💾 Save as memory" },
-            type: "default",
-            value: { admin_inbox_action: "save_as_memory", inbox_id: args.inbox_id },
-          },
-          {
-            tag: "button",
-            text: { tag: "plain_text", content: "🗑 Dismiss" },
-            type: "danger",
-            value: { admin_inbox_action: "dismiss", inbox_id: args.inbox_id },
-          },
-        ],
+        actions: buildButtonsForKind(args.kind, args.inbox_id),
       },
       {
         tag: "note",
         elements: [{
           tag: "plain_text",
-          content:
-            "Acknowledged = 'I saw it, not actioned'. Save as memory = promote into Leon's long-term self_critique so this doesn't repeat. Dismiss = noise, don't ping again.",
+          content: buildHelperNote(args.kind),
         }],
       },
     ],
@@ -155,12 +185,15 @@ export async function sendAdminInboxCard(args: {
 }
 
 /**
- * Handle a click on the [Acknowledged / Save as memory / Dismiss]
- * buttons. Called from the card-action dispatcher in lark-bot-worker
- * + /api/lark/webhook when value.admin_inbox_action is present.
+ * Handle a click on the admin_inbox card.
  *
- * Returns toast content so the webhook can ack the click with a
- * Lark-shaped {toast: {type, content}} response.
+ * Action semantics:
+ *   yes      → mark inbox.status='acknowledged' (request approved/handled)
+ *   no       → mark inbox.status='dismissed'
+ *   skill    → recordLearning(kind='skill') + inbox done
+ *   memory   → recordLearning(kind='tactic' or 'self_critique', depending on inbox.kind)
+ *   both     → write two learnings (skill + memory)
+ *   neither  → inbox.status='dismissed'
  */
 export async function processAdminInboxCardAction(rawEvent: unknown): Promise<{
   ok: boolean;
@@ -172,7 +205,7 @@ export async function processAdminInboxCardAction(rawEvent: unknown): Promise<{
     operator?: { open_id?: string };
     action?: {
       value?: {
-        admin_inbox_action?: "acknowledge" | "save_as_memory" | "dismiss";
+        admin_inbox_action?: AdminInboxAction;
         inbox_id?: string;
       };
     };
@@ -184,7 +217,6 @@ export async function processAdminInboxCardAction(rawEvent: unknown): Promise<{
     return { ok: true, reason: "incomplete card action" };
   }
 
-  // Admin-only — same gate as the onboarding card.
   const { data: rep } = await supabase
     .from("sales_reps")
     .select("id, role")
@@ -204,63 +236,97 @@ export async function processAdminInboxCardAction(rawEvent: unknown): Promise<{
     return { ok: true, reason: `already decided: ${inbox.status}`, toast: `已是 ${inbox.status}` };
   }
 
-  if (action === "acknowledge") {
+  // Yes/No path (kind=request)
+  if (action === "yes") {
     await supabase
       .from("admin_inbox")
       .update({ status: "acknowledged", acted_at: new Date().toISOString() })
       .eq("id", inboxId);
-    return { ok: true, reason: "acknowledged", toast: "已 ack" };
+    return { ok: true, reason: "yes", toast: "✅ 同意" };
   }
-
-  if (action === "dismiss") {
+  if (action === "no") {
     await supabase
       .from("admin_inbox")
       .update({ status: "dismissed", acted_at: new Date().toISOString() })
       .eq("id", inboxId);
-    return { ok: true, reason: "dismissed", toast: "已 dismiss" };
+    return { ok: true, reason: "no", toast: "❌ 不做" };
   }
 
-  if (action === "save_as_memory") {
-    // Promote the inbox row to a self_critique memory + mark inbox done.
-    // Tactic-vs-self_critique heuristic: 'observation' / 'idea' tend to
-    // be tactical learnings; 'request' is an admin TODO and shouldn't
-    // become memory by itself. We default to self_critique because the
-    // user can refine via the dashboard if needed.
-    const kind: "tactic" | "self_critique" =
-      inbox.kind === "idea" ? "tactic" : "self_critique";
-    const body =
-      (inbox.body && inbox.body.length >= 10 ? inbox.body : null) ||
-      inbox.headline;
-    const { recordLearning } = await import("@/lib/helper-learnings");
-    const learning = await recordLearning({
-      scope_rep_id: null, // org-wide; if it was rep-specific they can scope later
-      kind,
-      body: String(body).slice(0, 600),
+  // Skill / Memory / Both / Neither path (kind=observation | idea)
+  if (action === "neither") {
+    await supabase
+      .from("admin_inbox")
+      .update({ status: "dismissed", acted_at: new Date().toISOString() })
+      .eq("id", inboxId);
+    return { ok: true, reason: "neither", toast: "🗑 不留" };
+  }
+
+  // For skill / memory / both — promote to helper_learnings.
+  // "memory" body is the user-written headline + body; we keep the
+  // memory-style kind ('tactic' for ideas, 'self_critique' for observations).
+  const body =
+    (inbox.body && inbox.body.length >= 10 ? inbox.body : null) ||
+    inbox.headline;
+  const trimmed = String(body).slice(0, 600);
+  const memoryKind: "tactic" | "self_critique" =
+    inbox.kind === "idea" ? "tactic" : "self_critique";
+
+  const { recordLearning } = await import("@/lib/helper-learnings");
+
+  const learningIds: string[] = [];
+  if (action === "skill" || action === "both") {
+    const skillRow = await recordLearning({
+      scope_rep_id: null,
+      kind: "skill",
+      body: trimmed,
+      confidence: 0.95,
+      evidence: {
+        source: "admin_inbox_card",
+        promoted_from_inbox: inboxId,
+        original_kind: inbox.kind,
+        decision: action,
+        at: new Date().toISOString(),
+      },
+    });
+    if (skillRow) learningIds.push(skillRow.id);
+  }
+  if (action === "memory" || action === "both") {
+    const memRow = await recordLearning({
+      scope_rep_id: null,
+      kind: memoryKind,
+      body: trimmed,
       confidence: 0.9,
       evidence: {
         source: "admin_inbox_card",
         promoted_from_inbox: inboxId,
         original_kind: inbox.kind,
+        decision: action,
         at: new Date().toISOString(),
       },
     });
-    if (!learning) {
-      return { ok: false, reason: "recordLearning failed", toast: "存 memory 失败, 看 server log" };
-    }
-    await supabase
-      .from("admin_inbox")
-      .update({
-        status: "done",
-        acted_at: new Date().toISOString(),
-        // Stash the learning_id in evidence so dashboard can show the link
-        evidence: {
-          ...(typeof inbox.body === "object" ? {} : {}),
-          promoted_to_learning_id: learning.id,
-        },
-      })
-      .eq("id", inboxId);
-    return { ok: true, reason: "promoted_to_memory", toast: `已存入长期记忆 (${kind})` };
+    if (memRow) learningIds.push(memRow.id);
   }
 
-  return { ok: true, reason: "unknown action" };
+  if (learningIds.length === 0) {
+    return { ok: false, reason: "recordLearning failed", toast: "存失败, 看 server log" };
+  }
+
+  await supabase
+    .from("admin_inbox")
+    .update({
+      status: "done",
+      acted_at: new Date().toISOString(),
+      evidence: {
+        promoted_to_learning_ids: learningIds,
+        decision: action,
+      },
+    })
+    .eq("id", inboxId);
+
+  const toastMap: Record<string, string> = {
+    skill: "🛠 存为 skill (每次会激活)",
+    memory: "💾 存为 memory (相关时召回)",
+    both: "⚡ Skill + Memory 都存了",
+  };
+  return { ok: true, reason: action, toast: toastMap[action] ?? "ok" };
 }

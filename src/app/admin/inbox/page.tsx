@@ -23,7 +23,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Inbox, AlertCircle, Eye, Check, X, Loader2, RefreshCw } from "lucide-react";
+import { Inbox, AlertCircle, Check, X, Loader2, RefreshCw } from "lucide-react";
 
 interface InboxRow {
   id: string;
@@ -98,40 +98,36 @@ export default function AdminInboxPage() {
 
   useEffect(() => { void load(); }, [load]);
 
-  const handleAct = useCallback(
-    async (row: InboxRow, status: InboxRow["status"]) => {
+  // Click handler for the Yes/No/Skill/Memory/Both/Neither buttons.
+  // Routes through the new POST { action } path so /admin/inbox produces
+  // the same helper_learnings rows as the Lark card.
+  const handleAction = useCallback(
+    async (row: InboxRow, action: "yes" | "no" | "skill" | "memory" | "both" | "neither") => {
       setActing(row.id);
       try {
         const res = await fetch("/api/admin/inbox", {
           method: "POST",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: row.id, status }),
+          body: JSON.stringify({ id: row.id, action }),
         });
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
-          alert(`Update failed: ${err.error ?? res.status}`);
+          alert(`Action failed: ${err.error ?? res.status}`);
           return;
         }
-        // Optimistic refresh — cheaper than re-querying for the typical
-        // case (1 row changes; rest stay the same).
-        if (filter === "new" && status !== "new") {
-          // The row will fall out of the visible filter; just remove it.
+        // Any action terminates the row's lifecycle (status → acknowledged/dismissed/done).
+        // If we're filtered to "new", drop it from view; otherwise refresh.
+        if (filter === "new") {
           setRows((prev) => prev.filter((r) => r.id !== row.id));
         } else {
-          setRows((prev) =>
-            prev.map((r) =>
-              r.id === row.id
-                ? { ...r, status, acted_at: status === "new" ? null : new Date().toISOString() }
-                : r,
-            ),
-          );
+          void load();
         }
       } finally {
         setActing(null);
       }
     },
-    [filter],
+    [filter, load],
   );
 
   const newCount = useMemo(() => rows.filter((r) => r.status === "new").length, [rows]);
@@ -261,30 +257,58 @@ export default function AdminInboxPage() {
                   </details>
                 )}
               </div>
-              <div className="flex flex-col gap-1.5 shrink-0">
-                {row.status === "new" && (
-                  <button
-                    onClick={() => void handleAct(row, "acknowledged")}
-                    disabled={acting === row.id}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                  >
-                    <Eye className="w-3 h-3" /> Ack
-                  </button>
+              <div className="flex flex-col gap-1.5 shrink-0 min-w-[140px]">
+                {row.kind === "request" ? (
+                  <>
+                    <button
+                      onClick={() => void handleAction(row, "yes")}
+                      disabled={acting === row.id || row.status !== "new"}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border border-emerald-300 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+                    >
+                      <Check className="w-3 h-3" /> Yes
+                    </button>
+                    <button
+                      onClick={() => void handleAction(row, "no")}
+                      disabled={acting === row.id || row.status !== "new"}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border border-red-300 text-red-600 hover:bg-red-50 disabled:opacity-50"
+                    >
+                      <X className="w-3 h-3" /> No
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => void handleAction(row, "skill")}
+                      disabled={acting === row.id || row.status !== "new"}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border border-indigo-300 text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
+                      title="Activatable procedure — loaded every session"
+                    >
+                      🛠 Skill
+                    </button>
+                    <button
+                      onClick={() => void handleAction(row, "memory")}
+                      disabled={acting === row.id || row.status !== "new"}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                      title="Fact, recalled by relevance"
+                    >
+                      💾 Memory
+                    </button>
+                    <button
+                      onClick={() => void handleAction(row, "both")}
+                      disabled={acting === row.id || row.status !== "new"}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border border-amber-300 text-amber-700 hover:bg-amber-50 disabled:opacity-50"
+                    >
+                      ⚡ Both
+                    </button>
+                    <button
+                      onClick={() => void handleAction(row, "neither")}
+                      disabled={acting === row.id || row.status !== "new"}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border border-slate-300 text-slate-500 hover:bg-slate-50 disabled:opacity-50"
+                    >
+                      🗑 Neither
+                    </button>
+                  </>
                 )}
-                <button
-                  onClick={() => void handleAct(row, "done")}
-                  disabled={acting === row.id || row.status === "done"}
-                  className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border border-emerald-300 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
-                >
-                  <Check className="w-3 h-3" /> Done
-                </button>
-                <button
-                  onClick={() => void handleAct(row, "dismissed")}
-                  disabled={acting === row.id || row.status === "dismissed"}
-                  className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border border-slate-300 text-slate-500 hover:bg-slate-50 disabled:opacity-50"
-                >
-                  <X className="w-3 h-3" /> Dismiss
-                </button>
               </div>
             </div>
           </div>

@@ -237,9 +237,12 @@ const dispatcher = new Lark.EventDispatcher({}).register({
     let toastContent = "Received";
     if (oAction === "deny") toastContent = "Denied — sending notification…";
     else if (oAction === "approve_sales" || oAction === "approve_senior") toastContent = "Approved — provisioning + sending welcome email…";
-    else if (aInbox === "acknowledge") toastContent = "✓ Acknowledged";
-    else if (aInbox === "save_as_memory") toastContent = "💾 Saving to long-term memory…";
-    else if (aInbox === "dismiss") toastContent = "🗑 Dismissed";
+    else if (aInbox === "yes") toastContent = "✅ 同意";
+    else if (aInbox === "no") toastContent = "❌ 不做";
+    else if (aInbox === "skill") toastContent = "🛠 存为 skill…";
+    else if (aInbox === "memory") toastContent = "💾 存为 memory…";
+    else if (aInbox === "both") toastContent = "⚡ 存为 skill + memory…";
+    else if (aInbox === "neither") toastContent = "🗑 不留";
     else if (tplAction === "approve_draft") toastContent = "✓ Approved as draft";
     else if (tplAction === "activate") toastContent = "🚀 Activating template…";
     else if (tplAction === "reject") toastContent = "❌ Rejected — reply with reason";
