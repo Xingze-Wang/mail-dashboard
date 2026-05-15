@@ -94,7 +94,7 @@ export function ActiveContractCard() {
             <div style={{
               width: `${pct}%`,
               height: "100%",
-              background: onTrack ? "#16a34a" : "#d97706",
+              background: onTrack ? "var(--green)" : "var(--gold)",
               borderRadius: 3,
               transition: "width 0.4s ease",
             }} />
@@ -109,7 +109,7 @@ export function ActiveContractCard() {
         <span style={{ fontSize: 11, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>
           {remaining} left
         </span>
-        <Link href="/congress/timeline" style={{ fontSize: 11, color: "#3B82F6", textDecoration: "none" }}>
+        <Link href="/congress/timeline" style={{ fontSize: 11, color: "var(--blue)", textDecoration: "none" }}>
           see all →
         </Link>
       </div>

@@ -31,6 +31,12 @@ const KIND_LABEL: Record<string, string> = {
   custom: "todos",
 };
 
+/**
+ * Compact one-liner pointing at /missions. Replaces an earlier
+ * dark-themed banner that clashed with the dashboard's cream design
+ * system. Now uses CSS vars + sits as a slim strip above the lead
+ * stream — closer to a status hint than a banner.
+ */
 export default function MissionsBanner() {
   const [data, setData] = useState<MissionsResponse | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -55,41 +61,62 @@ export default function MissionsBanner() {
 
   if (!loaded || !data) return null;
   const missions = data.my_today || [];
-  if (missions.length === 0) return null;
+  if (missions.length === 0 && !data.team_focus) return null;
 
-  const allDone = missions.every((m) => (m.progress_count ?? 0) >= m.target);
+  const allDone = missions.length > 0 && missions.every((m) => (m.progress_count ?? 0) >= m.target);
 
   return (
     <Link
       href="/missions"
       style={{
-        display: "flex", alignItems: "center", gap: 16,
-        padding: "10px 16px", marginBottom: 12,
-        background: allDone ? "rgba(16, 185, 129, 0.08)" : "rgba(99, 102, 241, 0.08)",
-        border: `1px solid ${allDone ? "rgba(16, 185, 129, 0.2)" : "rgba(99, 102, 241, 0.2)"}`,
-        borderRadius: 8, color: "#e2e8f0",
-        fontSize: 14, textDecoration: "none",
+        display: "flex", alignItems: "center", gap: 12,
+        padding: "8px 14px", marginBottom: 16,
+        background: "var(--card)",
+        border: "1px solid var(--border)",
+        borderLeft: `3px solid ${allDone ? "var(--green)" : "var(--blue)"}`,
+        borderRadius: "var(--radius-sm)",
+        textDecoration: "none",
+        fontSize: 13,
+        transition: "border-color 0.15s ease",
       }}
+      onMouseEnter={(e) => { e.currentTarget.style.borderColor = "rgba(10,10,10,0.12)"; e.currentTarget.style.borderLeftColor = allDone ? "var(--green)" : "var(--blue)"; }}
+      onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.borderLeftColor = allDone ? "var(--green)" : "var(--blue)"; }}
     >
-      {allDone ? <CheckCircle2 size={18} color="#10b981" /> : <Target size={18} color="#818cf8" />}
-      <span style={{ fontWeight: 500 }}>Today:</span>
-      <span style={{ color: "#94a3b8" }}>
-        {missions.map((m, i) => (
-          <span key={m.id}>
-            {i > 0 ? " · " : ""}
-            <span style={{ color: (m.progress_count ?? 0) >= m.target ? "#10b981" : "#e2e8f0" }}>
-              {m.progress_count ?? 0}/{m.target}
-            </span>{" "}
-            {KIND_LABEL[m.kind] ?? m.kind}
-          </span>
-        ))}
+      {allDone ? (
+        <CheckCircle2 size={14} color="var(--green)" />
+      ) : (
+        <Target size={14} color="var(--blue)" />
+      )}
+      <span style={{
+        fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)",
+        textTransform: "uppercase", letterSpacing: "0.06em",
+      }}>
+        Today
       </span>
-      {data.team_focus ? (
-        <span style={{ marginLeft: "auto", color: "#94a3b8" }}>
-          Focus: <span style={{ color: "#e2e8f0" }}>{data.team_focus.theme}</span>
+      {missions.length > 0 && (
+        <span style={{ color: "var(--text)", fontVariantNumeric: "tabular-nums" }}>
+          {missions.map((m, i) => (
+            <span key={m.id}>
+              {i > 0 && <span style={{ color: "var(--text-tertiary)", margin: "0 6px" }}>·</span>}
+              <span style={{
+                color: (m.progress_count ?? 0) >= m.target ? "var(--green)" : "var(--text)",
+                fontWeight: 600,
+              }}>
+                {m.progress_count ?? 0}/{m.target}
+              </span>
+              <span style={{ color: "var(--text-tertiary)", marginLeft: 4 }}>
+                {KIND_LABEL[m.kind] ?? m.kind}
+              </span>
+            </span>
+          ))}
         </span>
-      ) : <span style={{ marginLeft: "auto" }} />}
-      <ArrowRight size={14} color="#64748b" />
+      )}
+      {data.team_focus && (
+        <span style={{ marginLeft: "auto", color: "var(--text-tertiary)" }}>
+          Focus: <span style={{ color: "var(--text)" }}>{data.team_focus.theme}</span>
+        </span>
+      )}
+      <ArrowRight size={12} color="var(--text-tertiary)" style={{ marginLeft: data.team_focus ? 8 : "auto" }} />
     </Link>
   );
 }
