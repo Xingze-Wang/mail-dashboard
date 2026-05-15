@@ -146,22 +146,28 @@ export default function MissionsPage() {
     );
   }
 
+  const isAdminView = !!data.team_briefs && data.team_briefs.length > 0;
+
   const allDone = data.my_today.length > 0 && data.my_today.every((m) => (m.progress_count ?? 0) >= m.target);
   const totalProgress = data.my_today.reduce((s, m) => s + (m.progress_count ?? 0), 0);
   const totalTarget = data.my_today.reduce((s, m) => s + m.target, 0);
   const overallPct = totalTarget > 0 ? Math.min(100, Math.round((totalProgress / totalTarget) * 100)) : 0;
-  // Headline copy — encouraging, not pressuring. Mission accomplished
-  // vibes when all done; warm momentum copy when in progress; gentle
-  // welcome when just starting.
-  const headline = allDone
-    ? "All of today's missions done — nice."
-    : totalProgress === 0
-      ? "A fresh day — take it slow."
-      : overallPct >= 75
-        ? `${overallPct}% · almost there.`
-        : overallPct >= 33
-          ? `${overallPct}% · steady pace.`
-          : `${overallPct}% · one step at a time.`;
+
+  // Headline copy — split admin vs rep. Admin sees a team-state summary
+  // (rendered after team-grid loads, so we use a calm placeholder here
+  // and let the grid carry the real signal). Rep sees their own progress
+  // encouragement.
+  const headline = isAdminView
+    ? "Team today"
+    : allDone
+      ? "All of today's missions done — nice."
+      : totalProgress === 0
+        ? "A fresh day — take it slow."
+        : overallPct >= 75
+          ? `${overallPct}% · almost there.`
+          : overallPct >= 33
+            ? `${overallPct}% · steady pace.`
+            : `${overallPct}% · one step at a time.`;
 
   // Friendlier weekday header. "今日 missions" was bland; new copy
   // anchors on the day-of-week and uses the encouragement headline as
@@ -182,12 +188,14 @@ export default function MissionsPage() {
           {dayOfWeekZh} · {monthDay}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          {allDone ? (
-            <Award style={{ width: 24, height: 24, color: "var(--green)" }} />
-          ) : totalProgress === 0 ? (
-            <Sunrise style={{ width: 24, height: 24, color: "var(--blue)" }} />
-          ) : (
-            <Sparkles style={{ width: 24, height: 24, color: "var(--blue)" }} />
+          {!isAdminView && (
+            allDone ? (
+              <Award style={{ width: 24, height: 24, color: "var(--green)" }} />
+            ) : totalProgress === 0 ? (
+              <Sunrise style={{ width: 24, height: 24, color: "var(--blue)" }} />
+            ) : (
+              <Sparkles style={{ width: 24, height: 24, color: "var(--blue)" }} />
+            )
           )}
           <h1 className="page-title" style={{ margin: 0 }}>{headline}</h1>
         </div>
@@ -382,7 +390,9 @@ export default function MissionsPage() {
         </div>
       )}
 
-      {/* My missions — checklist */}
+      {/* My missions — rep-only checklist. Admin doesn't have per-rep
+          missions; their team grid above carries that signal. */}
+      {!isAdminView && (
       <div style={{ marginBottom: 28 }}>
         <h3 style={{ fontSize: 13, fontWeight: 600, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12 }}>
           My missions
@@ -476,9 +486,12 @@ export default function MissionsPage() {
           </div>
         )}
       </div>
+      )}
 
-      {/* Team visibility — what teammates are doing */}
-      {data.team_today.length > 0 && (
+      {/* Team visibility — peer view of what teammates are doing.
+          Hidden for admins (they get the richer Team Overview grid
+          at the top of the page, with drill-in). */}
+      {data.team_today.length > 0 && (!data.team_briefs || data.team_briefs.length === 0) && (
         <div>
           <h3 style={{ fontSize: 13, fontWeight: 600, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12 }}>
             Team today
@@ -582,7 +595,6 @@ function TeamOverviewSection() {
   if (loading) {
     return (
       <div style={{ marginBottom: 16 }}>
-        <SectionLabel>Team today</SectionLabel>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 12 }}>
           {[1, 2, 3].map((i) => <div key={i} className="skeleton" style={{ height: 160, borderRadius: 10 }} />)}
         </div>
@@ -591,11 +603,40 @@ function TeamOverviewSection() {
   }
   if (reps.length === 0) return null;
 
+  // Health-sorted: stuck → watch → healthy (so the attention items are
+  // on top of the page, where admin's eye lands first).
+  const sorted = [...reps].sort((a, b) => {
+    const rank = { stuck: 0, watch: 1, healthy: 2 } as const;
+    return rank[a.health] - rank[b.health];
+  });
+  const stuckCount = reps.filter((r) => r.health === "stuck").length;
+  const watchCount = reps.filter((r) => r.health === "watch").length;
+
   return (
     <div style={{ marginBottom: 20 }}>
-      <SectionLabel>Team today</SectionLabel>
+      {/* Inline status summary — admin's first-glance signal */}
+      {(stuckCount > 0 || watchCount > 0) && (
+        <div style={{
+          fontSize: 12, color: "var(--text-secondary)", marginBottom: 12,
+          display: "flex", gap: 12, alignItems: "center",
+        }}>
+          {stuckCount > 0 && (
+            <span style={{ color: "var(--coral)" }}>
+              <strong>{stuckCount}</strong> stuck
+            </span>
+          )}
+          {watchCount > 0 && (
+            <span style={{ color: "var(--gold)" }}>
+              <strong>{watchCount}</strong> need a look
+            </span>
+          )}
+          <span style={{ color: "var(--text-tertiary)" }}>
+            · click any card to drill in
+          </span>
+        </div>
+      )}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 12 }}>
-        {reps.map((r) => <RepCard key={r.rep_id} rep={r} onClick={() => setDrillRepId(r.rep_id)} />)}
+        {sorted.map((r) => <RepCard key={r.rep_id} rep={r} onClick={() => setDrillRepId(r.rep_id)} />)}
       </div>
       {drillRepId != null && <RepDrillModal repId={drillRepId} onClose={() => setDrillRepId(null)} />}
     </div>
