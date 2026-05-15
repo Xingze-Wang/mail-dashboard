@@ -434,8 +434,30 @@ async function runAgent(session: LarkSession, question: string, history: { role:
     console.error("[lark-agent] loadRelevantLearnings failed (non-blocking):", err);
   }
 
+  // Self-evolution nudge (gap #3): if THIS rep has asked a similar
+  // question before, surface that AND tell Leon to consider propose_tool
+  // instead of answering manually a 3rd+ time. This makes Leon notice
+  // its own repetition without needing curriculum-miner (which only
+  // fires cross-rep clusters).
+  let repetitionNudge = "";
+  try {
+    const { recentRepetitionsForQuestion } = await import("@/lib/rep-questions");
+    const rep = await recentRepetitionsForQuestion({
+      repId: session.repId,
+      question,
+      lookbackDays: 14,
+    });
+    if (rep.count >= 2) {
+      const sampleList = rep.samples.map((s, i) => `  ${i + 1}. "${s}"`).join("\n");
+      repetitionNudge = `\n\n## ⚠️ 这个 rep 之前问过类似问题 ${rep.count} 次\n样本:\n${sampleList}\n\n**强烈建议**: 这不是一次性问题 — 该用 propose_tool 造一个永久的 SQL 工具, rep 以后能自己调或者你 lookup 它. 别第 ${rep.count + 1} 次重新拼 SQL 给他.`;
+    }
+  } catch (err) {
+    console.warn("[lark-agent] repetition check failed (non-blocking):", err);
+  }
+
   const system = SYSTEM_BASE + "\n" + TOOLS_PROMPT + (session.role === "admin" ? ADMIN_PROMPT_ADDENDUM : "") +
-    (learningsBlock ? `\n\n## 长期记忆 (admin 纠正过的 / rep 偏好 / 自检)\n${learningsBlock}\n请尊重以上记忆 — admin 已经纠正过的事实不要再答错.` : "");
+    (learningsBlock ? `\n\n## 长期记忆 (admin 纠正过的 / rep 偏好 / 自检)\n${learningsBlock}\n请尊重以上记忆 — admin 已经纠正过的事实不要再答错.` : "") +
+    repetitionNudge;
   let userPrompt = `## 参考资料 — Sales Guide
 ${SALES_GUIDE.slice(0, 2500)}
 

@@ -50,7 +50,10 @@ export function classifyByHeuristic(text: string): { shape: LearningShape; confi
 export async function classifyByLLM(text: string): Promise<{ shape: LearningShape; confidence: number; reasoning: string; triggers: string[] }> {
   const { llmChat } = await import("@/lib/llm-proxy");
   const r = await llmChat({
-    model: "claude-sonnet-4",
+    // Routed via model-router as 'classify_kind' — this is exactly
+    // the kind/triggers classification task that lives in Haiku tier.
+    // Was hardcoded sonnet-4 (slightly heavier than needed).
+    model: "claude-haiku-4-5",
     system: `你是一个分类器. 输入是 admin 觉得有用的一段 insight, 你判断它应该被存为:
 - "skill": 一个**可执行的程序 / 决策规则**, 当用户问相关问题时该被激活 (e.g. "rep 问白名单 → 直接告诉他 lookup XXX"; "当 cluster 出现就 propose tool"). 必须配 triggers (2-4 个短语) — Leon 只在用户的 query 包含这些短语时才激活这条 skill.
 - "memory": 一个**事实 / 上下文 / 观察**, 只在相关 query 出现时召回 (e.g. "Yujie 偏好短主题"; "上周二 click rate 异常高"). 不需要 triggers (memory 由 FTS rank 决定何时召回).

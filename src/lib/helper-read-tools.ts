@@ -495,6 +495,94 @@ export async function runReadTool(
           },
         };
       }
+      case "propose_self_skill": {
+        // Leon notices a gap in its own behavior and proposes a new
+        // skill (rule for itself) that admin can approve. Same shape as
+        // recordLearning(kind=skill) but explicitly framed as "I, Leon,
+        // think I should always do X going forward."
+        //
+        // Flow:
+        //   Leon discovers a gap → propose_self_skill → admin_inbox
+        //   card → admin Yes → skill activates in future prompts
+        const body = String(args.body ?? "").trim();
+        const triggers = Array.isArray(args.triggers)
+          ? (args.triggers as unknown[]).map(String).filter((t) => t.length >= 2 && t.length <= 80).slice(0, 6)
+          : [];
+        const reasoning = String(args.reasoning ?? "").trim();
+        if (body.length < 10) {
+          return { tool: call.tool, result: { error: "body too short — write the rule clearly" } };
+        }
+        // Insert into admin_inbox as an idea card (admin approval needed
+        // before it becomes an active skill). Uses the same Yes→auto-
+        // classify → skill flow as any idea card.
+        const headline = `🧠 Leon 提议自己加一条规则: ${body.slice(0, 100)}`.slice(0, 200);
+        const cardBody = [
+          `**Leon 想加的规则**:`,
+          body,
+          "",
+          reasoning ? `**为什么**: ${reasoning}` : "",
+          triggers.length > 0
+            ? `**触发短语** (用户说这些时激活): ${triggers.join(", ")}`
+            : `**总是激活** (没有 triggers — 这是 universal skill)`,
+          "",
+          "Yes → 这条规则进 helper_learnings(kind=skill), Leon 下次会按它办事.",
+          "No → 跳过 (Leon 在 DM 里告诉你为什么不该按).",
+        ].filter(Boolean).join("\n");
+
+        const enc = new TextEncoder();
+        const key = `self_skill|${body.toLowerCase().slice(0, 120)}`;
+        const buf = await crypto.subtle.digest("SHA-256", enc.encode(key));
+        const dedupHash = Array.from(new Uint8Array(buf))
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join("");
+
+        const { data: inbox, error: insErr } = await supabase
+          .from("admin_inbox")
+          .insert({
+            kind: "idea",
+            headline,
+            body: cardBody,
+            source_rep_id: session.repId,
+            evidence: {
+              source: "leon_self_skill_proposal",
+              proposed_skill_body: body,
+              proposed_triggers: triggers,
+              reasoning: reasoning || null,
+            },
+            dedup_hash: dedupHash,
+          })
+          .select("id")
+          .single();
+        if (insErr || !inbox) {
+          if (insErr?.message?.includes("duplicate")) {
+            return { tool: call.tool, result: { ok: true, deduped: true, message: "已经提过类似 skill, admin 还没批." } };
+          }
+          return { tool: call.tool, result: { error: insErr?.message ?? "insert failed" } };
+        }
+
+        try {
+          const { sendAdminInboxCard } = await import("@/lib/admin-inbox-card");
+          await sendAdminInboxCard({
+            inbox_id: inbox.id,
+            kind: "idea",
+            headline,
+            body: cardBody,
+            source_rep_id: session.repId,
+            evidence: { source: "leon_self_skill_proposal" },
+          });
+        } catch (err) {
+          console.warn("[propose_self_skill] card push failed:", err);
+        }
+
+        return {
+          tool: call.tool,
+          result: {
+            ok: true,
+            inbox_id: inbox.id,
+            message: "已经把自己想加的规则推给 admin Lark 卡, 等他 Yes.",
+          },
+        };
+      }
       case "explain_ontology": {
         // Expose the named entity/action registry so Leon (and the LLM
         // behind it) reasons about the domain in human terms — not in

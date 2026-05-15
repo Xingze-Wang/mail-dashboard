@@ -52,6 +52,75 @@ export function classifyOutcome(args: {
   return "solo";
 }
 
+/**
+ * Look back at this rep's recent questions to see if the current one
+ * is a near-duplicate of something they've asked before.
+ *
+ * Returns count + sample previous raw_text. Used by lark-agent to
+ * decide whether to NUDGE Leon to propose_tool ("you've answered this
+ * 3 times in 2 weeks — make it a tool").
+ *
+ * Uses trigram similarity via the rep_questions_similar RPC if
+ * available, else falls back to substring matching on normalized text.
+ */
+export async function recentRepetitionsForQuestion(args: {
+  repId: number | null;
+  question: string;
+  lookbackDays?: number;
+  similarityThreshold?: number;
+}): Promise<{ count: number; samples: string[]; first_asked_at: string | null }> {
+  const repId = args.repId;
+  if (!repId) return { count: 0, samples: [], first_asked_at: null };
+  const lookback = args.lookbackDays ?? 14;
+  const threshold = args.similarityThreshold ?? 0.25;
+  const since = new Date(Date.now() - lookback * 86_400_000).toISOString();
+  const normalized = normalizeQuestion(args.question);
+  if (normalized.length < 5) return { count: 0, samples: [], first_asked_at: null };
+
+  try {
+    // Trigram similarity via existing RPC (created by migration 087)
+    const { data } = await supabase.rpc("rep_questions_similar", {
+      target_text: normalized,
+      threshold,
+      since_iso: since,
+    });
+    if (data && Array.isArray(data)) {
+      const filtered = data.filter((r: { rep_id?: number | null }) => r.rep_id === repId);
+      const samples = filtered
+        .slice(0, 3)
+        .map((r: { raw_text?: string }) => (r.raw_text ?? "").slice(0, 160));
+      // Earliest first_asked_at for context ("you first asked this on 5/8")
+      let earliest: string | null = null;
+      for (const r of filtered as Array<{ asked_at?: string }>) {
+        const t = r.asked_at;
+        if (t && (!earliest || t < earliest)) earliest = t;
+      }
+      return { count: filtered.length, samples, first_asked_at: earliest };
+    }
+  } catch (err) {
+    console.warn("[rep-questions] similarity RPC failed, falling back:", err);
+  }
+
+  // Fallback: prefix match on normalized text (cheap, less accurate)
+  const { data: fallback } = await supabase
+    .from("rep_questions")
+    .select("raw_text, normalized, asked_at")
+    .eq("rep_id", repId)
+    .gte("asked_at", since)
+    .order("asked_at", { ascending: true })
+    .limit(50);
+  const matches = (fallback ?? []).filter((r) => {
+    if (!r.normalized) return false;
+    const n = String(r.normalized).slice(0, 80);
+    return normalized.includes(n.slice(0, 30)) || n.includes(normalized.slice(0, 30));
+  });
+  return {
+    count: matches.length,
+    samples: matches.slice(0, 3).map((r) => (r.raw_text ?? "").slice(0, 160)),
+    first_asked_at: matches[0]?.asked_at ?? null,
+  };
+}
+
 export async function logRepQuestion(args: {
   repId: number | null;
   rawText: string;

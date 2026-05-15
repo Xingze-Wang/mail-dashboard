@@ -474,19 +474,43 @@ export async function processAdminInboxCardAction(rawEvent: unknown): Promise<{
       }
     }
 
-    // For idea/observation: auto-classify into skill vs memory vs both
+    // For idea/observation: auto-classify into skill vs memory vs both.
+    // EXCEPT if this is a Leon-self-skill-proposal — those already
+    // come with the skill body + triggers, no need to re-classify.
     let classificationToast: string | null = null;
     if (inbox.kind === "idea" || inbox.kind === "observation") {
-      const { classifyAndStoreLearning } = await import("@/lib/admin-inbox-classify");
-      const r = await classifyAndStoreLearning({
-        inbox_id: inboxId,
-        headline: inbox.headline,
-        body: inbox.body,
-        original_kind: inbox.kind,
-      });
-      if (r.stored.length > 0) {
-        const labels = r.stored.map((s) => s === "skill" ? "🛠 skill" : "💾 memory").join(" + ");
-        classificationToast = `${labels} (Leon 自动分类)`;
+      if (evidence.source === "leon_self_skill_proposal" && typeof evidence.proposed_skill_body === "string") {
+        // Direct path: Leon proposed an explicit skill. Trust it.
+        const { recordLearning } = await import("@/lib/helper-learnings");
+        const skill = await recordLearning({
+          scope_rep_id: null,
+          kind: "skill",
+          body: String(evidence.proposed_skill_body).slice(0, 600),
+          confidence: 0.85,
+          triggers: Array.isArray(evidence.proposed_triggers) ? (evidence.proposed_triggers as string[]).slice(0, 6) : [],
+          evidence: {
+            source: "leon_self_skill_proposal_approved",
+            promoted_from_inbox: inboxId,
+            reasoning: evidence.reasoning ?? null,
+            at: new Date().toISOString(),
+          },
+        });
+        if (skill) {
+          classificationToast = `🧠 Leon 的自加 skill 已激活`;
+        }
+      } else {
+        // Normal path: LLM auto-classifies admin-curated insights
+        const { classifyAndStoreLearning } = await import("@/lib/admin-inbox-classify");
+        const r = await classifyAndStoreLearning({
+          inbox_id: inboxId,
+          headline: inbox.headline,
+          body: inbox.body,
+          original_kind: inbox.kind,
+        });
+        if (r.stored.length > 0) {
+          const labels = r.stored.map((s) => s === "skill" ? "🛠 skill" : "💾 memory").join(" + ");
+          classificationToast = `${labels} (Leon 自动分类)`;
+        }
       }
     }
 
