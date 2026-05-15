@@ -13,9 +13,9 @@ const dict: Record<string, Record<Locale, string>> = {
   "nav.brief":           { en: "Brief",           zh: "速览" },
   "nav.insights":        { en: "Insights",        zh: "数据洞察" },
   "nav.templates":       { en: "Templates",       zh: "模板" },
-  "nav.adminMissions":   { en: "Missions Admin",  zh: "任务管理" },
-  "nav.adminAllocation": { en: "Allocation",      zh: "分配" },
-  "nav.adminTemplateCandidates": { en: "Template Candidates", zh: "Template Candidates" },
+  // Missions Admin / Allocation / Template Candidates were collapsed
+  // into adminIntent — admin states a goal, Leon proposes the plan.
+  "nav.adminIntent":     { en: "Intent",          zh: "提需求" },
   "nav.congress":        { en: "Congress",        zh: "议事厅" },
   "nav.scorer":          { en: "Scorer",          zh: "评分器" },
   "nav.bench":           { en: "Bench",           zh: "基准测试" },
