@@ -176,15 +176,18 @@ async function buildExperimentMission(
 async function seedMissions(): Promise<{ today: string; results: SeedResult[] }> {
   const today = todayIso();
 
-  // Only target sales reps. Admins (role='admin') don't have email
-  // sending queues — they review proposals/edits, not send. Without
-  // this filter the heuristic seeded send=5 missions for admin
-  // accounts that had nothing to send (smoke 2026-05-10 #3).
+  // Seed missions for ALL active reps regardless of role. Earlier this
+  // filtered to role='sales' only, which silently excluded Leo (senior)
+  // and 李金阳 (senior) — both of whom were sending nothing because
+  // no missions appeared. Admin learned this caused a multi-day send
+  // drought (2026-05-16 audit).
+  //
+  // Quota row (rep_daily_quotas) is the real gate now: if a rep has
+  // no quota AND no fallback default, they get a reply-only mission.
   const { data: reps } = await supabase
     .from("sales_reps")
-    .select("id, sender_name, name, role, active")
-    .eq("active", true)
-    .eq("role", "sales");
+    .select("id, sender_name, name, role, trust_level, active")
+    .eq("active", true);
   if (!reps || reps.length === 0) {
     return { today, results: [] };
   }
@@ -207,9 +210,39 @@ async function seedMissions(): Promise<{ today: string; results: SeedResult[] }>
       continue;
     }
 
-    // Send target — sourced from admin-set daily quota.
-    const quota = await getEffectiveQuota(repId, today);
-    const sendTarget = sumPerPool(quota.per_pool);
+    // Send target — sourced from admin-set daily quota. If no quota
+    // row exists, fall back to a trust_level-based default — admin
+    // shouldn't have to manually quota-config every new rep.
+    // Admin role itself is excluded from send missions (admin reviews,
+    // doesn't outbound), but everyone else (sales / senior) gets either
+    // their quota or a sensible fallback.
+    const role = String(r.role ?? "sales");
+    let quota = await getEffectiveQuota(repId, today);
+    let sendTarget = sumPerPool(quota.per_pool);
+
+    if (sendTarget <= 0 && role !== "admin") {
+      // trust_level is INT: -1=restricted (no sends), 0=novice, 1=training,
+      // 2=intermediate, 3=mature. Restricted gets 0 — don't auto-seed.
+      const trust = Number((r as { trust_level?: number }).trust_level ?? 1);
+      if (trust >= 0) {
+        const fallbackByTrust = [5, 15, 30, 60, 100];   // index = trust_level
+        const fallbackTotal = fallbackByTrust[Math.max(0, Math.min(4, trust))] ?? 15;
+        if (fallbackTotal > 0) {
+          // Bias the fallback toward the rep's owned-pool geography.
+          // Without knowing their geo preference, split across cn + overseas.
+          const halfCn = Math.floor(fallbackTotal / 2);
+          quota = {
+            rep_id: repId,
+            per_pool: { strong: 0, normal_cn: halfCn, normal_edu: 0, normal_overseas: fallbackTotal - halfCn },
+            direction_priority: [],
+            source: "standing",
+          };
+          sendTarget = fallbackTotal;
+          console.log(`[heuristic-seed] rep ${repId} (${role}, trust=${trust}) using fallback quota ${fallbackTotal} (no quota row)`);
+        }
+      }
+    }
+
     if (sendTarget <= 0) {
       if (!notifiedThisRun.has(repId)) {
         await notifyAdminMissingQuota({ id: repId, name: repName });
