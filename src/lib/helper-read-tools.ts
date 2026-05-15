@@ -495,6 +495,51 @@ export async function runReadTool(
           },
         };
       }
+      case "explain_app_feature": {
+        // Look up sections of docs/APP_OVERVIEW_EN.md by topic.
+        // Lets Leon answer "how do I use X" / "what does this page show"
+        // / "where do I find Y" without hallucinating.
+        const { findRelevantSections, listSectionTopics, APP_OVERVIEW_SECTIONS } = await import("@/lib/app-overview-corpus");
+        const topic = String(args.topic ?? "").trim();
+        const listOnly = args.list === true;
+        if (listOnly || !topic) {
+          return {
+            tool: call.tool,
+            result: {
+              topics: listSectionTopics(),
+              hint: "Pass topic: '<keyword or question>' to retrieve full body of matching sections.",
+            },
+          };
+        }
+        // Exact key match first
+        const exact = APP_OVERVIEW_SECTIONS.find((s) => s.key === topic);
+        if (exact) {
+          return {
+            tool: call.tool,
+            result: {
+              key: exact.key,
+              title: exact.title,
+              body: exact.body,
+            },
+          };
+        }
+        const matches = findRelevantSections(topic, 2);
+        if (matches.length === 0) {
+          return {
+            tool: call.tool,
+            result: {
+              error: `No section matched '${topic}'. Available topics: ${listSectionTopics().map((t) => t.key).join(", ")}`,
+            },
+          };
+        }
+        return {
+          tool: call.tool,
+          result: {
+            matched: matches.length,
+            sections: matches.map((m) => ({ key: m.key, title: m.title, body: m.body })),
+          },
+        };
+      }
       case "get_lead_counts": {
         // Total leads + per-rep ownership counts + unassigned pool size.
         // Way cheaper than list_leads when the question is aggregate
