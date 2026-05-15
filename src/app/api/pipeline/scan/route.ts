@@ -113,9 +113,34 @@ async function ensureTable() {
   }
 }
 
-async function runScan() {
+/**
+ * Run a single scan window. When called as a shard (shard=N, total=M),
+ * partitions the arxiv result space so the M shards don't overlap.
+ *
+ * Sharding model: shard N reads arxiv result range
+ *   [N * papersPerShard, (N+1) * papersPerShard)
+ * Shards are stateless — each one is its own Vercel function invocation
+ * with its own 300s budget. The orchestrator at /api/pipeline/scan-fanout
+ * triggers them in parallel.
+ */
+async function runScan(opts?: {
+  papersPerShard?: number;
+  shard?: number;
+  totalShards?: number;
+  timeBudgetMs?: number;
+}) {
   await ensureTable();
-  const { leads, stats } = await scanArxiv({ maxPapers: 50, timeBudgetMs: 120000 });
+  const papersPerShard = opts?.papersPerShard ?? 50;
+  const shard = opts?.shard ?? 0;
+  const totalShards = opts?.totalShards ?? 1;
+  const timeBudgetMs = opts?.timeBudgetMs ?? 120000;
+  const startOffset = shard * papersPerShard;
+
+  const { leads, stats } = await scanArxiv({
+    maxPapers: papersPerShard,
+    timeBudgetMs,
+    startOffset,
+  });
   const config = await getAssignmentConfig();
   let leadsCreated = 0;
 
@@ -213,33 +238,80 @@ async function runScan() {
     }
   }
 
-  return { stats, leadsCreated };
+  return {
+    stats,
+    leadsCreated,
+    shard,
+    totalShards,
+    startOffset,
+    papersPerShard,
+  };
+}
+
+/**
+ * Parse shard query params. Returns null if absent (single-shard mode).
+ * Bounds: shard ∈ [0, totalShards), totalShards ∈ [1, 16].
+ * Anything outside those ranges is rejected with an error message so a
+ * malformed orchestrator call fails loudly rather than silently scanning
+ * the wrong window.
+ */
+function parseShardParams(url: URL): {
+  shard: number;
+  totalShards: number;
+  papersPerShard: number;
+  timeBudgetMs?: number;
+} | { error: string } | null {
+  const shardStr = url.searchParams.get("shard");
+  const totalStr = url.searchParams.get("total");
+  if (shardStr === null && totalStr === null) return null;
+
+  const shard = Number(shardStr ?? "0");
+  const totalShards = Number(totalStr ?? "1");
+  if (
+    !Number.isInteger(shard) ||
+    !Number.isInteger(totalShards) ||
+    totalShards < 1 ||
+    totalShards > 16 ||
+    shard < 0 ||
+    shard >= totalShards
+  ) {
+    return {
+      error: `Invalid shard params: shard=${shardStr}, total=${totalStr} (need 0<=shard<total<=16)`,
+    };
+  }
+  const papersPerShard = Number(url.searchParams.get("papers") ?? "50");
+  if (!Number.isInteger(papersPerShard) || papersPerShard < 1 || papersPerShard > 500) {
+    return { error: `Invalid papers param: ${papersPerShard} (need 1..500)` };
+  }
+  const budgetStr = url.searchParams.get("budgetMs");
+  const timeBudgetMs = budgetStr ? Number(budgetStr) : undefined;
+  if (timeBudgetMs !== undefined && (!Number.isFinite(timeBudgetMs) || timeBudgetMs < 1000 || timeBudgetMs > 290_000)) {
+    return { error: `Invalid budgetMs: ${budgetStr} (need 1000..290000)` };
+  }
+  return { shard, totalShards, papersPerShard, timeBudgetMs };
+}
+
+async function handle(req: NextRequest) {
+  if (!checkAuth(req)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const parsed = parseShardParams(new URL(req.url));
+  if (parsed && "error" in parsed) {
+    return NextResponse.json({ error: parsed.error }, { status: 400 });
+  }
+  try {
+    const result = await runScan(parsed ?? undefined);
+    return NextResponse.json(result);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Scan failed";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 }
 
 export async function POST(req: NextRequest) {
-  if (!checkAuth(req)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  try {
-    const result = await runScan();
-    return NextResponse.json(result);
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Scan failed";
-    return NextResponse.json({ error: message }, { status: 500 });
-  }
+  return handle(req);
 }
 
 export async function GET(req: NextRequest) {
-  if (!checkAuth(req)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  try {
-    const result = await runScan();
-    return NextResponse.json(result);
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Scan failed";
-    return NextResponse.json({ error: message }, { status: 500 });
-  }
+  return handle(req);
 }

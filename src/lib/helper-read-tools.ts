@@ -495,6 +495,91 @@ export async function runReadTool(
           },
         };
       }
+      case "get_helper_conversation": {
+        // Admin-only: pull BOTH user + assistant turns for a rep's
+        // conversation history. Distinct from get_rep_helper_activity
+        // which only returns user messages. This is the "what did you
+        // say to rep X?" tool — when admin pushes back on an answer,
+        // Leon can show the exact prior reply rather than guessing.
+        //
+        // Returns up to `limit` most-recent turns (default 20), oldest
+        // first within the page, so the convo reads top-to-bottom like
+        // a real chat log.
+        if (session.role !== "admin") {
+          return { tool: call.tool, result: { error: "admin only" } };
+        }
+        const target = scopeRepId(session, args);
+        if (target == null) {
+          return { tool: call.tool, result: { error: "repId required" } };
+        }
+        const limit = Math.max(1, Math.min(50, Number(args.limit) || 20));
+        const days = Math.max(1, Math.min(60, Number(args.days) || 14));
+        const cutoff = new Date(Date.now() - days * 86_400_000).toISOString();
+        const { data, error } = await supabase
+          .from("helper_messages")
+          .select("role, text, created_at, conversation_id, helper_conversations!inner(rep_id, mode)")
+          .eq("helper_conversations.rep_id", target)
+          .in("role", ["user", "assistant"])
+          .not("text", "is", null)
+          .gte("created_at", cutoff)
+          .order("created_at", { ascending: false })
+          .limit(limit);
+        if (error) return { tool: call.tool, result: { error: error.message } };
+        // Reverse so consumer sees chronological order
+        const turns = (data ?? []).reverse().map((m) => ({
+          role: m.role as string,
+          text: String(m.text ?? "").slice(0, 600),
+          createdAt: m.created_at,
+          conversationId: m.conversation_id,
+          surface: (m as { helper_conversations?: { mode?: string } }).helper_conversations?.mode ?? "web",
+        }));
+        return {
+          tool: call.tool,
+          result: {
+            repId: target,
+            windowDays: days,
+            turnCount: turns.length,
+            turns,
+          },
+        };
+      }
+      case "list_admin_escalations": {
+        // Admin-only: list recent unresolved admin_inbox kind=request
+        // rows that came from Leon's escalate_to_admin tool. Shows the
+        // queue of "Leon was unsure → asked you" items so admin can
+        // catch up after being away.
+        if (session.role !== "admin") {
+          return { tool: call.tool, result: { error: "admin only" } };
+        }
+        const limit = Math.max(1, Math.min(50, Number(args.limit) || 20));
+        const status = (args.status as string) || "new";
+        let query = supabase
+          .from("admin_inbox")
+          .select("id, kind, headline, body, source_rep_id, status, evidence, created_at")
+          .eq("kind", "request")
+          .order("created_at", { ascending: false })
+          .limit(limit);
+        if (status !== "all") query = query.eq("status", status);
+        const { data, error } = await query;
+        if (error) return { tool: call.tool, result: { error: error.message } };
+        return {
+          tool: call.tool,
+          result: {
+            count: (data ?? []).length,
+            escalations: (data ?? []).map((r) => ({
+              id: r.id,
+              headline: r.headline,
+              body: r.body ? String(r.body).slice(0, 300) : null,
+              fromRepId: r.source_rep_id,
+              status: r.status,
+              createdAt: r.created_at,
+              // Surface escalation-specific fields out of evidence
+              myGuess: (r.evidence as Record<string, unknown> | null)?.my_best_guess ?? null,
+              whyUnsure: (r.evidence as Record<string, unknown> | null)?.why_unsure ?? null,
+            })),
+          },
+        };
+      }
       case "get_org_helper_activity_today": {
         // Admin spot-check: "who messaged Leon today?" across BOTH
         // surfaces (helper_messages = web bot, lark_messages = Lark DM).
@@ -944,6 +1029,119 @@ export async function runReadTool(
         }
 
         return { tool: call.tool, result: { ok: true, id: data.id, deduped: false, card_sent: true } };
+      }
+      case "escalate_to_admin": {
+        // Leon doesn't know the answer with confidence → ask admin
+        // directly. This is the "must escalate when unsure" rail: Leon
+        // can never answer-by-guessing a hard question without pinging
+        // admin. Writes an admin_inbox row (kind=request) and pushes
+        // a Lark card with Yes/No buttons. Tracks my_best_guess +
+        // why_unsure in evidence so admin sees the reasoning AND can
+        // grade the guess.
+        //
+        // Distinct from record_admin_request: that's "I think you
+        // should DO X"; this is "I DON'T KNOW the answer to a rep's
+        // question, please tell me what to say".
+        const question = String(args.question ?? "").trim().slice(0, 500);
+        const myGuess = typeof args.my_best_guess === "string" ? args.my_best_guess.slice(0, 1000) : null;
+        const whyUnsure = typeof args.why_unsure === "string" ? args.why_unsure.slice(0, 600) : null;
+        const askedByRepId = typeof args.asked_by_rep_id === "number" ? args.asked_by_rep_id : session.repId;
+        if (!question) {
+          return { tool: call.tool, result: { error: "question required" } };
+        }
+
+        // Headline is the question itself (≤200 chars). Body shows
+        // Leon's working: best guess + why unsure.
+        const headline = "❓ Leon 不确定: " + question.slice(0, 160 - "❓ Leon 不确定: ".length);
+        const bodyParts: string[] = [];
+        if (myGuess) bodyParts.push(`**我的猜测:**\n${myGuess}`);
+        if (whyUnsure) bodyParts.push(`**为什么不确定:**\n${whyUnsure}`);
+        bodyParts.push(`_来自 rep_id=${askedByRepId}_`);
+        const body = bodyParts.join("\n\n").slice(0, 4000);
+
+        // Dedup: same question text in same week → don't re-spam admin
+        const enc = new TextEncoder();
+        const week = Math.floor(Date.now() / (7 * 86_400_000));
+        const key = `escalation|${question.toLowerCase()}|${askedByRepId ?? ""}|${week}`;
+        const buf = await crypto.subtle.digest("SHA-256", enc.encode(key));
+        const dedupHash = Array.from(new Uint8Array(buf))
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join("");
+
+        const { data: existing } = await supabase
+          .from("admin_inbox")
+          .select("id, status")
+          .eq("dedup_hash", dedupHash)
+          .maybeSingle();
+        if (existing) {
+          await supabase
+            .from("admin_inbox")
+            .update({
+              body,
+              evidence: { my_best_guess: myGuess, why_unsure: whyUnsure, asked_by_rep_id: askedByRepId },
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", existing.id);
+          return {
+            tool: call.tool,
+            result: { ok: true, id: existing.id, deduped: true, existing_status: existing.status },
+          };
+        }
+
+        const evidence = {
+          my_best_guess: myGuess,
+          why_unsure: whyUnsure,
+          asked_by_rep_id: askedByRepId,
+          escalation_source: "leon_uncertain",
+          at: new Date().toISOString(),
+        };
+        const { data, error } = await supabase
+          .from("admin_inbox")
+          .insert({
+            kind: "request",
+            headline,
+            body,
+            source_rep_id: askedByRepId,
+            evidence,
+            dedup_hash: dedupHash,
+          })
+          .select("id")
+          .single();
+        if (error) return { tool: call.tool, result: { error: error.message } };
+
+        // Push Lark card (Yes/No buttons since kind=request)
+        try {
+          const { sendAdminInboxCard } = await import("@/lib/admin-inbox-card");
+          let askedByRepName: string | null = null;
+          if (askedByRepId != null) {
+            const { data: rep } = await supabase
+              .from("sales_reps")
+              .select("name")
+              .eq("id", askedByRepId)
+              .maybeSingle();
+            askedByRepName = rep?.name ?? null;
+          }
+          await sendAdminInboxCard({
+            inbox_id: data.id,
+            kind: "request",
+            headline,
+            body,
+            source_rep_id: askedByRepId,
+            source_rep_name: askedByRepName,
+          });
+        } catch (err) {
+          console.warn("[escalate_to_admin] card push failed (non-blocking):", err);
+        }
+
+        return {
+          tool: call.tool,
+          result: {
+            ok: true,
+            id: data.id,
+            escalated: true,
+            message: `Pushed Lark card to admin. Tell rep: 这个我不确定, 已经在问 admin, 等他回我就告诉你.`,
+          },
+        };
       }
       case "list_admin_inbox": {
         // Admin asks Leon "what have you been noticing?" — read pending

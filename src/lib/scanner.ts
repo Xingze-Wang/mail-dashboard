@@ -684,21 +684,32 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export async function scanArxiv(options?: {
   maxPapers?: number;
   timeBudgetMs?: number;
+  /**
+   * Where to start reading arxiv from. Default 0 (most recent paper).
+   * Used by sharded scans: shard N reads from offset = N * maxPapers so
+   * shards don't overlap. Combined with maxPapers, this bounds the
+   * arxiv-result window the scanner will visit. arxiv pagination is by
+   * `start` parameter (see fetchArxivBatch); supplying a non-zero
+   * startOffset just begins pagination there.
+   */
+  startOffset?: number;
 }): Promise<{
   leads: ScannedLead[];
   stats: { checked: number; filtered: number; leads: number; errors: string[] };
 }> {
   const maxPapers = options?.maxPapers ?? DEFAULT_MAX_PAPERS;
   const timeBudget = options?.timeBudgetMs ?? DEFAULT_TIME_BUDGET_MS;
+  const startOffset = options?.startOffset ?? 0;
+  const stopOffset = startOffset + maxPapers;
   const deadline = Date.now() + timeBudget;
 
   const leads: ScannedLead[] = [];
   const errors: string[] = [];
   let checked = 0;
   let filtered = 0;
-  let offset = 0;
+  let offset = startOffset;
 
-  while (offset < maxPapers && Date.now() < deadline) {
+  while (offset < stopOffset && Date.now() < deadline) {
     // ── Fetch a batch of papers from arxiv ──
     let batch: ArxivPaper[];
     try {
@@ -709,10 +720,16 @@ export async function scanArxiv(options?: {
     }
 
     if (batch.length === 0) break;
+    // arxiv pagination always returns full batches; trim to our window so
+    // sharded scans don't overlap (shard N's stopOffset = shard N+1's
+    // startOffset, and each shard must stay strictly inside its window).
+    const windowRemaining = stopOffset - offset;
+    const usableBatch =
+      windowRemaining < batch.length ? batch.slice(0, windowRemaining) : batch;
     offset += batch.length;
 
     // ── Dedup: skip papers already in pipeline_leads ──
-    const batchIds = batch.map((p) => p.arxivId);
+    const batchIds = usableBatch.map((p) => p.arxivId);
     let existingIds: Set<string>;
     try {
       existingIds = await getExistingArxivIds(batchIds);
@@ -720,7 +737,7 @@ export async function scanArxiv(options?: {
       existingIds = new Set();
     }
 
-    for (const paper of batch) {
+    for (const paper of usableBatch) {
       if (Date.now() >= deadline) break;
       checked++;
 
