@@ -66,11 +66,13 @@ async function planFromIntent(intent: string, constraints?: string): Promise<Pla
 }
 
 写 steps 的规则:
+- **永远不要返回 0 步** — 哪怕需求模糊, 也用你最合理的解读拆一个 plan. admin 看到 plan 后再调整 / 编辑步骤 / abort 比让他重新描述容易. **绝对不要 refuse to plan**.
 - 每步**只做一件可独立验证的事** (一个 lookup, 一个 propose_db_write, 一个 dm_user)
 - intent 用第一人称 + 具体工具名 (e.g. "我会 lookup get_lead_counts 拿 cn 的数量")
 - verification 写**怎么知道这步真做对了** (具体到看到什么字段)
 - 总步数 1-7 步, 超过就拆 task
-- 如果需求**模糊到无法拆**, 返回 { "goal": "你理解的目标", "steps": [], "rationale": "我需要先搞清楚这些再拆: 1) ... 2) ... 3) ..." } — **必须列具体问题** (2-3 条), 不要写 "目标太宽泛" 这种废话, admin 看了无法补充. e.g. "1) 是给所有 rep 还是只给 cn 的 rep? 2) 发什么内容 — 用现有模板还是新写? 3) 多久一次 — 一次性还是每周?"
+- 如果需求模糊, **rationale 里**列出你做的假设 (e.g. "我假设是给所有 rep 发, 不是只 cn; 用现有 outbound 模板; 一次性"). admin 看了 rationale 知道你假设了什么, 不对就直接改 step 或加约束.
+- 第一步**永远是 lookup 类** (risk_level=auto) — 拿数据先看清楚, 再做有副作用的事. 这给 admin 留一个低成本的中止点.
 
 risk_level 怎么标:
 - **"auto"** = 只读, 没副作用 — 任何 lookup / get_* / list_* / search 类的 step. 完成后自动进下一步, admin 不用点.
