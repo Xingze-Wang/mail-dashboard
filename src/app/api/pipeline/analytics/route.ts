@@ -48,9 +48,21 @@ export async function GET(req: NextRequest) {
     deliveredRecipients,
     repBySenderEmail,
   ] = await Promise.all([
-    supabase
-      .from("pipeline_leads")
-      .select("id, status, lead_tier, assigned_rep_id, h_index, source, created_at, sent_at, author_email, matched_directions"),
+    // Paginate-all — silent 1000-row cap on these used to undercount
+    // every stat downstream (caught 2026-05-16 when user reported
+    // totalLeads stuck near 1000 with 3068 actual rows).
+    fetchAllPipelineLeads<{
+      id: string;
+      status: string;
+      lead_tier: string | null;
+      assigned_rep_id: number | null;
+      h_index: number | null;
+      source: string | null;
+      created_at: string;
+      sent_at: string | null;
+      author_email: string | null;
+      matched_directions: string | string[] | null;
+    }>("id, status, lead_tier, assigned_rep_id, h_index, source, created_at, sent_at, author_email, matched_directions").then((data) => ({ data })),
     // No active filter: an inactive rep still owns historical leads and we
     // want their actual name on the chart, not "Rep #5".
     supabase.from("sales_reps").select("*").order("id"),
@@ -58,10 +70,10 @@ export async function GET(req: NextRequest) {
       .from("brief_lookups")
       .select("id, query, added_wechat, wechat_at, created_at")
       .eq("added_wechat", true),
-    supabase
-      .from("pipeline_leads")
-      .select("created_at, lead_tier, assigned_rep_id")
-      .gte("created_at", beijingDaysAgoStartUtc(30).toISOString()),
+    fetchAllPipelineLeads<{ created_at: string; lead_tier: string | null; assigned_rep_id: number | null }>(
+      "created_at, lead_tier, assigned_rep_id",
+      { gte: { col: "created_at", val: beijingDaysAgoStartUtc(30).toISOString() } },
+    ).then((data) => ({ data })),
     fetchDiscoveryCounts(),
     fetchDeliveredRecipients(),
     fetchRepRecipientCounts(),
@@ -270,7 +282,7 @@ export async function GET(req: NextRequest) {
 /* ── Per-channel breakdown with per-rep allocation ──────────────────── */
 
 interface RawLead {
-  id: number;
+  id: string;                                  // uuid, not int
   status: string;
   lead_tier: string | null;
   assigned_rep_id: number | null;
@@ -294,6 +306,37 @@ interface RawWechat {
  * authoritative "we sent this person an email" set — pipeline_leads
  * only covers ~30 of 1100+ historical sends.
  */
+/**
+ * Paginate-all helper for pipeline_leads. PostgREST silently caps un-
+ * paginated SELECT at 1000 rows — this used to make totalLeads,
+ * strongLeads, sentLeads, per-rep counts, etc all undercount once the
+ * table grew past 1k (truth was 3068 on 2026-05-16).
+ *
+ * Pattern matches fetchDeliveredRecipients / fetchRepRecipientCounts
+ * below. Caller passes the columns it actually needs to keep the
+ * payload small — `select("*")` would balloon to ~3MB per request and
+ * burn the function's 60s budget.
+ */
+async function fetchAllPipelineLeads<T = Record<string, unknown>>(
+  columns: string,
+  filters?: { gte?: { col: string; val: string } },
+): Promise<T[]> {
+  const all: T[] = [];
+  let cursor = 0;
+  const pageSize = 1000;
+  while (true) {
+    let q = supabase.from("pipeline_leads").select(columns);
+    if (filters?.gte) q = q.gte(filters.gte.col, filters.gte.val);
+    const { data, error } = await q.range(cursor, cursor + pageSize - 1);
+    if (error || !data || data.length === 0) break;
+    all.push(...(data as T[]));
+    if (data.length < pageSize) break;
+    cursor += pageSize;
+    if (cursor > 50_000) break; // safety against runaway loop
+  }
+  return all;
+}
+
 async function fetchDeliveredRecipients(): Promise<Set<string>> {
   const emails = new Set<string>();
   let cursor = 0;
