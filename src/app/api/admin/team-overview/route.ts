@@ -103,13 +103,16 @@ export async function GET(req: NextRequest) {
     if (!prev || t > prev) lastActByRep.set(rid, t);
   }
 
-  // 4. Inbound replies and wechat conversions (last 7d)
+  // 4. Inbound replies and wechat conversions (last 7d).
+  // The right table is `inbound_emails` (rep_id, created_at). The
+  // earlier code used `email_contact_history` with `direction`+`received_at`
+  // — neither column exists; PostgREST silently returned null and
+  // replied_7d was always 0. Caught by audit subagent.
   const { data: inbound7d } = await supabase
-    .from("email_contact_history")
+    .from("inbound_emails")
     .select("rep_id")
     .in("rep_id", repIds)
-    .gte("received_at", since7d)
-    .eq("direction", "inbound");
+    .gte("created_at", since7d);
   const repliedByRep = new Map<number, number>();
   for (const r of inbound7d ?? []) {
     const rid = r.rep_id as number;
@@ -140,18 +143,20 @@ export async function GET(req: NextRequest) {
     readyByRep.set(rid, (readyByRep.get(rid) ?? 0) + 1);
   }
 
-  // 6. Today's missions — total + done (uses v_mission_today which
-  //    already calculates progress vs target)
+  // 6. Today's missions — total + done. v_mission_today exposes the
+  // progress column as `progress_count` (not `progress`); /api/missions
+  // uses the right name. This route was using `progress` which is
+  // undefined and made `missions_done` always 0. Caught by audit subagent.
   const { data: missionsToday } = await supabase
     .from("v_mission_today")
-    .select("rep_id, target, progress")
+    .select("rep_id, target, progress_count")
     .in("rep_id", repIds);
   const missionsTotalByRep = new Map<number, number>();
   const missionsDoneByRep = new Map<number, number>();
   for (const m of missionsToday ?? []) {
     const rid = m.rep_id as number;
     missionsTotalByRep.set(rid, (missionsTotalByRep.get(rid) ?? 0) + 1);
-    if ((m.progress as number) >= (m.target as number)) {
+    if ((m.progress_count as number ?? 0) >= (m.target as number)) {
       missionsDoneByRep.set(rid, (missionsDoneByRep.get(rid) ?? 0) + 1);
     }
   }

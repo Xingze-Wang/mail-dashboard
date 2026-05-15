@@ -861,13 +861,17 @@ export default function PipelinePage() {
         spark: { color: "#B45309", points: sparkPoints },
       },
       {
-        label: "Sent · 7d",
+        // Label fix: `sent` from analytics is all-time pipeline_leads in
+        // sent/replied status, not 7-day. Renamed honestly. Audit-flagged.
+        label: "Sent (all-time)",
         value: String(sent),
         trend: { kind: "flat", text: "±0" },
         spark: { color: "#5A5A56", points: sparkPoints },
       },
       {
-        label: "Reply rate",
+        // Label fix: `conv` is wechat_conversion_rate (wechat_count /
+        // unique_delivered), NOT reply rate. Renamed honestly. Audit-flagged.
+        label: "WeChat rate",
         value: conv.toFixed(1),
         unit: "%",
         trend: conv > 0 ? { kind: "up", text: `${conv.toFixed(1)}%` } : { kind: "flat", text: "0%" },

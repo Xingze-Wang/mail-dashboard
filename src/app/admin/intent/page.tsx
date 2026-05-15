@@ -313,6 +313,23 @@ export default function AdminIntentPage() {
       {/* Live task */}
       {isLiveTask && task && (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {/* Visible Lark-approval prompt when stuck in 'planned'.
+              Without this the page looks like "running" forever while
+              actually waiting on admin to Yes the Lark card. */}
+          {task.status === "planned" && (
+            <div className="section-card" style={{
+              padding: "12px 18px",
+              borderLeft: "3px solid var(--gold)",
+              background: "var(--gold-bg)",
+              fontSize: 13, color: "var(--gold)",
+              display: "flex", alignItems: "center", gap: 10,
+            }}>
+              <span style={{ fontSize: 16 }}>👉</span>
+              <span style={{ flex: 1 }}>
+                <strong>Open Lark</strong> — Leon sent you a Yes/No card. The task starts when you ✓ it there.
+              </span>
+            </div>
+          )}
           <div className="section-card" style={{ padding: 0, overflow: "hidden" }}>
             <div style={{ padding: "18px 24px" }}>
               <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 10 }}>
@@ -712,7 +729,9 @@ function StepStateChip({ state }: { state: StepState }) {
 
 function StatusBadge({ status }: { status: TaskRow["status"] }) {
   const map: Record<TaskRow["status"], { label: string; color: string; bg: string }> = {
-    planned:   { label: "Planned",   color: "var(--text-tertiary)", bg: "var(--border-light)" },
+    // 'planned' means waiting for admin to Yes the Lark card — admin
+    // would think the UI is just "doing nothing". Better label.
+    planned:   { label: "Awaiting Lark ✓", color: "var(--gold)", bg: "var(--gold-bg)" },
     running:   { label: "Running",   color: "var(--blue)",          bg: "var(--blue-bg)" },
     paused:    { label: "Paused",    color: "var(--gold)",          bg: "var(--gold-bg)" },
     completed: { label: "Completed", color: "var(--green)",         bg: "var(--green-bg)" },
