@@ -121,9 +121,20 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // ── Today's narrative brief (LLM-generated nightly) ──────────────
+  // Single-row read per visit. If the cron hasn't fired yet today or
+  // the LLM failed, this is null and the page just hides the block.
+  const { data: brief } = await supabase
+    .from("daily_rep_brief")
+    .select("goal, reasoning, bullets, admin_overrode, admin_note, computed_at")
+    .eq("rep_id", session.repId)
+    .eq("brief_date", today)
+    .maybeSingle();
+
   return NextResponse.json({
     today,
     week_starting: monday,
+    today_brief: brief ?? null,
     quarterly: goals ?? [],
     team_focus: focusThisWeek,
     my_today: (myToday ?? []) as MissionRow[],

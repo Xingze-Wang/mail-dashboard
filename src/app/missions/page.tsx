@@ -65,9 +65,19 @@ interface TeamMission {
   status: string;
 }
 
+interface DailyBrief {
+  goal: string;
+  reasoning: string;
+  bullets: string[];
+  admin_overrode?: boolean;
+  admin_note?: string | null;
+  computed_at?: string;
+}
+
 interface MissionsResponse {
   today: string;
   week_starting: string;
+  today_brief: DailyBrief | null;
   quarterly: QuarterlyGoal[];
   team_focus: TeamFocus | null;
   my_today: MyMission[];
@@ -173,6 +183,58 @@ export default function MissionsPage() {
           <h1 className="page-title" style={{ margin: 0 }}>{headline}</h1>
         </div>
       </div>
+
+      {/* Today's narrative brief — LLM-written nightly, surfaces what
+          matters today + 2-3 tactical bullets. Hidden gracefully if
+          the cron hasn't fired yet or LLM failed (no brief row). */}
+      {data.today_brief && (
+        <div className="section-card" style={{
+          padding: 20, marginBottom: 16,
+          borderLeft: "3px solid var(--blue)",
+        }}>
+          <div style={{
+            fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)",
+            textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8,
+          }}>
+            Today {data.today_brief.admin_overrode && (
+              <span style={{ color: "var(--gold)", marginLeft: 6 }}>(admin edited)</span>
+            )}
+          </div>
+          <div style={{
+            fontFamily: "var(--font-heading)", fontSize: 18,
+            color: "var(--text)", marginBottom: 8, letterSpacing: "-0.01em",
+            lineHeight: 1.35,
+          }}>
+            {data.today_brief.goal}
+          </div>
+          <div style={{
+            fontSize: 13, color: "var(--text-secondary)",
+            lineHeight: 1.55, marginBottom: data.today_brief.bullets.length > 0 ? 12 : 0,
+          }}>
+            {data.today_brief.reasoning}
+          </div>
+          {data.today_brief.bullets.length > 0 && (
+            <ul style={{
+              margin: 0, paddingLeft: 18, listStyle: "disc",
+              fontSize: 13, color: "var(--text)", lineHeight: 1.6,
+            }}>
+              {data.today_brief.bullets.map((b, i) => (
+                <li key={i} style={{ marginBottom: 2 }}>{b}</li>
+              ))}
+            </ul>
+          )}
+          {data.today_brief.admin_note && (
+            <div style={{
+              marginTop: 12, padding: "8px 12px",
+              background: "var(--gold-bg)", borderLeft: "2px solid var(--gold)",
+              borderRadius: "0 4px 4px 0",
+              fontSize: 12, color: "var(--gold)",
+            }}>
+              <strong>Admin:</strong> {data.today_brief.admin_note}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Quarterly goals — slim banner, destination context */}
       {data.quarterly.length > 0 && (

@@ -243,6 +243,7 @@ export async function GET(req: NextRequest) {
     ["onboarding_followup", () => callInternalCron("/api/cron/onboarding-followup", secret)],
     ["curriculum_miner",    () => callInternalCron("/api/cron/curriculum-miner", secret)],
     ["db_write_digest",     () => callInternalCron("/api/cron/db-write-digest", secret)],
+    ["daily_rep_brief",     () => callInternalCron("/api/cron/daily-rep-brief", secret)],
   ];
   const fanOut: Record<string, unknown> = {};
   for (const [name, fn] of fanOutSteps) {

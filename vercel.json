@@ -11,6 +11,8 @@
     { "path": "/api/cron/template-auto-promote","schedule": "0 5 * * *" },
     { "path": "/api/cron/insights-realign",    "schedule": "0 6 * * *" },
     { "path": "/api/cron/insights-prewarm",    "schedule": "15 6 * * *" },
+    { "path": "/api/cron/daily-rep-brief",     "schedule": "30 6 * * *" },
+    { "path": "/api/cron/congress-topic-propose", "schedule": "0 7 * * 4" },
     { "path": "/api/cron/model-bench-eval",    "schedule": "0 8 * * *" },
     { "path": "/api/missions/heuristic-seed",  "schedule": "0 23 * * 0-4" },
     { "path": "/api/missions/allocate-leads",  "schedule": "0 1 * * 1-5" },

@@ -431,6 +431,21 @@ export async function processAdminInboxCardAction(rawEvent: unknown): Promise<{
       }
     }
 
+    // Side effect: congress debate topic approved → flag for next Monday
+    if (typeof evidence.congress_debate_id === "string") {
+      const { error: upErr } = await supabase
+        .from("congress_debate_proposals")
+        .update({
+          status: "approved",
+          approved_by_rep_id: rep.id,
+          approved_at: new Date().toISOString(),
+        })
+        .eq("id", evidence.congress_debate_id);
+      sideEffectToast = upErr
+        ? `⚠️ congress topic approval failed: ${upErr.message.slice(0, 60)}`
+        : "🏛 已批准 — 周一 Congress 会讨论";
+    }
+
     // Side effect: guided_task plan approved → flip to running
     if (typeof evidence.guided_task_id === "string") {
       const { approveGuidedTaskPlan } = await import("@/lib/guided-tasks");
@@ -519,6 +534,14 @@ export async function processAdminInboxCardAction(rawEvent: unknown): Promise<{
         rejected_by_rep_id: rep.id,
         reason: "rejected via Lark card (reason pending)",
       });
+    }
+    if (typeof evidence.congress_debate_id === "string") {
+      await supabase.from("congress_debate_proposals").update({
+        status: "rejected",
+        approved_by_rep_id: rep.id,
+        approved_at: new Date().toISOString(),
+        rejected_reason: "rejected via Lark card (reason pending)",
+      }).eq("id", evidence.congress_debate_id);
     }
     await supabase
       .from("admin_inbox")
