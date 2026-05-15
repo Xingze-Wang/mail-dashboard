@@ -37,7 +37,7 @@ export async function GET(req: NextRequest) {
   let query = supabase
     .from("admin_inbox")
     .select(
-      "id, kind, headline, body, source_rep_id, evidence, status, dedup_hash, created_at, updated_at, acted_at",
+      "id, kind, headline, body, source_rep_id, evidence, status, rejected_reason, dedup_hash, created_at, updated_at, acted_at",
     )
     .order("created_at", { ascending: false })
     .limit(200);

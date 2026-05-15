@@ -32,7 +32,8 @@ interface InboxRow {
   body: string | null;
   source_rep_id: number | null;
   evidence: Record<string, unknown> | null;
-  status: "new" | "acknowledged" | "dismissed" | "done";
+  status: "new" | "acknowledged" | "dismissed" | "done" | "awaiting_reason";
+  rejected_reason?: string | null;
   dedup_hash: string;
   created_at: string;
   updated_at: string;
@@ -60,6 +61,7 @@ const STATUS_LABEL: Record<InboxRow["status"], string> = {
   acknowledged: "Acknowledged",
   dismissed: "Dismissed",
   done: "Done",
+  awaiting_reason: "Awaiting reason",
 };
 
 export default function AdminInboxPage() {
@@ -246,6 +248,15 @@ export default function AdminInboxPage() {
                 {row.body && (
                   <p className="text-slate-600 text-sm mt-1.5 whitespace-pre-wrap">{row.body}</p>
                 )}
+                {row.rejected_reason && (
+                  <div className="mt-2 px-2.5 py-1.5 bg-red-50 border-l-2 border-red-300 rounded-r">
+                    <p className="text-[11px] font-medium text-red-700 mb-0.5">Why you said No</p>
+                    <p className="text-sm text-red-900 whitespace-pre-wrap">{row.rejected_reason}</p>
+                  </div>
+                )}
+                {row.status === "awaiting_reason" && (
+                  <p className="text-[11px] text-amber-700 mt-1.5">⏳ Waiting for you to DM the reason in Lark…</p>
+                )}
                 {row.evidence && Object.keys(row.evidence).length > 0 && (
                   <details className="mt-2">
                     <summary className="text-xs text-slate-500 cursor-pointer hover:text-slate-700">
@@ -258,57 +269,26 @@ export default function AdminInboxPage() {
                 )}
               </div>
               <div className="flex flex-col gap-1.5 shrink-0 min-w-[140px]">
-                {row.kind === "request" ? (
-                  <>
-                    <button
-                      onClick={() => void handleAction(row, "yes")}
-                      disabled={acting === row.id || row.status !== "new"}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border border-emerald-300 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
-                    >
-                      <Check className="w-3 h-3" /> Yes
-                    </button>
-                    <button
-                      onClick={() => void handleAction(row, "no")}
-                      disabled={acting === row.id || row.status !== "new"}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border border-red-300 text-red-600 hover:bg-red-50 disabled:opacity-50"
-                    >
-                      <X className="w-3 h-3" /> No
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <button
-                      onClick={() => void handleAction(row, "skill")}
-                      disabled={acting === row.id || row.status !== "new"}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border border-indigo-300 text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
-                      title="Activatable procedure — loaded every session"
-                    >
-                      🛠 Skill
-                    </button>
-                    <button
-                      onClick={() => void handleAction(row, "memory")}
-                      disabled={acting === row.id || row.status !== "new"}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                      title="Fact, recalled by relevance"
-                    >
-                      💾 Memory
-                    </button>
-                    <button
-                      onClick={() => void handleAction(row, "both")}
-                      disabled={acting === row.id || row.status !== "new"}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border border-amber-300 text-amber-700 hover:bg-amber-50 disabled:opacity-50"
-                    >
-                      ⚡ Both
-                    </button>
-                    <button
-                      onClick={() => void handleAction(row, "neither")}
-                      disabled={acting === row.id || row.status !== "new"}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border border-slate-300 text-slate-500 hover:bg-slate-50 disabled:opacity-50"
-                    >
-                      🗑 Neither
-                    </button>
-                  </>
-                )}
+                <button
+                  onClick={() => void handleAction(row, "yes")}
+                  disabled={acting === row.id || row.status !== "new"}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border border-emerald-300 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+                  title={
+                    row.kind === "request"
+                      ? "Approve / acknowledge this request"
+                      : "Yes — Leon auto-classifies as skill or memory"
+                  }
+                >
+                  <Check className="w-3 h-3" /> Yes
+                </button>
+                <button
+                  onClick={() => void handleAction(row, "no")}
+                  disabled={acting === row.id || row.status !== "new"}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border border-red-300 text-red-600 hover:bg-red-50 disabled:opacity-50"
+                  title="No — Leon will DM you in Lark asking why"
+                >
+                  <X className="w-3 h-3" /> No
+                </button>
               </div>
             </div>
           </div>

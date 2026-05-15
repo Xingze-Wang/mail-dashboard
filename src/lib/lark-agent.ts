@@ -720,6 +720,47 @@ export async function processInboundLarkMessage(
   // Best-effort; don't block on it.
   mirrorToHelperMessages(rep.id, "user", text).catch(() => {});
 
+  // awaiting_reason capture: if admin clicked No on a card recently and
+  // hasn't typed a reason yet, the NEXT inbound DM gets captured as the
+  // rejected_reason. We only intercept if the admin sent a "short reply"
+  // (≤300 chars), so a longer question doesn't accidentally get
+  // sucked in. After capture we DM a one-line confirm and skip the
+  // normal agent loop — the message was reason-input, not a question.
+  if (rep.role === "admin") {
+    try {
+      const tenMinAgo = new Date(Date.now() - 10 * 60_000).toISOString();
+      const { data: awaiting } = await supabase
+        .from("admin_inbox")
+        .select("id, headline")
+        .eq("status", "awaiting_reason")
+        .gte("awaiting_reason_since", tenMinAgo)
+        .order("awaiting_reason_since", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (awaiting && text.length <= 300 && text.length >= 2) {
+        await supabase
+          .from("admin_inbox")
+          .update({
+            status: "dismissed",
+            rejected_reason: text,
+            acted_at: new Date().toISOString(),
+          })
+          .eq("id", awaiting.id);
+        try {
+          const { sendMessage } = await import("@/lib/lark");
+          await sendMessage({
+            receive_id: chatId,
+            receive_id_type: "chat_id",
+            text: `📝 记下了 — 你拒绝 "${(awaiting.headline ?? "").slice(0, 60)}" 的原因: "${text.slice(0, 120)}". 同类的我会少给你推.`,
+          });
+        } catch {/* best-effort */}
+        return { ok: true };
+      }
+    } catch (err) {
+      console.warn(`[lark-agent/${transport}] awaiting_reason capture failed:`, err);
+    }
+  }
+
   // Fire-and-forget 👀 reaction so the user sees IMMEDIATELY that the
   // bot received their message — even if the LLM takes 30s or the reply
   // sendMessage fails. No await, no error handling — if it fails the

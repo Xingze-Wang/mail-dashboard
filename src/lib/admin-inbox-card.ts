@@ -44,60 +44,46 @@ const KIND_LABEL: Record<string, string> = {
 };
 
 // All possible click actions encoded in card buttons.
-export type AdminInboxAction = "yes" | "no" | "skill" | "memory" | "both" | "neither";
+// 'yes' / 'no' / 'expand_context' is the new unified set across all
+// kinds. Old kind-specific actions (skill/memory/both/neither) are
+// kept for backwards-compat with cards already in admin's DM.
+export type AdminInboxAction =
+  | "yes"
+  | "no"
+  | "expand_context"
+  | "skill"
+  | "memory"
+  | "both"
+  | "neither";
 
-function buildButtonsForKind(kind: string, inboxId: string) {
-  const isRequest = kind === "request";
-  if (isRequest) {
-    return [
-      {
-        tag: "button",
-        text: { tag: "plain_text", content: "✅ Yes" },
-        type: "primary",
-        value: { admin_inbox_action: "yes", inbox_id: inboxId },
-      },
-      {
-        tag: "button",
-        text: { tag: "plain_text", content: "❌ No" },
-        type: "danger",
-        value: { admin_inbox_action: "no", inbox_id: inboxId },
-      },
-    ];
-  }
-  // observation / idea (or anything else) → Skill / Memory / Both / Neither
+function buildButtonsForKind(_kind: string, inboxId: string) {
+  // Unified 2-button card: Yes / No.
+  // - Yes: Leon auto-classifies based on kind (request → ack; idea/obs →
+  //   auto-decide skill/memory/both via LLM)
+  // - No: status → 'awaiting_reason'; admin's next chat message in the
+  //   DM is captured as rejected_reason and status flips to 'dismissed'
+  //
+  // For "more context" the admin can just DM Leon — e.g. "tell me more
+  // about that idea card" — and Leon will pull the inbox row, sample
+  // questions, similar existing learnings, etc. No third button needed.
   return [
     {
       tag: "button",
-      text: { tag: "plain_text", content: "🛠 Skill" },
+      text: { tag: "plain_text", content: "✅ Yes" },
       type: "primary",
-      value: { admin_inbox_action: "skill", inbox_id: inboxId },
+      value: { admin_inbox_action: "yes", inbox_id: inboxId },
     },
     {
       tag: "button",
-      text: { tag: "plain_text", content: "💾 Memory" },
-      type: "default",
-      value: { admin_inbox_action: "memory", inbox_id: inboxId },
-    },
-    {
-      tag: "button",
-      text: { tag: "plain_text", content: "⚡ Both" },
-      type: "default",
-      value: { admin_inbox_action: "both", inbox_id: inboxId },
-    },
-    {
-      tag: "button",
-      text: { tag: "plain_text", content: "🗑 Neither" },
+      text: { tag: "plain_text", content: "❌ No" },
       type: "danger",
-      value: { admin_inbox_action: "neither", inbox_id: inboxId },
+      value: { admin_inbox_action: "no", inbox_id: inboxId },
     },
   ];
 }
 
-function buildHelperNote(kind: string) {
-  if (kind === "request") {
-    return "Yes = 同意/已处理. No = 不做/不相关.";
-  }
-  return "Skill = 我下次该这么做 (always loaded). Memory = 记住这个事实 (relevance-loaded). Both = 两个都存. Neither = 噪音, 不留.";
+function buildHelperNote(_kind: string) {
+  return "Yes = 同意/有用 (idea/observation 会自动分类成 skill/memory). No = 不要 — Leon 会在 DM 里问你为什么, 你直接回一句, 系统会记下原因.";
 }
 
 /**
@@ -236,13 +222,16 @@ export async function processAdminInboxCardAction(rawEvent: unknown): Promise<{
     return { ok: true, reason: `already decided: ${inbox.status}`, toast: `已是 ${inbox.status}` };
   }
 
-  // Yes/No path (kind=request)
+  // Yes path: unified across all kinds. For kind=request just acknowledge
+  // (+ trigger any side effect attached via evidence — e.g. approve a
+  // dynamic_tool proposal). For kind=idea / kind=observation, auto-classify
+  // the content into skill/memory/both via LLM and write helper_learnings
+  // rows. Admin no longer has to pick the bucket — Leon decides.
   if (action === "yes") {
-    // Side effects per inbox sub-type (encoded in evidence)
     const evidence = (inbox.evidence ?? {}) as Record<string, unknown>;
     let sideEffectToast: string | null = null;
 
-    // Dynamic tool proposal → flip dynamic_tools row to approved
+    // Side effect: dynamic_tool proposal approved
     if (typeof evidence.dynamic_tool_id === "string") {
       const { approveDynamicTool } = await import("@/lib/dynamic-tools");
       const r = await approveDynamicTool({
@@ -254,31 +243,98 @@ export async function processAdminInboxCardAction(rawEvent: unknown): Promise<{
       else sideEffectToast = `⚠️ tool approve failed: ${r.error?.slice(0, 60) ?? ""}`;
     }
 
-    // Doc edit proposal → flip doc_edit_proposals row to approved (+ apply)
-    // (handled separately via approve_doc_edit tool; left here for parity if we wire it)
+    // For idea/observation: auto-classify into skill vs memory vs both
+    let classificationToast: string | null = null;
+    if (inbox.kind === "idea" || inbox.kind === "observation") {
+      const { classifyAndStoreLearning } = await import("@/lib/admin-inbox-classify");
+      const r = await classifyAndStoreLearning({
+        inbox_id: inboxId,
+        headline: inbox.headline,
+        body: inbox.body,
+        original_kind: inbox.kind,
+      });
+      if (r.stored.length > 0) {
+        const labels = r.stored.map((s) => s === "skill" ? "🛠 skill" : "💾 memory").join(" + ");
+        classificationToast = `${labels} (Leon 自动分类)`;
+      }
+    }
 
     await supabase
       .from("admin_inbox")
-      .update({ status: "acknowledged", acted_at: new Date().toISOString() })
+      .update({
+        status: inbox.kind === "request" ? "acknowledged" : "done",
+        acted_at: new Date().toISOString(),
+      })
       .eq("id", inboxId);
-    return { ok: true, reason: "yes", toast: sideEffectToast ?? "✅ 同意" };
+    return {
+      ok: true,
+      reason: "yes",
+      toast: sideEffectToast ?? classificationToast ?? "✅ 同意",
+    };
   }
+
+  // No path: enter 'awaiting_reason'. Admin's next chat message gets
+  // captured as rejected_reason. The capture happens in lark-agent.ts
+  // (sees status=awaiting_reason on a recent inbox row for this admin
+  // and absorbs the next inbound message as the reason).
   if (action === "no") {
-    // Side effects per inbox sub-type
     const evidence = (inbox.evidence ?? {}) as Record<string, unknown>;
     if (typeof evidence.dynamic_tool_id === "string") {
       const { rejectDynamicTool } = await import("@/lib/dynamic-tools");
       await rejectDynamicTool({
         tool_id: evidence.dynamic_tool_id,
         rejected_by_rep_id: rep.id,
-        reason: "rejected via Lark card",
+        reason: "rejected via Lark card (reason pending)",
       });
     }
     await supabase
       .from("admin_inbox")
-      .update({ status: "dismissed", acted_at: new Date().toISOString() })
+      .update({
+        status: "awaiting_reason",
+        awaiting_reason_since: new Date().toISOString(),
+        acted_at: new Date().toISOString(),
+      })
       .eq("id", inboxId);
-    return { ok: true, reason: "no", toast: "❌ 不做" };
+
+    // DM admin asking for the reason
+    try {
+      const { getTenantAccessToken, pickBase } = await import("@/lib/lark");
+      const token = await getTenantAccessToken();
+      if (token && operatorOpenId) {
+        await fetch(
+          `${pickBase()}/im/v1/messages?receive_id_type=open_id`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              receive_id: operatorOpenId,
+              msg_type: "text",
+              content: JSON.stringify({
+                text: `❌ 你点了 No 在 "${(inbox.headline ?? "").slice(0, 80)}". \n直接回一句**为什么** (1-2 句话就行), 我会记下来. 例如: "太杂, 我先看真实需求再说" / "这个 cluster 是假的, 两个 rep 在问不同的事" / "下周再说, 现在 priority 在 X".`,
+              }),
+            }),
+            signal: AbortSignal.timeout(10_000),
+          },
+        );
+      }
+    } catch (err) {
+      console.warn("[admin-inbox-card] follow-up DM failed:", err);
+    }
+    return { ok: true, reason: "no", toast: "❌ 已 No — 等你说原因" };
+  }
+
+  // Backwards-compat: the 'expand_context' action used by the previous
+  // 3-button card is no longer wired (the 2-button card doesn't surface
+  // it). If a legacy card still has the button, just return a hint.
+  if (action === "expand_context") {
+    return {
+      ok: true,
+      reason: "expand_context_legacy",
+      toast: "在 DM 里跟我说 'more context' 我帮你拉",
+    };
   }
 
   // Skill / Memory / Both / Neither path (kind=observation | idea)

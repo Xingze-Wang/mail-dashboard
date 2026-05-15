@@ -168,8 +168,10 @@ export async function POST(req: Request) {
     let toastContent = "Received";
     if (oAction === "deny") toastContent = "Denied — sending notification…";
     else if (oAction === "approve_sales" || oAction === "approve_senior") toastContent = "Approved — provisioning + sending welcome email…";
-    else if (aInbox === "yes") toastContent = "✅ 同意";
-    else if (aInbox === "no") toastContent = "❌ 不做";
+    else if (aInbox === "yes") toastContent = "✅ 处理中…";
+    else if (aInbox === "no") toastContent = "❌ 等你说原因…";
+    else if (aInbox === "expand_context") toastContent = "🔍 (legacy) DM me for context";
+    // Backwards-compat with cards already in DM from the previous 4-button design
     else if (aInbox === "skill") toastContent = "🛠 存为 skill…";
     else if (aInbox === "memory") toastContent = "💾 存为 memory…";
     else if (aInbox === "both") toastContent = "⚡ 存为 skill + memory…";
