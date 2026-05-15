@@ -244,6 +244,7 @@ export async function GET(req: NextRequest) {
     ["curriculum_miner",    () => callInternalCron("/api/cron/curriculum-miner", secret)],
     ["db_write_digest",     () => callInternalCron("/api/cron/db-write-digest", secret)],
     ["daily_rep_brief",     () => callInternalCron("/api/cron/daily-rep-brief", secret)],
+    ["inbox_auto_archive",  () => callInternalCron("/api/cron/inbox-auto-archive", secret)],
   ];
   const fanOut: Record<string, unknown> = {};
   for (const [name, fn] of fanOutSteps) {

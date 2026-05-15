@@ -325,12 +325,15 @@ export default function OverviewPage() {
   return (
     <div>
       {/* ── Page Header ── */}
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 28 }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 20 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 14 }}>
           <h1 className="page-title">{t("overview.title", locale)}</h1>
           <span className="lead-count">{t("overview.subtitle", locale)}</span>
         </div>
       </div>
+
+      {/* ── Today prompt — what should you actually do on this page? ── */}
+      {me && <TodayPrompt role={me.role} repId={me.repId} repName={me.repName} />}
 
       {/* ── Stat Cards ── */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 16, marginBottom: 24 }}>
@@ -473,5 +476,190 @@ export default function OverviewPage() {
         )}
       </div>
     </div>
+  );
+}
+
+// ─── Today prompt — role-aware "what should you do here?" strip ────
+
+interface AdminPrompt {
+  role: "admin";
+  stuck_count: number;
+  watch_count: number;
+  inbox_pending: number;
+  congress_pending: number;
+}
+interface RepPrompt {
+  role: "rep";
+  rep_name: string;
+  today_goal: string | null;
+  missions_done: number;
+  missions_total: number;
+  ready_queue: number;
+}
+
+function TodayPrompt({ role, repId, repName }: { role: "admin" | "sales"; repId: number; repName: string }) {
+  const [data, setData] = useState<AdminPrompt | RepPrompt | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        if (role === "admin") {
+          // Pull team-overview + inbox counts in parallel
+          const [overviewR, inboxR] = await Promise.all([
+            fetch("/api/admin/team-overview", { credentials: "include", cache: "no-store" }).then((r) => r.ok ? r.json() : null),
+            fetch("/api/admin/inbox?status=new", { credentials: "include", cache: "no-store" }).then((r) => r.ok ? r.json() : null),
+          ]);
+          const reps = overviewR?.reps ?? [];
+          const inboxRows = inboxR?.rows ?? [];
+          const congressPending = inboxRows.filter((r: { evidence?: { source?: string } }) =>
+            r.evidence?.source === "congress",
+          ).length;
+          if (!cancelled) {
+            setData({
+              role: "admin",
+              stuck_count: reps.filter((r: { health: string }) => r.health === "stuck").length,
+              watch_count: reps.filter((r: { health: string }) => r.health === "watch").length,
+              inbox_pending: inboxRows.length,
+              congress_pending: congressPending,
+            });
+          }
+        } else {
+          // Rep view: today's brief + missions snapshot from /api/missions
+          const r = await fetch("/api/missions", { credentials: "include", cache: "no-store" });
+          if (!r.ok) return;
+          const j = await r.json();
+          const missions = (j.my_today ?? []) as Array<{ progress_count: number | null; target: number }>;
+          const done = missions.filter((m) => (m.progress_count ?? 0) >= m.target).length;
+          // Ready queue — count of leads assigned to me with status=ready.
+          // /api/pipeline/ready-count returns { count } scoped by session.
+          let ready = 0;
+          try {
+            const rr = await fetch("/api/pipeline/ready-count", { credentials: "include", cache: "no-store" });
+            if (rr.ok) ready = (await rr.json())?.count ?? 0;
+          } catch {/* best-effort */}
+          if (!cancelled) {
+            setData({
+              role: "rep",
+              rep_name: repName,
+              today_goal: j.today_brief?.goal ?? null,
+              missions_done: done,
+              missions_total: missions.length,
+              ready_queue: ready,
+            });
+          }
+        }
+      } catch {/* silent */}
+    }
+    void load();
+  }, [role, repId, repName]);
+
+  if (!data) return null;
+
+  // Compose the prompt content
+  if (data.role === "admin") {
+    const hasAttention = data.stuck_count > 0 || data.watch_count > 0 || data.inbox_pending > 5;
+    return (
+      <div className="section-card" style={{
+        padding: "14px 20px", marginBottom: 24,
+        borderLeft: `3px solid ${hasAttention ? "var(--gold)" : "var(--green)"}`,
+      }}>
+        <div style={{
+          display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap",
+          fontSize: 13,
+        }}>
+          <span style={{
+            fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)",
+            textTransform: "uppercase", letterSpacing: "0.06em",
+          }}>
+            Today
+          </span>
+          {data.stuck_count > 0 && (
+            <PromptStat label="stuck reps" value={data.stuck_count} color="var(--coral)" href="/missions" />
+          )}
+          {data.watch_count > 0 && (
+            <PromptStat label="need a look" value={data.watch_count} color="var(--gold)" href="/missions" />
+          )}
+          {data.inbox_pending > 0 && (
+            <PromptStat
+              label="inbox pending"
+              value={data.inbox_pending}
+              color={data.inbox_pending > 10 ? "var(--gold)" : "var(--text-secondary)"}
+              href="/admin/inbox"
+            />
+          )}
+          {data.congress_pending > 0 && (
+            <PromptStat label="congress proposals" value={data.congress_pending} color="var(--blue)" href="/admin/inbox" />
+          )}
+          {!hasAttention && (
+            <span style={{ color: "var(--text-secondary)" }}>
+              Team's healthy. Nothing pressing on your desk.
+            </span>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Rep view
+  return (
+    <div className="section-card" style={{
+      padding: "14px 20px", marginBottom: 24,
+      borderLeft: `3px solid var(--blue)`,
+    }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{
+            fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)",
+            textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4,
+          }}>
+            Today
+          </div>
+          {data.today_goal ? (
+            <div style={{
+              fontFamily: "var(--font-heading)", fontSize: 16,
+              color: "var(--text)", lineHeight: 1.35, letterSpacing: "-0.01em",
+            }}>
+              {data.today_goal}
+            </div>
+          ) : (
+            <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>
+              {data.rep_name}, 今天没特别的目标 — 按常规节奏跑就行.
+            </div>
+          )}
+        </div>
+        <div style={{ display: "flex", gap: 16, fontSize: 13, alignItems: "center" }}>
+          {data.missions_total > 0 && (
+            <a href="/missions" style={{
+              color: data.missions_done >= data.missions_total ? "var(--green)" : "var(--text-secondary)",
+              fontVariantNumeric: "tabular-nums", textDecoration: "none",
+            }}>
+              <strong>{data.missions_done}/{data.missions_total}</strong>{" "}
+              <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>missions</span>
+            </a>
+          )}
+          {data.ready_queue > 0 && (
+            <a href="/pipeline" style={{
+              color: "var(--blue)", fontVariantNumeric: "tabular-nums", textDecoration: "none",
+            }}>
+              <strong>{data.ready_queue}</strong>{" "}
+              <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>ready to send</span>
+            </a>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PromptStat({ label, value, color, href }: { label: string; value: number; color: string; href: string }) {
+  return (
+    <a href={href} style={{
+      display: "inline-flex", alignItems: "baseline", gap: 4,
+      color: color, textDecoration: "none",
+    }}>
+      <strong style={{ fontVariantNumeric: "tabular-nums" }}>{value}</strong>
+      <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>{label}</span>
+    </a>
   );
 }
