@@ -142,6 +142,30 @@ export async function proposeDynamicWrite(args: {
     };
   }
 
+  // SCHEMA GROUNDING: dry-run via EXPLAIN to catch column/table errors
+  // before admin sees the proposal. EXPLAIN UPDATE/DELETE/INSERT is
+  // read-only — Postgres reports the plan without executing. Even
+  // more important here than in propose_tool because dynamic_writes
+  // actually mutate rows.
+  try {
+    const { data: explainResult, error: explainErr } = await supabase.rpc("_explain_sql", {
+      sql_text: args.sql_template,
+      sql_params: args.param_values,
+    });
+    if (!explainErr && explainResult && (explainResult as { ok?: boolean }).ok === false) {
+      const pgError = (explainResult as { error?: string }).error ?? "unknown";
+      return {
+        ok: false,
+        error: `SQL doesn't parse against the live schema: ${pgError}. Verify column / table names — try explain_ontology first.`,
+      };
+    }
+    if (explainErr) {
+      console.warn("[dynamic-writes] _explain_sql RPC unavailable, skipping schema gate:", explainErr.message);
+    }
+  } catch (e) {
+    console.warn("[dynamic-writes] EXPLAIN gate threw, skipping:", e);
+  }
+
   const { data: row, error } = await supabase
     .from("dynamic_writes")
     .insert({

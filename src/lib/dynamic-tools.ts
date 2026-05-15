@@ -142,6 +142,43 @@ export async function proposeDynamicTool(args: {
     return { ok: false, error: `tool '${args.name}' already exists (status=${existing.status})` };
   }
 
+  // SCHEMA GROUNDING: dry-run the SQL via EXPLAIN before accepting the
+  // proposal. Catches hallucinated columns ("pipeline_leads.wechat_added_at")
+  // and missing tables at write-time, so admin never sees bogus proposals.
+  //
+  // We synthesize placeholder values matching the args_schema's type so
+  // EXPLAIN can parse the parameterized SQL. Best-effort: if the RPC
+  // doesn't exist (migration not applied), skip the gate.
+  try {
+    const explainParams = args.param_order.map((p) => {
+      const spec = args.args_schema[p];
+      // Synthesize a sample value Postgres can bind. EXPLAIN doesn't
+      // actually run the query, but it does need the placeholder to be
+      // bindable to the declared type via the cast in the SQL.
+      if (spec?.type === "number") return 1;
+      if (spec?.type === "boolean") return false;
+      return "smoke";
+    });
+    const { data: explainResult, error: explainErr } = await supabase.rpc("_explain_sql", {
+      sql_text: args.sql_template,
+      sql_params: explainParams,
+    });
+    if (!explainErr && explainResult && (explainResult as { ok?: boolean }).ok === false) {
+      const pgError = (explainResult as { error?: string }).error ?? "unknown";
+      return {
+        ok: false,
+        error: `SQL doesn't parse against the live schema: ${pgError}. Check column / table names. Hint: use explain_ontology to ground in real schema before writing SQL.`,
+      };
+    }
+    // If RPC failed (e.g. migration not yet applied), don't block — log
+    // and continue. Validation degrades to TS-side checks only.
+    if (explainErr) {
+      console.warn("[dynamic-tools] _explain_sql RPC unavailable, skipping schema gate:", explainErr.message);
+    }
+  } catch (e) {
+    console.warn("[dynamic-tools] EXPLAIN gate threw, skipping:", e);
+  }
+
   const { data: row, error } = await supabase
     .from("dynamic_tools")
     .insert({
