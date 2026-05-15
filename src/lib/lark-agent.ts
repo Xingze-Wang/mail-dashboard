@@ -730,12 +730,13 @@ export async function processInboundLarkMessage(
   // Best-effort; don't block on it.
   mirrorToHelperMessages(rep.id, "user", text).catch(() => {});
 
-  // awaiting_reason capture: if admin clicked No on a card recently and
-  // hasn't typed a reason yet, the NEXT inbound DM gets captured as the
-  // rejected_reason. We only intercept if the admin sent a "short reply"
-  // (≤300 chars), so a longer question doesn't accidentally get
-  // sucked in. After capture we DM a one-line confirm and skip the
-  // normal agent loop — the message was reason-input, not a question.
+  // awaiting_reason capture: admin clicked No on a card; their next DM
+  // can become the rejected_reason. To avoid greedily eating real
+  // questions, capture ONLY if the message matches the reason-shape:
+  //   - explicit prefix:    `因为 ...` / `原因: ...` / `because ...` / `:` / `reason: ...`
+  //   - OR a short non-question (≤120 chars, no '?' / '?' / ends in non-interrogative)
+  // Otherwise let the agent loop handle it normally. Admin can still
+  // attach a reason later via the dashboard.
   if (rep.role === "admin") {
     try {
       const tenMinAgo = new Date(Date.now() - 10 * 60_000).toISOString();
@@ -747,24 +748,39 @@ export async function processInboundLarkMessage(
         .order("awaiting_reason_since", { ascending: false })
         .limit(1)
         .maybeSingle();
-      if (awaiting && text.length <= 300 && text.length >= 2) {
-        await supabase
-          .from("admin_inbox")
-          .update({
-            status: "dismissed",
-            rejected_reason: text,
-            acted_at: new Date().toISOString(),
-          })
-          .eq("id", awaiting.id);
-        try {
-          const { sendMessage } = await import("@/lib/lark");
-          await sendMessage({
-            receive_id: chatId,
-            receive_id_type: "chat_id",
-            text: `📝 记下了 — 你拒绝 "${(awaiting.headline ?? "").slice(0, 60)}" 的原因: "${text.slice(0, 120)}". 同类的我会少给你推.`,
-          });
-        } catch {/* best-effort */}
-        return { ok: true };
+
+      if (awaiting) {
+        const trimmed = text.trim();
+        const reasonPrefixMatch = trimmed.match(
+          /^(?:因为|原因[:：]?|because|reason[:：]?|理由[:：]?|:)\s*(.+)$/i,
+        );
+        const looksLikeQuestion = /[?？]\s*$/.test(trimmed) ||
+          /^(怎么|为什么|是不是|什么|哪|谁|多少|how|why|what|where|who|when|is|are|can|do |does )/i.test(trimmed);
+        const isShortNonQuestion = trimmed.length >= 3 && trimmed.length <= 120 && !looksLikeQuestion;
+        const reasonText = reasonPrefixMatch?.[1]?.trim() ?? (isShortNonQuestion ? trimmed : null);
+
+        if (reasonText) {
+          await supabase
+            .from("admin_inbox")
+            .update({
+              status: "dismissed",
+              rejected_reason: reasonText.slice(0, 500),
+              acted_at: new Date().toISOString(),
+            })
+            .eq("id", awaiting.id);
+          try {
+            const { sendMessage } = await import("@/lib/lark");
+            await sendMessage({
+              receive_id: chatId,
+              receive_id_type: "chat_id",
+              text: `📝 记下了 — 你拒绝 "${(awaiting.headline ?? "").slice(0, 60)}" 的原因: "${reasonText.slice(0, 120)}". 同类的我会少给你推.`,
+            });
+          } catch {/* best-effort */}
+          return { ok: true };
+        }
+        // If we didn't capture: do nothing — let the message flow into
+        // the regular agent loop. The awaiting_reason row stays put
+        // until either a future short reply OR the 10-min window expires.
       }
     } catch (err) {
       console.warn(`[lark-agent/${transport}] awaiting_reason capture failed:`, err);

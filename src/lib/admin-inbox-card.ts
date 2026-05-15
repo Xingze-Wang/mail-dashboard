@@ -22,6 +22,47 @@ import { getTenantAccessToken, pickBase } from "@/lib/lark";
 
 const ADMIN_REP_ID = 5;  // Xingze, kept consistent with onboarding.ts
 
+/**
+ * Rewrite a sent Lark card in place so the buttons are replaced by a
+ * single "resolved" line. This is what makes a click feel real —
+ * without this, the original card stays clickable forever and admin
+ * can't tell their click took effect.
+ *
+ * Best-effort: a failed PATCH means the card just stays as-is; the
+ * DB side effect already ran, so the user-visible bug is "card looks
+ * stale" not "click didn't work".
+ */
+async function rewriteCardToResolved(messageId: string, resolutionLine: string): Promise<void> {
+  try {
+    const token = await getTenantAccessToken();
+    if (!token) return;
+    const newCard = {
+      config: { wide_screen_mode: true },
+      elements: [
+        {
+          tag: "div",
+          text: { tag: "lark_md", content: resolutionLine },
+        },
+      ],
+    };
+    const res = await fetch(
+      `${pickBase()}/im/v1/messages/${messageId}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ content: JSON.stringify(newCard) }),
+        signal: AbortSignal.timeout(10_000),
+      },
+    );
+    if (!res.ok) {
+      const txt = await res.text().catch(() => "");
+      console.warn("[admin-inbox-card] PATCH failed:", res.status, txt.slice(0, 200));
+    }
+  } catch (err) {
+    console.warn("[admin-inbox-card] rewriteCardToResolved exception:", err);
+  }
+}
+
 async function getAdminOpenId(): Promise<string | null> {
   const { data } = await supabase
     .from("sales_reps")
@@ -216,6 +257,20 @@ export async function sendAdminInboxCard(args: {
     );
     const j = (await res.json().catch(() => ({}))) as { code?: number; data?: { message_id?: string } };
     if (res.ok && j.code === 0 && j.data?.message_id) {
+      // Persist message_id so processAdminInboxCardAction can rewrite
+      // this exact card to a "✅ Done — <action>" body after admin clicks.
+      // Without this, the original card stays clickable forever, which is
+      // why admin can't tell their click took effect (P0 friction).
+      try {
+        const { data: existing } = await supabase
+          .from("admin_inbox")
+          .select("evidence")
+          .eq("id", args.inbox_id)
+          .maybeSingle();
+        const ev = (existing?.evidence ?? {}) as Record<string, unknown>;
+        ev.card_message_id = j.data.message_id;
+        await supabase.from("admin_inbox").update({ evidence: ev }).eq("id", args.inbox_id);
+      } catch {/* best-effort: card already pushed, evidence patch is non-critical */}
       return j.data.message_id;
     }
     console.error("[admin-inbox-card] send failed:", res.status, j);
@@ -318,6 +373,12 @@ export async function processAdminInboxCardAction(rawEvent: unknown): Promise<{
     return { ok: true, reason: `already decided: ${inbox.status}`, toast: `⚠️ 这张已是 ${inbox.status}` };
   }
 
+  // Pull the stored card message_id (sent by sendAdminInboxCard) so we
+  // can patch the card to a resolved state at the end of each branch.
+  const cardMessageId =
+    (inbox.evidence as Record<string, unknown> | null)?.card_message_id as string | undefined;
+  const headlineShort = (inbox.headline ?? "").slice(0, 100);
+
   // Yes path: unified across all kinds. For kind=request just acknowledge
   // (+ trigger any side effect attached via evidence — e.g. approve a
   // dynamic_tool proposal). For kind=idea / kind=observation, auto-classify
@@ -362,6 +423,15 @@ export async function processAdminInboxCardAction(rawEvent: unknown): Promise<{
         acted_at: new Date().toISOString(),
       })
       .eq("id", inboxId);
+
+    // Rewrite the card so buttons disappear and admin sees what happened.
+    if (cardMessageId) {
+      const resolutionLine = sideEffectToast ?? classificationToast ?? "✅ 已同意";
+      await rewriteCardToResolved(
+        cardMessageId,
+        `✅ **${resolutionLine}**\n_${headlineShort}_`,
+      );
+    }
     return {
       ok: true,
       reason: "yes",
@@ -419,6 +489,12 @@ export async function processAdminInboxCardAction(rawEvent: unknown): Promise<{
     } catch (err) {
       console.warn("[admin-inbox-card] follow-up DM failed:", err);
     }
+    if (cardMessageId) {
+      await rewriteCardToResolved(
+        cardMessageId,
+        `❌ **已 No** — 等你在 DM 里说原因\n_${headlineShort}_`,
+      );
+    }
     return { ok: true, reason: "no", toast: "❌ 已 No — 等你说原因" };
   }
 
@@ -439,6 +515,9 @@ export async function processAdminInboxCardAction(rawEvent: unknown): Promise<{
       .from("admin_inbox")
       .update({ status: "dismissed", acted_at: new Date().toISOString() })
       .eq("id", inboxId);
+    if (cardMessageId) {
+      await rewriteCardToResolved(cardMessageId, `🗑 **不留**\n_${headlineShort}_`);
+    }
     return { ok: true, reason: "neither", toast: "🗑 不留" };
   }
 
@@ -509,5 +588,9 @@ export async function processAdminInboxCardAction(rawEvent: unknown): Promise<{
     memory: "💾 存为 memory (相关时召回)",
     both: "⚡ Skill + Memory 都存了",
   };
-  return { ok: true, reason: action, toast: toastMap[action] ?? "ok" };
+  const resolved = toastMap[action] ?? "ok";
+  if (cardMessageId) {
+    await rewriteCardToResolved(cardMessageId, `✅ **${resolved}**\n_${headlineShort}_`);
+  }
+  return { ok: true, reason: action, toast: resolved };
 }
