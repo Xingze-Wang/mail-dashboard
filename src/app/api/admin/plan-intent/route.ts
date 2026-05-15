@@ -16,6 +16,7 @@ export const maxDuration = 30;
 interface PlanStep {
   intent: string;
   verification?: string;
+  risk_level?: "auto" | "review";
 }
 
 interface PlanPreview {
@@ -55,7 +56,11 @@ async function planFromIntent(intent: string, constraints?: string): Promise<Pla
   "goal": "一句话总结 admin 的需求",
   "rationale": "一两句话说明为什么这么拆步骤 (admin 看 plan 时帮他评估)",
   "steps": [
-    { "intent": "Step 0: 我要做 X (具体到调哪个 tool)", "verification": "我预期看到 Y" },
+    {
+      "intent": "Step 0: 我要做 X (具体到调哪个 tool)",
+      "verification": "我预期看到 Y",
+      "risk_level": "auto" 或 "review"
+    },
     ...
   ]
 }
@@ -65,8 +70,13 @@ async function planFromIntent(intent: string, constraints?: string): Promise<Pla
 - intent 用第一人称 + 具体工具名 (e.g. "我会 lookup get_lead_counts 拿 cn 的数量")
 - verification 写**怎么知道这步真做对了** (具体到看到什么字段)
 - 总步数 1-7 步, 超过就拆 task
-- 如果 admin 的需求**不需要分步** (e.g. 一个 SQL 写就完事), 也可以只写 1 步
-- 如果需求**模糊到无法拆**, 返回 { "goal": "...", "steps": [], "rationale": "需要 admin 澄清 X" }`;
+- 如果需求**模糊到无法拆**, 返回 { "goal": "...", "steps": [], "rationale": "需要 admin 澄清 X" }
+
+risk_level 怎么标:
+- **"auto"** = 只读, 没副作用 — 任何 lookup / get_* / list_* / search 类的 step. 完成后自动进下一步, admin 不用点.
+- **"review"** = 有副作用 + 不可逆/难撤回 — propose_db_write (改 DB), propose_doc_edit (改文档), dm_user / dm_chat / send_lead_email (发出去就收不回来), create_rich_lark_doc (新建文档). 必须 admin 显式点 ✓ 才执行.
+
+**默认**: 不确定就标 "review". Admin 多点几下成本低, Leon 自动跑错事成本高.`;
 
   const userPrompt = `Admin 的目标:\n${intent}${constraints ? `\n\n约束:\n${constraints}` : ""}\n\n输出 plan JSON.`;
 
@@ -87,10 +97,14 @@ async function planFromIntent(intent: string, constraints?: string): Promise<Pla
       goal: j.goal.slice(0, 1000),
       rationale: typeof j.rationale === "string" ? j.rationale.slice(0, 1000) : undefined,
       steps: j.steps
-        .map((s: { intent?: string; verification?: string }) => ({
-          intent: String(s.intent ?? "").slice(0, 500),
-          verification: s.verification ? String(s.verification).slice(0, 500) : undefined,
-        }))
+        .map((s: { intent?: string; verification?: string; risk_level?: string }) => {
+          const rl = s.risk_level === "auto" ? "auto" : "review";  // default review
+          return {
+            intent: String(s.intent ?? "").slice(0, 500),
+            verification: s.verification ? String(s.verification).slice(0, 500) : undefined,
+            risk_level: rl as "auto" | "review",
+          };
+        })
         .filter((s: PlanStep) => s.intent.length >= 5),
     };
   } catch {

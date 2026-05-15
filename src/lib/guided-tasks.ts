@@ -13,6 +13,7 @@ import { supabase } from "@/lib/db";
 export interface GuidedStep {
   intent: string;       // "I will do X"
   verification?: string; // "expect to see Y"
+  risk_level?: "auto" | "review";  // auto = lookup-only, no admin click needed
 }
 
 export interface GuidedStepResult {
@@ -23,6 +24,12 @@ export interface GuidedStepResult {
   ack?: "continue" | "modified" | "aborted";
 }
 
+export interface AdminNote {
+  step_index: number;
+  text: string;
+  at: string;
+}
+
 export interface GuidedTaskRow {
   id: string;
   goal: string;
@@ -31,6 +38,8 @@ export interface GuidedTaskRow {
   step_results: GuidedStepResult[];
   current_step: number;
   status: "planned" | "running" | "paused" | "completed" | "aborted" | "failed";
+  awaiting_step_ack: number | null;  // null = no pause; N = paused at step N
+  admin_notes: AdminNote[];
   proposed_by_rep_id: number | null;
   approved_by_rep_id: number | null;
   created_at: string;
@@ -164,7 +173,7 @@ export async function recordStepResult(args: {
   task_id: string;
   step_index: number;
   result: Omit<GuidedStepResult, "ran_at" | "ack">;
-}): Promise<{ ok: boolean; error?: string; done?: boolean }> {
+}): Promise<{ ok: boolean; error?: string; done?: boolean; needs_ack?: boolean }> {
   const { data: row } = await supabase
     .from("guided_tasks")
     .select("*")
@@ -180,17 +189,26 @@ export async function recordStepResult(args: {
   const newResults = [...t.step_results, { ...args.result, ran_at: new Date().toISOString() }];
   const isLastStep = args.step_index >= t.steps.length - 1;
 
+  // Decide: pause for admin ack, or auto-continue?
+  // Rule: pause iff the NEXT step is risk_level=review. If next is
+  // 'auto' (lookup-only), continue straight through. Last step always
+  // terminates as 'completed' regardless.
+  const nextStep = !isLastStep ? t.steps[t.current_step + 1] : null;
+  const nextNeedsAck = nextStep?.risk_level === "review";
+  const newStatus = isLastStep ? "completed" : (nextNeedsAck ? "paused" : "running");
+
   await supabase
     .from("guided_tasks")
     .update({
       step_results: newResults,
       current_step: isLastStep ? t.current_step : t.current_step + 1,
-      status: isLastStep ? "completed" : "paused",   // pause for admin ack between steps
+      status: newStatus,
+      awaiting_step_ack: nextNeedsAck ? t.current_step + 1 : null,
       completed_at: isLastStep ? new Date().toISOString() : null,
     })
     .eq("id", t.id);
 
-  return { ok: true, done: isLastStep };
+  return { ok: true, done: isLastStep, needs_ack: nextNeedsAck };
 }
 
 /**
@@ -232,15 +250,42 @@ export async function ackGuidedStep(args: {
     return { ok: true, new_status: "aborted" };
   }
 
-  // continue or modified → status back to running so next step can fire
+  // continue or modified → status back to running so next step can fire,
+  // and clear the awaiting-ack pointer
   await supabase
     .from("guided_tasks")
     .update({
       status: "running",
       step_results: results,
+      awaiting_step_ack: null,
     })
     .eq("id", t.id);
   return { ok: true, new_status: "running" };
+}
+
+/** Admin attaches a free-text note to a step before approving it. */
+export async function addAdminNote(args: {
+  task_id: string;
+  step_index: number;
+  text: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  if (!args.text || args.text.trim().length < 2) {
+    return { ok: false, error: "note text required" };
+  }
+  const { data: row } = await supabase
+    .from("guided_tasks")
+    .select("admin_notes")
+    .eq("id", args.task_id)
+    .maybeSingle();
+  if (!row) return { ok: false, error: "task not found" };
+  const notes = (row.admin_notes ?? []) as AdminNote[];
+  const next = [...notes, { step_index: args.step_index, text: args.text.slice(0, 500), at: new Date().toISOString() }];
+  const { error } = await supabase
+    .from("guided_tasks")
+    .update({ admin_notes: next })
+    .eq("id", args.task_id);
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
 }
 
 export async function listGuidedTasks(args: {
