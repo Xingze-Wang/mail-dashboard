@@ -644,6 +644,125 @@ export async function runReadTool(
         }
         return { tool: call.tool, result: r as unknown as Record<string, unknown> };
       }
+      case "create_rich_lark_doc": {
+        // Rich block-aware doc creator. Pass blocks: [{kind, text}, ...]
+        // where kind is h1|h2|h3|h4|paragraph|bullet|numbered|callout|
+        // code|quote|divider|todo. Maps each to the right Lark block_type.
+        const { createRichLarkDoc } = await import("@/lib/lark");
+        const title = String(args.title ?? "").trim();
+        const rawBlocks = Array.isArray(args.blocks) ? args.blocks : null;
+        if (!title) return { tool: call.tool, result: { error: "title required" } };
+        if (title.length > 200) return { tool: call.tool, result: { error: "title too long (>200 chars)" } };
+        if (!rawBlocks || rawBlocks.length === 0) return { tool: call.tool, result: { error: "blocks[] required and non-empty" } };
+        if (rawBlocks.length > 500) return { tool: call.tool, result: { error: "too many blocks (max 500)" } };
+        // Lark API tolerates the union shape; we trust the LLM to emit
+        // valid kinds. Server-side validation rejects unknown kinds via
+        // buildBlock's exhaustive switch + downstream Lark API error.
+        const r = await createRichLarkDoc({ title, blocks: rawBlocks as Parameters<typeof createRichLarkDoc>[0]["blocks"] });
+        if (r.ok && r.document_id && r.url) {
+          await supabase.from("helper_artifacts").insert({
+            rep_id: session.repId,
+            kind: "lark_doc",
+            lark_id: r.document_id,
+            title,
+            url: r.url,
+            meta: { block_count: r.blocks_written ?? 0, rich: true },
+          });
+        }
+        return { tool: call.tool, result: r as unknown as Record<string, unknown> };
+      }
+      case "append_to_lark_doc": {
+        // Append rich blocks to an existing doc. Use get_my_artifacts
+        // first to find the document_id; never invent one.
+        const { appendToLarkDoc } = await import("@/lib/lark");
+        const documentId = String(args.document_id ?? "").trim();
+        const rawBlocks = Array.isArray(args.blocks) ? args.blocks : null;
+        if (!documentId) return { tool: call.tool, result: { error: "document_id required (look up via get_my_artifacts)" } };
+        if (!rawBlocks || rawBlocks.length === 0) return { tool: call.tool, result: { error: "blocks[] required and non-empty" } };
+        if (rawBlocks.length > 500) return { tool: call.tool, result: { error: "too many blocks (max 500)" } };
+        const r = await appendToLarkDoc({ document_id: documentId, blocks: rawBlocks as Parameters<typeof appendToLarkDoc>[0]["blocks"] });
+        return { tool: call.tool, result: r as unknown as Record<string, unknown> };
+      }
+      case "list_lark_doc_blocks": {
+        // Read every block in a doc with its block_id, type, and text.
+        // Required before propose_doc_edit so the agent can target
+        // specific blocks by id instead of regenerating the whole doc.
+        const { listLarkDocBlocks } = await import("@/lib/lark");
+        const documentId = String(args.document_id ?? "").trim();
+        if (!documentId) return { tool: call.tool, result: { error: "document_id required" } };
+        const r = await listLarkDocBlocks({ document_id: documentId });
+        if (!r.ok) return { tool: call.tool, result: { error: r.error ?? "list failed" } };
+        // Slim down the response — drop the raw payload by default (LLM
+        // doesn't need it for editing decisions). Caller can request
+        // include_raw:true for the rare case of complex block inspection.
+        const includeRaw = args.include_raw === true;
+        const slim = (r.blocks ?? []).map((b) => includeRaw
+          ? b
+          : { block_id: b.block_id, block_type: b.block_type, parent_id: b.parent_id, text: b.text });
+        return { tool: call.tool, result: { ok: true, document_id: documentId, blocks: slim, count: slim.length } };
+      }
+      case "propose_doc_edit": {
+        // Queue a structured edit proposal for admin approval. Each
+        // edit is a typed step: update/delete/insert_at/append.
+        const { proposeDocEdit } = await import("@/lib/doc-edit-proposals");
+        const documentId = String(args.document_id ?? "").trim();
+        const documentUrl = String(args.document_url ?? "").trim();
+        const summary = String(args.summary ?? "").trim();
+        const narration = typeof args.narration === "string" ? args.narration : null;
+        const documentTitle = typeof args.document_title === "string" ? args.document_title : null;
+        const rawEdits = Array.isArray(args.edits) ? args.edits : null;
+        if (!documentId) return { tool: call.tool, result: { error: "document_id required (look up via list_lark_doc_blocks or get_my_artifacts)" } };
+        if (!documentUrl) return { tool: call.tool, result: { error: "document_url required (the https://...feishu.cn/docx/<id> link)" } };
+        if (!summary || summary.length < 5) return { tool: call.tool, result: { error: "summary required (≥5 chars, ≤300)" } };
+        if (!rawEdits || rawEdits.length === 0) return { tool: call.tool, result: { error: "edits[] required and non-empty" } };
+        const r = await proposeDocEdit({
+          document_id: documentId,
+          document_url: documentUrl,
+          document_title: documentTitle,
+          summary,
+          edits: rawEdits as Parameters<typeof proposeDocEdit>[0]["edits"],
+          narration,
+          proposed_by_rep_id: session.repId,
+        });
+        return { tool: call.tool, result: r as unknown as Record<string, unknown> };
+      }
+      case "approve_doc_edit": {
+        // Admin-only. Approves a pending proposal and applies it
+        // immediately by default. Mirrors the dashboard approve button.
+        if (session.role !== "admin") {
+          return { tool: call.tool, result: { error: "admin only — sales can't approve their own doc edits" } };
+        }
+        const { approveDocEditProposal } = await import("@/lib/doc-edit-proposals");
+        const proposalId = String(args.proposal_id ?? "").trim();
+        if (!proposalId) return { tool: call.tool, result: { error: "proposal_id required" } };
+        const applyNow = args.apply_now !== false;     // default true
+        const r = await approveDocEditProposal({
+          proposal_id: proposalId,
+          decided_by_rep_id: session.repId,
+          decision_note: typeof args.note === "string" ? args.note : null,
+          apply_now: applyNow,
+        });
+        return { tool: call.tool, result: r as unknown as Record<string, unknown> };
+      }
+      case "list_doc_edit_proposals": {
+        // Admin-only. List pending (or specified-status) proposals so
+        // admin can review what Leon wants to do to which docs.
+        if (session.role !== "admin") {
+          return { tool: call.tool, result: { error: "admin only" } };
+        }
+        const status = ["pending", "approved", "rejected", "applied", "dismissed"].includes(String(args.status ?? ""))
+          ? String(args.status)
+          : "pending";
+        const limit = Math.max(1, Math.min(50, Number(args.limit) || 20));
+        const { data, error } = await supabase
+          .from("doc_edit_proposals")
+          .select("id, document_id, document_url, document_title, summary, narration, edits, status, applied_at, apply_error, created_at, proposed_by_rep_id")
+          .eq("status", status)
+          .order("created_at", { ascending: false })
+          .limit(limit);
+        if (error) return { tool: call.tool, result: { error: error.message } };
+        return { tool: call.tool, result: { ok: true, status, count: (data ?? []).length, proposals: data ?? [] } };
+      }
       case "add_to_lark_base": {
         const { addToLarkBase } = await import("@/lib/lark");
         const appToken = String(args.app_token ?? "").trim();

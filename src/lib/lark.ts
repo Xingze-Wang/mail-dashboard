@@ -551,10 +551,429 @@ function docxUrl(documentId: string): string {
 }
 
 /**
+ * Block-type → Lark API code mapping. Lark's docx API requires
+ * numeric block_type ids; this table makes the call sites readable.
+ * Full list: https://open.feishu.cn/document/server-docs/docs/docs/docx-v1/data-structure/block
+ */
+const LARK_BLOCK_TYPE = {
+  page:      1,    // root only (we never construct this)
+  text:      2,    // plain paragraph
+  h1:        3,
+  h2:        4,
+  h3:        5,
+  h4:        6,
+  h5:        7,
+  h6:        8,
+  h7:        9,
+  h8:        10,
+  h9:        11,
+  bullet:    12,   // bulleted_list
+  numbered:  13,   // ordered_list
+  code:      14,
+  quote:     15,
+  todo:      17,
+  callout:   19,
+  divider:   22,
+} as const;
+
+export type RichBlock =
+  | { kind: "h1" | "h2" | "h3" | "h4"; text: string }
+  | { kind: "paragraph"; text: string; bold?: boolean }
+  | { kind: "bullet" | "numbered"; text: string }
+  | { kind: "callout"; text: string; emoji?: string }
+  | { kind: "code"; text: string; language?: string }
+  | { kind: "quote"; text: string }
+  | { kind: "divider" }
+  | { kind: "todo"; text: string; done?: boolean };
+
+/** Build the Lark block payload for one RichBlock. */
+function buildBlock(b: RichBlock): Record<string, unknown> {
+  switch (b.kind) {
+    case "h1":
+    case "h2":
+    case "h3":
+    case "h4": {
+      const blockType = LARK_BLOCK_TYPE[b.kind];
+      // Lark expects the field name as `heading1`/`heading2`/etc, not
+      // `h1`/`h2`. The kind→field mapping is below. Verified via probe
+      // 2026-05-15: `{block_type:3, h1:{...}}` returns 1770001 invalid
+      // param; `{block_type:3, heading1:{...}}` succeeds.
+      const headingKeyMap = { h1: "heading1", h2: "heading2", h3: "heading3", h4: "heading4" } as const;
+      const headingKey = headingKeyMap[b.kind];
+      return {
+        block_type: blockType,
+        [headingKey]: { elements: [{ text_run: { content: b.text } }] },
+      };
+    }
+    case "paragraph":
+      return {
+        block_type: LARK_BLOCK_TYPE.text,
+        text: {
+          elements: [{
+            text_run: {
+              content: b.text,
+              ...(b.bold ? { text_element_style: { bold: true } } : {}),
+            },
+          }],
+        },
+      };
+    case "bullet":
+      return {
+        block_type: LARK_BLOCK_TYPE.bullet,
+        bullet: { elements: [{ text_run: { content: b.text } }] },
+      };
+    case "numbered":
+      return {
+        block_type: LARK_BLOCK_TYPE.numbered,
+        ordered: { elements: [{ text_run: { content: b.text } }] },
+      };
+    case "callout":
+      // Callouts are a parent block with text children. Simpler form:
+      // the callout's own text payload.
+      return {
+        block_type: LARK_BLOCK_TYPE.callout,
+        callout: {
+          background_color: 1,   // light yellow; Lark uses palette ids 1-15
+          border_color: 1,
+          emoji_id: b.emoji ?? "speech_balloon",
+        },
+        // Lark wants the callout's text rendered as a child block,
+        // but for top-level callout text we put it in `text` field:
+        text: { elements: [{ text_run: { content: b.text } }] },
+      };
+    case "code":
+      return {
+        block_type: LARK_BLOCK_TYPE.code,
+        code: {
+          style: { language: codeLanguageId(b.language) },
+          elements: [{ text_run: { content: b.text } }],
+        },
+      };
+    case "quote":
+      return {
+        block_type: LARK_BLOCK_TYPE.quote,
+        quote: { elements: [{ text_run: { content: b.text } }] },
+      };
+    case "divider":
+      return { block_type: LARK_BLOCK_TYPE.divider, divider: {} };
+    case "todo":
+      return {
+        block_type: LARK_BLOCK_TYPE.todo,
+        todo: {
+          done: !!b.done,
+          elements: [{ text_run: { content: b.text } }],
+        },
+      };
+  }
+}
+
+function codeLanguageId(lang?: string): number {
+  // Lark's code-block language is a numeric id. Common mappings:
+  // 1=PlainText, 28=JavaScript, 49=Python, 63=TypeScript, 30=JSON,
+  // 51=Rust, 19=Go, 18=Shell, 53=SQL. Default PlainText.
+  const m: Record<string, number> = {
+    plain: 1, plaintext: 1, text: 1,
+    js: 28, javascript: 28,
+    ts: 63, typescript: 63,
+    py: 49, python: 49,
+    sh: 18, shell: 18, bash: 18,
+    sql: 53,
+    json: 30,
+    go: 19,
+    rust: 51,
+  };
+  return m[(lang ?? "plaintext").toLowerCase()] ?? 1;
+}
+
+/**
+ * Rich Lark doc creator — accepts structured RichBlock[] instead of
+ * a plain-text body. Each block becomes the appropriate Lark block
+ * type (heading, bullet, callout, code, etc) so the output is
+ * actually formatted, not a wall of paragraphs.
+ *
+ * For the LLM: emit a JSON array of RichBlocks. Cheap to validate
+ * server-side, much better output than markdown-which-Lark-ignores.
+ */
+export async function createRichLarkDoc(args: {
+  title: string;
+  blocks: RichBlock[];
+}): Promise<{ ok: boolean; document_id?: string; url?: string; error?: string; blocks_written?: number }> {
+  const created = await callLarkApi<{ document: { document_id: string } }>({
+    method: "POST",
+    path: "/docx/v1/documents",
+    body: { title: args.title },
+  });
+  if (!created.ok) return { ok: false, error: created.error };
+  const documentId = created.data.document.document_id;
+
+  if (args.blocks && args.blocks.length > 0) {
+    // Lark API: max 50 children per request. Chunk if needed.
+    const CHUNK = 50;
+    let written = 0;
+    for (let i = 0; i < args.blocks.length; i += CHUNK) {
+      const slice = args.blocks.slice(i, i + CHUNK);
+      const append = await callLarkApi<unknown>({
+        method: "POST",
+        path: `/docx/v1/documents/${documentId}/blocks/${documentId}/children`,
+        body: { children: slice.map(buildBlock), index: i },
+      });
+      if (!append.ok) {
+        return {
+          ok: true,
+          document_id: documentId,
+          url: docxUrl(documentId),
+          blocks_written: written,
+          error: `Wrote first ${written} blocks, then: ${append.error}`,
+        };
+      }
+      written += slice.length;
+    }
+    return { ok: true, document_id: documentId, url: docxUrl(documentId), blocks_written: written };
+  }
+
+  return { ok: true, document_id: documentId, url: docxUrl(documentId), blocks_written: 0 };
+}
+
+/**
+ * Append rich blocks to an EXISTING doc. For "add to that doc you
+ * made last week" workflows. Caller passes the document_id (looked
+ * up from helper_artifacts) + the blocks to append.
+ */
+export async function appendToLarkDoc(args: {
+  document_id: string;
+  blocks: RichBlock[];
+}): Promise<{ ok: boolean; blocks_appended?: number; error?: string }> {
+  if (!args.blocks || args.blocks.length === 0) {
+    return { ok: false, error: "no blocks to append" };
+  }
+  const CHUNK = 50;
+  let written = 0;
+  for (let i = 0; i < args.blocks.length; i += CHUNK) {
+    const slice = args.blocks.slice(i, i + CHUNK);
+    const append = await callLarkApi<unknown>({
+      method: "POST",
+      path: `/docx/v1/documents/${args.document_id}/blocks/${args.document_id}/children`,
+      body: { children: slice.map(buildBlock) },          // index omitted → append to end
+    });
+    if (!append.ok) {
+      return { ok: written > 0, blocks_appended: written, error: append.error };
+    }
+    written += slice.length;
+  }
+  return { ok: true, blocks_appended: written };
+}
+
+/**
  * Read a docx document's plain-text content given either the document_id
  * or a Feishu/Lark URL. We pull the raw content blob (not the structured
  * blocks) — this is enough for "summarize this doc" workflows.
  */
+/**
+ * List every block in a doc with its block_id, type, and rendered text.
+ * Used as the *read* half of the iterative-edit loop: the agent has to
+ * know each block's id before it can propose UPDATE/DELETE on specific
+ * ones. The plain getLarkDoc above only returns concatenated raw text,
+ * which is fine for "summarize this" but useless for "shorten the
+ * second section" — there's no way to point at a block.
+ *
+ * Pagination: Lark caps at ~500 blocks per page. For docs near that
+ * size we recurse on page_token.
+ */
+export async function listLarkDocBlocks(args: {
+  document_id: string;
+}): Promise<{
+  ok: boolean;
+  blocks?: Array<{
+    block_id: string;
+    block_type: number;
+    parent_id: string | null;
+    text: string;
+    raw: Record<string, unknown>;
+  }>;
+  error?: string;
+}> {
+  const all: Array<{ block_id: string; block_type: number; parent_id: string | null; text: string; raw: Record<string, unknown> }> = [];
+  let pageToken: string | undefined;
+  for (let i = 0; i < 20; i++) {                  // hard stop at 20 pages
+    const r = await callLarkApi<{
+      items: Array<{ block_id: string; block_type: number; parent_id?: string; [k: string]: unknown }>;
+      has_more: boolean;
+      page_token?: string;
+    }>({
+      method: "GET",
+      path: `/docx/v1/documents/${args.document_id}/blocks`,
+      query: {
+        page_size: 500,
+        page_token: pageToken,
+        document_revision_id: -1,                 // latest revision
+      },
+    });
+    if (!r.ok) return { ok: false, error: r.error };
+    for (const b of r.data.items) {
+      all.push({
+        block_id: b.block_id,
+        block_type: b.block_type,
+        parent_id: b.parent_id ?? null,
+        text: extractBlockText(b),
+        raw: b,
+      });
+    }
+    if (!r.data.has_more) break;
+    pageToken = r.data.page_token;
+    if (!pageToken) break;
+  }
+  return { ok: true, blocks: all };
+}
+
+/**
+ * Extract human-readable text from a Lark block payload. Each block
+ * type stores its text under a different field (h1 → heading1.elements,
+ * paragraph → text.elements, bullet → bullet.elements, etc). Collapses
+ * the elements array into a single string. Used by listLarkDocBlocks
+ * so the LLM doesn't have to parse Lark's wire format.
+ */
+function extractBlockText(block: Record<string, unknown>): string {
+  // Field name varies by block_type. Check common candidates in order.
+  const candidates = [
+    "text", "heading1", "heading2", "heading3", "heading4",
+    "heading5", "heading6", "bullet", "ordered", "quote",
+    "callout", "todo", "code",
+  ];
+  for (const key of candidates) {
+    const val = block[key] as { elements?: Array<{ text_run?: { content?: string } }> } | undefined;
+    if (val && Array.isArray(val.elements)) {
+      return val.elements
+        .map((e) => e.text_run?.content ?? "")
+        .join("")
+        .trim();
+    }
+  }
+  return "";
+}
+
+/**
+ * Update the text content of a single block. Pure text replace; styling
+ * (bold/italic/color) is currently dropped because LLMs are bad at
+ * preserving inline styles across edits. If we need style preservation
+ * later, expand the API to accept text_run[] directly.
+ *
+ * Lark API: PATCH /docx/v1/documents/{doc_id}/blocks/{block_id}
+ * body shape varies by block_type — we encode the right field name
+ * based on the type the caller passes.
+ */
+export async function updateLarkDocBlock(args: {
+  document_id: string;
+  block_id: string;
+  block_type: number;          // accepted but not needed — endpoint infers from URL
+  new_text: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  // Lark's PATCH /docx/v1/documents/{id}/blocks/{block_id} infers the
+  // block type from the URL, so update_text_elements just takes a flat
+  // {elements} array. Probed live: this is the only shape that works
+  // (other variants return code=99992402 field validation failed).
+  const r = await callLarkApi<unknown>({
+    method: "PATCH",
+    path: `/docx/v1/documents/${args.document_id}/blocks/${args.block_id}`,
+    body: { update_text_elements: { elements: [{ text_run: { content: args.new_text } }] } },
+  });
+  return r.ok ? { ok: true } : { ok: false, error: r.error };
+}
+
+/**
+ * Delete one or more blocks by id. Uses Lark's batch_delete endpoint
+ * which takes start_index + end_index of children under a parent —
+ * the parent for top-level blocks is the document_id itself. To delete
+ * by block_id list, callers should listLarkDocBlocks first, find the
+ * indices, then pass them here.
+ *
+ * For ergonomic deletes ("delete block X" by id), the caller can pass
+ * {block_ids: [...]} and we'll resolve indices internally.
+ */
+export async function deleteLarkDocBlocks(args: {
+  document_id: string;
+  block_ids: string[];
+}): Promise<{ ok: boolean; deleted?: number; error?: string }> {
+  if (args.block_ids.length === 0) return { ok: true, deleted: 0 };
+
+  // Resolve current block order to translate ids → indices.
+  const list = await listLarkDocBlocks({ document_id: args.document_id });
+  if (!list.ok || !list.blocks) return { ok: false, error: list.error ?? "list failed" };
+
+  // Walk top-level children (parent_id === document_id) and find
+  // contiguous index ranges for each id-to-delete. Lark requires
+  // contiguous ranges, so we batch by run.
+  const topLevel = list.blocks
+    .filter((b) => b.parent_id === args.document_id)
+    .map((b, i) => ({ ...b, idx: i }));
+  const indicesToDelete = topLevel
+    .filter((b) => args.block_ids.includes(b.block_id))
+    .map((b) => b.idx)
+    .sort((a, b) => a - b);
+
+  if (indicesToDelete.length === 0) {
+    return { ok: false, error: "no matching top-level block_ids found" };
+  }
+
+  // Group contiguous index runs so we make fewer API calls.
+  const runs: Array<{ start: number; end: number }> = [];
+  for (const idx of indicesToDelete) {
+    const last = runs[runs.length - 1];
+    if (last && idx === last.end) {
+      last.end = idx + 1;
+    } else {
+      runs.push({ start: idx, end: idx + 1 });
+    }
+  }
+
+  // Delete from highest index to lowest so earlier deletes don't shift
+  // later indices.
+  runs.reverse();
+  let totalDeleted = 0;
+  for (const run of runs) {
+    const r = await callLarkApi<unknown>({
+      method: "DELETE",
+      path: `/docx/v1/documents/${args.document_id}/blocks/${args.document_id}/children/batch_delete`,
+      body: { start_index: run.start, end_index: run.end },
+    });
+    if (!r.ok) {
+      return { ok: totalDeleted > 0, deleted: totalDeleted, error: r.error };
+    }
+    totalDeleted += run.end - run.start;
+  }
+  return { ok: true, deleted: totalDeleted };
+}
+
+/**
+ * Insert rich blocks at a specific index (vs appendToLarkDoc which only
+ * appends at the end). Wraps the same POST /children endpoint that
+ * createRichLarkDoc uses, but exposes the `index` parameter the LLM
+ * needs for "add a TL;DR at the top" workflows.
+ */
+export async function insertLarkDocBlocksAt(args: {
+  document_id: string;
+  index: number;                      // 0 = before the first existing block
+  blocks: RichBlock[];
+}): Promise<{ ok: boolean; blocks_inserted?: number; error?: string }> {
+  if (!args.blocks || args.blocks.length === 0) {
+    return { ok: false, error: "no blocks to insert" };
+  }
+  const CHUNK = 50;
+  let written = 0;
+  for (let i = 0; i < args.blocks.length; i += CHUNK) {
+    const slice = args.blocks.slice(i, i + CHUNK);
+    const r = await callLarkApi<unknown>({
+      method: "POST",
+      path: `/docx/v1/documents/${args.document_id}/blocks/${args.document_id}/children`,
+      body: { children: slice.map(buildBlock), index: args.index + written },
+    });
+    if (!r.ok) {
+      return { ok: written > 0, blocks_inserted: written, error: r.error };
+    }
+    written += slice.length;
+  }
+  return { ok: true, blocks_inserted: written };
+}
+
 export async function getLarkDoc(args: {
   document_id?: string;
   url?: string;
