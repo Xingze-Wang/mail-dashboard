@@ -64,6 +64,35 @@ const STATUS_LABEL: Record<InboxRow["status"], string> = {
   awaiting_reason: "Awaiting reason",
 };
 
+// Provenance — where did this idea come from? Same taxonomy as the
+// Lark card (see src/lib/admin-inbox-card.ts:inferCardSource).
+const SOURCE_LABEL: Record<string, string> = {
+  leon_uncertain: "🤔 Leon 不确定 (escalation)",
+  leon_observation: "👀 Leon 自己注意到的",
+  curriculum_miner: "📊 跨 rep 模式",
+  dynamic_tool_proposal: "🧰 Leon 想造工具",
+  congress: "🏛 议事厅",
+  rep_request: "🙋 Rep 直接 request",
+  admin_self: "✍️ Admin 自己记的",
+};
+
+function sourceForRow(evidence: Record<string, unknown> | null): { source: string; label: string } {
+  const e = evidence ?? {};
+  if (typeof e.source === "string" && SOURCE_LABEL[e.source]) {
+    return { source: e.source, label: SOURCE_LABEL[e.source] };
+  }
+  if (typeof e.escalation_source === "string" || typeof e.my_best_guess === "string" || typeof e.why_unsure === "string") {
+    return { source: "leon_uncertain", label: SOURCE_LABEL.leon_uncertain };
+  }
+  if (typeof e.dynamic_tool_id === "string") {
+    return { source: "dynamic_tool_proposal", label: SOURCE_LABEL.dynamic_tool_proposal };
+  }
+  if (typeof e.medoid === "string" || e.source === "curriculum_miner") {
+    return { source: "curriculum_miner", label: SOURCE_LABEL.curriculum_miner };
+  }
+  return { source: "leon_observation", label: SOURCE_LABEL.leon_observation };
+}
+
 export default function AdminInboxPage() {
   const router = useRouter();
   const [rows, setRows] = useState<InboxRow[]>([]);
@@ -229,6 +258,9 @@ export default function AdminInboxPage() {
                     className={`text-[11px] font-medium px-2 py-0.5 rounded border ${KIND_STYLE[row.kind]}`}
                   >
                     {KIND_LABEL[row.kind]}
+                  </span>
+                  <span className="text-[11px] font-medium px-2 py-0.5 rounded bg-slate-50 border border-slate-200 text-slate-700">
+                    {sourceForRow(row.evidence).label}
                   </span>
                   {row.status !== "new" && (
                     <span className="text-[11px] font-medium px-2 py-0.5 rounded bg-slate-100 text-slate-600">

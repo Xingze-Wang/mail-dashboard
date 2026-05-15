@@ -180,7 +180,7 @@ export async function proposeDynamicTool(args: {
         headline,
         body,
         source_rep_id: args.proposed_by_rep_id,
-        evidence: { dynamic_tool_id: row.id, dynamic_tool_name: args.name },
+        evidence: { source: "dynamic_tool_proposal", dynamic_tool_id: row.id, dynamic_tool_name: args.name },
         dedup_hash: dedupHash,
       })
       .select("id")
@@ -195,6 +195,7 @@ export async function proposeDynamicTool(args: {
         headline,
         body,
         source_rep_id: args.proposed_by_rep_id,
+        evidence: { source: "dynamic_tool_proposal", dynamic_tool_id: row.id, dynamic_tool_name: args.name },
       });
     }
   } catch (err) {

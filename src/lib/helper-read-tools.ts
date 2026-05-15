@@ -1179,6 +1179,11 @@ export async function runReadTool(
             body,
             source_rep_id: sourceRepId ?? null,
             source_rep_name: sourceRepName,
+            // If the source rep is admin themselves, it's an admin-self note;
+            // otherwise it's Leon noticing something during a rep conversation.
+            evidence: { source: sourceRepId === session.repId && session.role === "admin"
+              ? "admin_self"
+              : "leon_observation" },
           });
         } catch (e) {
           console.error("[record_admin_request] card push failed (non-blocking):", e);
@@ -1284,6 +1289,7 @@ export async function runReadTool(
             body,
             source_rep_id: askedByRepId,
             source_rep_name: askedByRepName,
+            evidence: { source: "leon_uncertain", my_best_guess: myGuess, why_unsure: whyUnsure },
           });
         } catch (err) {
           console.warn("[escalate_to_admin] card push failed (non-blocking):", err);

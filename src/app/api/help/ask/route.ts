@@ -12,7 +12,7 @@ import {
   stripReadToolCalls,
 } from "@/lib/helper-read-tools";
 import { loadPatterns, type Pattern } from "@/lib/patterns";
-import { loadActiveLearnings, formatLearningsForPrompt } from "@/lib/helper-learnings";
+import { loadActiveLearnings, loadRelevantLearnings, formatLearningsForPrompt } from "@/lib/helper-learnings";
 import { extractEvidence, EVIDENCE_PROMPT_EXAMPLES, type HelperEvidence } from "@/lib/helper-evidence";
 
 export const dynamic = "force-dynamic";
@@ -331,12 +331,20 @@ abstract 前 800 字: ${((lead.abstract as string) ?? "").slice(0, 800)}
   // sessions: rep preferences, tactical wins, self-critiques. Loaded
   // every turn so the helper doesn't ask the same thing twice and can
   // build on prior conversations.
+  // Per-query relevance recall (Claude-Code-style): always load
+  // activated skills, top-N relevant memories ranked by FTS against
+  // the user's question.
   let learningsHint = "";
   try {
-    const learnings = await loadActiveLearnings(session.repId, 20);
+    const learnings = await loadRelevantLearnings({
+      query: question,
+      repId: session.repId,
+      skillBudget: 15,
+      memoryBudget: 8,
+    });
     learningsHint = formatLearningsForPrompt(learnings);
   } catch {
-    // Table missing → silent skip.
+    // Table missing or RPC error → silent skip.
   }
 
   // System prompt is already big (tool catalog + rules). Put the

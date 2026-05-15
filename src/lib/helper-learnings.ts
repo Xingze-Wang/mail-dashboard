@@ -21,9 +21,14 @@ export interface HelperLearning {
   superseded_at: string | null;
   created_at: string;
   updated_at: string;
+  triggers?: string[];
+  rank?: number;            // populated by loadRelevantLearnings
 }
 
-/** Active (non-superseded) learnings for a rep, with org-wide ones too. */
+/**
+ * Bulk-load: always-on for skills, recency-ordered for the rest.
+ * Used in admin panels / fallback paths where there's no query context.
+ */
 export async function loadActiveLearnings(repId: number | null, limit = 20): Promise<HelperLearning[]> {
   const orFilter = repId
     ? `scope_rep_id.eq.${repId},scope_rep_id.is.null`
@@ -39,12 +44,80 @@ export async function loadActiveLearnings(repId: number | null, limit = 20): Pro
   return (data ?? []) as HelperLearning[];
 }
 
+/**
+ * Per-query relevance recall — the Claude-Code-style path.
+ *
+ * Returns:
+ *   1. ALL skills the rep has access to (skills always activate; they're
+ *      a small set, ~10-20, and the model needs to see them every turn
+ *      to know what to do)
+ *   2. The top-N memories (tactic / rep_pref / self_critique / other)
+ *      ranked by ts_rank_cd against the query
+ *
+ * If query is empty, falls back to the bulk load. This makes the
+ * helper safe in any code path — even places that don't have a current
+ * user message can still get a reasonable set of learnings.
+ */
+export async function loadRelevantLearnings(args: {
+  query: string;
+  repId: number | null;
+  skillBudget?: number;     // max skills to always-load (default 15)
+  memoryBudget?: number;    // max memories to rank-load (default 8)
+}): Promise<HelperLearning[]> {
+  const skillBudget = args.skillBudget ?? 15;
+  const memoryBudget = args.memoryBudget ?? 8;
+  const totalCeiling = skillBudget + memoryBudget;
+
+  const q = (args.query ?? "").trim();
+  if (!q) {
+    // No query context — fall back to bulk load
+    return loadActiveLearnings(args.repId, totalCeiling);
+  }
+
+  const { data, error } = await supabase.rpc("helper_learnings_search", {
+    query_text: q.slice(0, 500),
+    rep_scope: args.repId,
+    limit_n: totalCeiling * 2,  // overfetch; we'll bucket-split below
+  });
+  if (error || !data) {
+    console.warn("[helper-learnings] search RPC failed, falling back:", error?.message);
+    return loadActiveLearnings(args.repId, totalCeiling);
+  }
+
+  const rows = data as HelperLearning[];
+  const skills: HelperLearning[] = [];
+  const memories: HelperLearning[] = [];
+  for (const r of rows) {
+    if (r.kind === "skill") skills.push(r);
+    else memories.push(r);
+  }
+  // Skills: always load (up to skillBudget). The SQL already ordered
+  // skill-first then rank, so we just take the first skillBudget.
+  // For skills that have a 'triggers' array, gate activation: a skill
+  // activates only if EITHER its triggers array is empty (universal)
+  // OR at least one trigger token appears in the query.
+  const lowerQ = q.toLowerCase();
+  const activatedSkills = skills
+    .filter((s) => {
+      if (!s.triggers || s.triggers.length === 0) return true;   // universal skill
+      return s.triggers.some((t) => lowerQ.includes(t.toLowerCase()));
+    })
+    .slice(0, skillBudget);
+  // Memories: ranked + truncated to memoryBudget. RPC ordered them by
+  // rank desc within their bucket already.
+  const rankedMemories = memories
+    .filter((m) => (m.rank ?? 0) > 0)
+    .slice(0, memoryBudget);
+  return [...activatedSkills, ...rankedMemories];
+}
+
 export async function recordLearning(input: {
   scope_rep_id: number | null;
   kind: LearningKind;
   body: string;
   evidence?: unknown;
   confidence?: number;
+  triggers?: string[];
 }): Promise<HelperLearning | null> {
   const { data, error } = await supabase
     .from("helper_learnings")
@@ -54,6 +127,7 @@ export async function recordLearning(input: {
       body: input.body.trim(),
       evidence: input.evidence ?? null,
       confidence: input.confidence ?? 0.5,
+      triggers: input.triggers ?? [],
     })
     .select()
     .single();

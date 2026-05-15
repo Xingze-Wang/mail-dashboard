@@ -43,6 +43,41 @@ const KIND_LABEL: Record<string, string> = {
   idea: "Idea",
 };
 
+// Provenance labels — what generated this card?
+// Pulled from evidence.source (or inferred from evidence fields).
+const SOURCE_LABEL: Record<string, string> = {
+  leon_uncertain: "🤔 Leon 不确定 (escalation)",
+  leon_observation: "👀 Leon 自己注意到的",
+  curriculum_miner: "📊 跨 rep 模式 (curriculum miner)",
+  dynamic_tool_proposal: "🧰 Leon 想造工具",
+  congress: "🏛 议事厅",
+  rep_request: "🙋 Rep 直接 request",
+  admin_self: "✍️ Admin 自己记的",
+};
+
+export function inferCardSource(evidence: Record<string, unknown> | null | undefined): {
+  source: string;
+  label: string;
+} {
+  const e = evidence ?? {};
+  // Explicit source field wins
+  if (typeof e.source === "string" && SOURCE_LABEL[e.source]) {
+    return { source: e.source, label: SOURCE_LABEL[e.source] };
+  }
+  // Inferred sources from known evidence shapes
+  if (typeof e.escalation_source === "string" || typeof e.my_best_guess === "string" || typeof e.why_unsure === "string") {
+    return { source: "leon_uncertain", label: SOURCE_LABEL.leon_uncertain };
+  }
+  if (typeof e.dynamic_tool_id === "string") {
+    return { source: "dynamic_tool_proposal", label: SOURCE_LABEL.dynamic_tool_proposal };
+  }
+  if (e.source === "curriculum_miner" || typeof e.medoid === "string") {
+    return { source: "curriculum_miner", label: SOURCE_LABEL.curriculum_miner };
+  }
+  // Default: Leon's own observation (no explicit source recorded)
+  return { source: "leon_observation", label: SOURCE_LABEL.leon_observation };
+}
+
 // All possible click actions encoded in card buttons.
 // 'yes' / 'no' / 'expand_context' is the new unified set across all
 // kinds. Old kind-specific actions (skill/memory/both/neither) are
@@ -96,6 +131,7 @@ export async function sendAdminInboxCard(args: {
   body: string | null;
   source_rep_id: number | null;
   source_rep_name?: string | null;
+  evidence?: Record<string, unknown> | null;  // for provenance inference
 }): Promise<string | null> {
   const adminOpenId = await getAdminOpenId();
   if (!adminOpenId) {
@@ -105,11 +141,17 @@ export async function sendAdminInboxCard(args: {
 
   const emoji = KIND_EMOJI[args.kind] ?? "📌";
   const kindLabel = KIND_LABEL[args.kind] ?? args.kind;
-  const sourceLine = args.source_rep_name
-    ? `\n_From: ${args.source_rep_name} (rep_id=${args.source_rep_id})_`
+
+  // Build a two-line provenance footer: 来源 (what flow generated this)
+  // + who (which rep, if any). Admin can tell at a glance whether to
+  // trust this as "real demand" vs "Leon noticed something" vs noise.
+  const { label: sourceLabel } = inferCardSource(args.evidence ?? null);
+  const whoLine = args.source_rep_name
+    ? `From: ${args.source_rep_name} (rep_id=${args.source_rep_id})`
     : args.source_rep_id != null
-    ? `\n_From: rep_id=${args.source_rep_id}_`
-    : "";
+    ? `From: rep_id=${args.source_rep_id}`
+    : "From: (no specific rep)";
+  const sourceLine = `\n_${sourceLabel} · ${whoLine}_`;
 
   const card = {
     config: { wide_screen_mode: true },

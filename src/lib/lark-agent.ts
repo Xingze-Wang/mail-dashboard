@@ -16,7 +16,7 @@ import { supabase } from "@/lib/db";
 import { llmChat } from "@/lib/llm-proxy";
 import { TOOLS_PROMPT, type ToolProposal } from "@/lib/helper-tools";
 import { runReadTool, extractReadToolCalls, stripReadToolCalls } from "@/lib/helper-read-tools";
-import { recordLearning, loadActiveLearnings, formatLearningsForPrompt } from "@/lib/helper-learnings";
+import { recordLearning, loadActiveLearnings, loadRelevantLearnings, formatLearningsForPrompt } from "@/lib/helper-learnings";
 import { QIJI_PROGRAM_FACTS } from "@/lib/qiji-facts";
 import { SALES_GUIDE } from "@/lib/sales-guide-corpus";
 import {
@@ -368,12 +368,22 @@ async function runAgent(session: LarkSession, question: string, history: { role:
   // corrections from learn_from_admin_correction, rep prefs from
   // remember_about_rep, and self_critiques from past mis-predictions.
   // Without this, the Lark agent ignored every correction admin made.
+  // Per-query relevance recall: always load all activated skills, then
+  // top-N most-relevant memories ranked by FTS against the user's
+  // current question. Skills with a non-empty `triggers` array only
+  // activate when the query matches one of them — that's the
+  // Claude-Code-style "skill description triggers activation" pattern.
   let learningsBlock = "";
   try {
-    const learnings = await loadActiveLearnings(session.repId, 20);
+    const learnings = await loadRelevantLearnings({
+      query: question,
+      repId: session.repId,
+      skillBudget: 15,
+      memoryBudget: 8,
+    });
     learningsBlock = formatLearningsForPrompt(learnings);
   } catch (err) {
-    console.error("[lark-agent] loadActiveLearnings failed (non-blocking):", err);
+    console.error("[lark-agent] loadRelevantLearnings failed (non-blocking):", err);
   }
 
   const system = SYSTEM_BASE + "\n" + TOOLS_PROMPT + (session.role === "admin" ? ADMIN_PROMPT_ADDENDUM : "") +

@@ -249,6 +249,7 @@ async function run(dry: boolean): Promise<MinerResult> {
         body,
         source_rep_id: null,
         source_rep_name: null,
+        evidence: { source: "curriculum_miner", medoid: c.medoid, distinct_reps: Array.from(c.distinctReps) },
       });
     } catch (err) {
       console.warn("[curriculum-miner] card push failed (non-blocking):", err);
