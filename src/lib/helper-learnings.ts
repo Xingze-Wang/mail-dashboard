@@ -91,24 +91,52 @@ export async function loadRelevantLearnings(args: {
     if (r.kind === "skill") skills.push(r);
     else memories.push(r);
   }
-  // Skills: always load (up to skillBudget). The SQL already ordered
-  // skill-first then rank, so we just take the first skillBudget.
-  // For skills that have a 'triggers' array, gate activation: a skill
-  // activates only if EITHER its triggers array is empty (universal)
-  // OR at least one trigger token appears in the query.
+
+  // Skills: split into universal (always-on, no triggers) and triggered.
+  // Universal skills are bot-infrastructure rules — they govern HOW Leon
+  // acts at all, so they always load (e.g. "if you claim 记下了, you
+  // must emit a tool block"). Triggered skills are domain-specific
+  // procedures that should only fire when relevant — they get ranked
+  // by (trigger-match bonus + FTS rank against body) and truncated.
+  //
+  // Total skill budget split: universal always loads (cap 10 to keep
+  // prompt sane even if onboarding metastasizes); triggered fills the
+  // remaining budget by score.
   const lowerQ = q.toLowerCase();
-  const activatedSkills = skills
-    .filter((s) => {
-      if (!s.triggers || s.triggers.length === 0) return true;   // universal skill
-      return s.triggers.some((t) => lowerQ.includes(t.toLowerCase()));
+  const universalCap = Math.max(0, Math.min(10, Math.floor(skillBudget / 2)));
+  const universalSkills = skills
+    .filter((s) => !s.triggers || s.triggers.length === 0)
+    .slice(0, universalCap);
+
+  const triggeredSkillsScored = skills
+    .filter((s) => s.triggers && s.triggers.length > 0)
+    .map((s) => {
+      const matchedTriggers = (s.triggers ?? []).filter((t) =>
+        lowerQ.includes(t.toLowerCase()),
+      );
+      // Two-stage: skill activates ONLY if at least one trigger matched.
+      // FTS rank is the tie-breaker WITHIN trigger-matched skills, not a
+      // path to activation. This prevents skills from leaking in just
+      // because their body happens to share a word with the query.
+      return { skill: s, matchedCount: matchedTriggers.length, ftsRank: s.rank ?? 0 };
     })
-    .slice(0, skillBudget);
-  // Memories: ranked + truncated to memoryBudget. RPC ordered them by
-  // rank desc within their bucket already.
+    .filter((x) => x.matchedCount > 0)
+    .sort((a, b) => {
+      if (a.matchedCount !== b.matchedCount) return b.matchedCount - a.matchedCount;
+      return b.ftsRank - a.ftsRank;
+    });
+
+  const triggeredBudget = Math.max(0, skillBudget - universalSkills.length);
+  const activatedTriggered = triggeredSkillsScored
+    .slice(0, triggeredBudget)
+    .map((x) => x.skill);
+
+  // Memories: rank-only. RPC already ordered by ts_rank_cd desc.
   const rankedMemories = memories
     .filter((m) => (m.rank ?? 0) > 0)
     .slice(0, memoryBudget);
-  return [...activatedSkills, ...rankedMemories];
+
+  return [...universalSkills, ...activatedTriggered, ...rankedMemories];
 }
 
 export async function recordLearning(input: {
