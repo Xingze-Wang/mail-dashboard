@@ -228,7 +228,7 @@ export async function processAdminInboxCardAction(rawEvent: unknown): Promise<{
 
   const { data: inbox } = await supabase
     .from("admin_inbox")
-    .select("id, kind, headline, body, status, source_rep_id")
+    .select("id, kind, headline, body, status, source_rep_id, evidence")
     .eq("id", inboxId)
     .maybeSingle();
   if (!inbox) return { ok: true, reason: "inbox row gone", toast: "已经不在了" };
@@ -238,13 +238,42 @@ export async function processAdminInboxCardAction(rawEvent: unknown): Promise<{
 
   // Yes/No path (kind=request)
   if (action === "yes") {
+    // Side effects per inbox sub-type (encoded in evidence)
+    const evidence = (inbox.evidence ?? {}) as Record<string, unknown>;
+    let sideEffectToast: string | null = null;
+
+    // Dynamic tool proposal → flip dynamic_tools row to approved
+    if (typeof evidence.dynamic_tool_id === "string") {
+      const { approveDynamicTool } = await import("@/lib/dynamic-tools");
+      const r = await approveDynamicTool({
+        tool_id: evidence.dynamic_tool_id,
+        approved_by_rep_id: rep.id,
+        note: "approved via Lark card",
+      });
+      if (r.ok) sideEffectToast = `✅ tool '${evidence.dynamic_tool_name ?? ""}' approved`;
+      else sideEffectToast = `⚠️ tool approve failed: ${r.error?.slice(0, 60) ?? ""}`;
+    }
+
+    // Doc edit proposal → flip doc_edit_proposals row to approved (+ apply)
+    // (handled separately via approve_doc_edit tool; left here for parity if we wire it)
+
     await supabase
       .from("admin_inbox")
       .update({ status: "acknowledged", acted_at: new Date().toISOString() })
       .eq("id", inboxId);
-    return { ok: true, reason: "yes", toast: "✅ 同意" };
+    return { ok: true, reason: "yes", toast: sideEffectToast ?? "✅ 同意" };
   }
   if (action === "no") {
+    // Side effects per inbox sub-type
+    const evidence = (inbox.evidence ?? {}) as Record<string, unknown>;
+    if (typeof evidence.dynamic_tool_id === "string") {
+      const { rejectDynamicTool } = await import("@/lib/dynamic-tools");
+      await rejectDynamicTool({
+        tool_id: evidence.dynamic_tool_id,
+        rejected_by_rep_id: rep.id,
+        reason: "rejected via Lark card",
+      });
+    }
     await supabase
       .from("admin_inbox")
       .update({ status: "dismissed", acted_at: new Date().toISOString() })

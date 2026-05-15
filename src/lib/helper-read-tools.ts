@@ -495,6 +495,67 @@ export async function runReadTool(
           },
         };
       }
+      case "get_lead_counts": {
+        // Total leads + per-rep ownership counts + unassigned pool size.
+        // Way cheaper than list_leads when the question is aggregate
+        // ("how many cn leads this week", "who owns the most"). Filter
+        // by geo / tier / since to scope.
+        const sinceArg = typeof args.since_days === "number" ? args.since_days : 7;
+        const cutoff = new Date(Date.now() - Math.max(1, Math.min(365, sinceArg)) * 86_400_000).toISOString();
+        const geo = typeof args.geo === "string" ? args.geo : null;  // 'cn' | 'edu' | 'overseas'
+        const tier = typeof args.lead_tier === "string" ? args.lead_tier : null;  // 'strong' | 'normal'
+
+        // Build a base query — chained .eq / .gte conditionally
+        let base = supabase
+          .from("pipeline_leads")
+          .select("id, assigned_rep_id, lead_tier, author_email", { count: "exact", head: false })
+          .gte("created_at", cutoff);
+        if (tier) base = base.eq("lead_tier", tier);
+
+        const { data, error, count } = await base;
+        if (error) return { tool: call.tool, result: { error: error.message } };
+        let rows = (data ?? []) as { id: string; assigned_rep_id: number | null; lead_tier: string | null; author_email: string | null }[];
+
+        // Apply geo filter in-app (author_email domain rules — same as v_lead_pool)
+        if (geo) {
+          rows = rows.filter((r) => {
+            const dom = (r.author_email ?? "").toLowerCase().split("@")[1] ?? "";
+            if (geo === "cn") return /\.cn$|\.com\.cn$/i.test(dom);
+            if (geo === "edu") return /\.edu$|\.edu\./i.test(dom);
+            if (geo === "overseas") return !(/\.cn$|\.com\.cn$|\.edu$|\.edu\./i.test(dom));
+            return true;
+          });
+        }
+
+        // Bucket per rep
+        const perRep: Record<string, number> = {};
+        let unassigned = 0;
+        for (const r of rows) {
+          if (r.assigned_rep_id == null) unassigned++;
+          else perRep[r.assigned_rep_id] = (perRep[r.assigned_rep_id] ?? 0) + 1;
+        }
+        // Hydrate rep names
+        const repIds = Object.keys(perRep).map(Number);
+        const { data: reps } = repIds.length
+          ? await supabase.from("sales_reps").select("id, name").in("id", repIds)
+          : { data: [] as { id: number; name: string }[] };
+        const repName = Object.fromEntries((reps ?? []).map((r) => [r.id, r.name]));
+
+        const perRepArr = Object.entries(perRep)
+          .map(([id, c]) => ({ rep_id: Number(id), name: repName[Number(id)] ?? `rep_${id}`, owned_count: c }))
+          .sort((a, b) => b.owned_count - a.owned_count);
+
+        return {
+          tool: call.tool,
+          result: {
+            window_days: sinceArg,
+            filters: { geo, lead_tier: tier },
+            total: geo || tier ? rows.length : count ?? rows.length,
+            unassigned,
+            per_rep: perRepArr,
+          },
+        };
+      }
       case "get_helper_conversation": {
         // Admin-only: pull BOTH user + assistant turns for a rep's
         // conversation history. Distinct from get_rep_helper_activity
@@ -847,6 +908,101 @@ export async function runReadTool(
           .limit(limit);
         if (error) return { tool: call.tool, result: { error: error.message } };
         return { tool: call.tool, result: { ok: true, status, count: (data ?? []).length, proposals: data ?? [] } };
+      }
+      case "propose_tool": {
+        // Leon authors a new SQL-backed tool. Inserts into dynamic_tools
+        // (status=pending) and pushes an admin Lark card with Yes/No.
+        // Approval → tool is callable from the same ```lookup``` syntax
+        // as built-ins, no deploy needed.
+        const name = String(args.name ?? "").trim();
+        const description = String(args.description ?? "").trim();
+        const sqlTemplate = String(args.sql_template ?? "").trim();
+        const proposalReason = String(args.proposal_reason ?? "").trim();
+        const paramOrder = Array.isArray(args.param_order) ? (args.param_order as unknown[]).map(String) : [];
+        const argsSchema = (args.args_schema && typeof args.args_schema === "object")
+          ? args.args_schema as Record<string, { type: string; default?: unknown; description?: string }>
+          : {};
+        if (!name || !description || !sqlTemplate || !proposalReason) {
+          return { tool: call.tool, result: { error: "name, description, sql_template, proposal_reason all required" } };
+        }
+        // Type check on argsSchema before handing to the lib
+        const cleanSchema: Record<string, { type: "string" | "number" | "boolean"; default?: string | number | boolean; description?: string }> = {};
+        for (const [k, v] of Object.entries(argsSchema)) {
+          const t = (v as { type: string }).type;
+          if (t !== "string" && t !== "number" && t !== "boolean") {
+            return { tool: call.tool, result: { error: `args_schema['${k}'].type must be 'string'|'number'|'boolean'` } };
+          }
+          cleanSchema[k] = {
+            type: t,
+            default: (v as { default?: string | number | boolean }).default,
+            description: (v as { description?: string }).description,
+          };
+        }
+        const { proposeDynamicTool } = await import("@/lib/dynamic-tools");
+        const r = await proposeDynamicTool({
+          name,
+          description,
+          args_schema: cleanSchema,
+          sql_template: sqlTemplate,
+          param_order: paramOrder,
+          proposal_reason: proposalReason,
+          proposed_by_rep_id: session.repId,
+        });
+        if (!r.ok) return { tool: call.tool, result: { error: r.error } };
+        return {
+          tool: call.tool,
+          result: {
+            ok: true,
+            id: r.id,
+            inbox_id: r.inbox_id,
+            message: `Pushed proposal '${name}' to admin Lark card. Tell user: 我给 admin 推了个工具提案叫 ${name}, 等他 approve 就能用了.`,
+          },
+        };
+      }
+      case "list_dynamic_tools": {
+        // Show what Leon-authored tools exist (any status).
+        const { listDynamicTools } = await import("@/lib/dynamic-tools");
+        const status = ["pending", "approved", "rejected", "deprecated", "all"].includes(String(args.status ?? ""))
+          ? (String(args.status) as "pending" | "approved" | "rejected" | "deprecated" | "all")
+          : "approved";
+        const limit = Math.max(1, Math.min(100, Number(args.limit) || 30));
+        const rows = await listDynamicTools({ status, limit });
+        return {
+          tool: call.tool,
+          result: {
+            status,
+            count: rows.length,
+            tools: rows.map((t) => ({
+              id: t.id,
+              name: t.name,
+              description: t.description,
+              args_schema: t.args_schema,
+              param_order: t.param_order,
+              status: t.status,
+              call_count: t.call_count,
+              last_called_at: t.last_called_at,
+              last_error: t.last_error,
+              proposed_by_rep_id: t.proposed_by_rep_id,
+              proposed_at: t.proposed_at,
+              proposal_reason: t.proposal_reason,
+            })),
+          },
+        };
+      }
+      case "approve_dynamic_tool": {
+        // Admin-only fast path: approve a pending dynamic tool by id.
+        if (session.role !== "admin") {
+          return { tool: call.tool, result: { error: "admin only" } };
+        }
+        const toolId = String(args.tool_id ?? "").trim();
+        if (!toolId) return { tool: call.tool, result: { error: "tool_id required" } };
+        const { approveDynamicTool } = await import("@/lib/dynamic-tools");
+        const r = await approveDynamicTool({
+          tool_id: toolId,
+          approved_by_rep_id: session.repId!,
+          note: typeof args.note === "string" ? args.note : undefined,
+        });
+        return { tool: call.tool, result: r };
       }
       case "add_to_lark_base": {
         const { addToLarkBase } = await import("@/lib/lark");
@@ -1543,8 +1699,31 @@ export async function runReadTool(
         })) } };
       }
 
-      default:
+      default: {
+        // Fallthrough: maybe this is a dynamic_tool that admin approved.
+        // We look it up by name and execute if found. This is what makes
+        // Leon-authored tools first-class — they're callable from the
+        // same ```lookup``` syntax as built-ins.
+        const { loadApprovedTool, runDynamicTool } = await import("@/lib/dynamic-tools");
+        const found = await loadApprovedTool(call.tool);
+        if (found) {
+          const r = await runDynamicTool(call.tool, args);
+          if (r.ok) {
+            return {
+              tool: call.tool,
+              result: {
+                dynamic: true,
+                tool_id: r.tool.id,
+                description: r.tool.description,
+                row_count: r.rows.length,
+                rows: r.rows,
+              },
+            };
+          }
+          return { tool: call.tool, result: { error: r.error } };
+        }
         return { tool: call.tool, result: { error: `unknown tool: ${call.tool}` } };
+      }
     }
   } catch (e) {
     return { tool: call.tool, result: { error: e instanceof Error ? e.message : String(e) } };
