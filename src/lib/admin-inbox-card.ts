@@ -400,6 +400,51 @@ export async function processAdminInboxCardAction(rawEvent: unknown): Promise<{
       else sideEffectToast = `⚠️ tool approve failed: ${r.error?.slice(0, 60) ?? ""}`;
     }
 
+    // Side effect: skill demo suggestion approved → fire DM with the
+    // sample query to admin so they can paste it into the Lark bot
+    // surface (or any other surface) and observe Leon's behavior.
+    // We don't auto-execute via the LLM here — that would require
+    // spinning a full agent session in cron context which is expensive.
+    // Pasting is the right friction level: admin sees the demo run
+    // happen in real time.
+    if (evidence.source === "skill_demo_suggestion" && typeof evidence.sample_query === "string") {
+      sideEffectToast = `🧪 Demo query: paste it into Lark to see the skill activate`;
+      try {
+        const { getTenantAccessToken, pickBase } = await import("@/lib/lark");
+        const token = await getTenantAccessToken();
+        if (token && operatorOpenId) {
+          await fetch(`${pickBase()}/im/v1/messages?receive_id_type=open_id`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify({
+              receive_id: operatorOpenId,
+              msg_type: "text",
+              content: JSON.stringify({
+                text: `🧪 **Skill demo** — 把这条贴回来给我, 我跑给你看:\n\n${evidence.sample_query}\n\n_(贴完我用刚 promote 的 skill 答, 你看是否对.)_`,
+              }),
+            }),
+            signal: AbortSignal.timeout(10_000),
+          });
+        }
+      } catch (err) {
+        console.warn("[admin-inbox-card] demo DM failed:", err);
+      }
+    }
+
+    // Side effect: guided_task plan approved → flip to running
+    if (typeof evidence.guided_task_id === "string") {
+      const { approveGuidedTaskPlan } = await import("@/lib/guided-tasks");
+      const r = await approveGuidedTaskPlan({
+        task_id: evidence.guided_task_id,
+        approved_by_rep_id: rep.id,
+      });
+      if (r.ok) {
+        sideEffectToast = `🚀 多步任务开始执行 (${r.task?.steps.length ?? "?"} 步)`;
+      } else {
+        sideEffectToast = `⚠️ 启动失败: ${r.error?.slice(0, 80) ?? ""}`;
+      }
+    }
+
     // Side effect: dynamic_write proposal approved + executed
     if (typeof evidence.dynamic_write_id === "string") {
       const { applyDynamicWrite } = await import("@/lib/dynamic-writes");

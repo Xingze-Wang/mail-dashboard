@@ -163,7 +163,25 @@ export async function recordLearning(input: {
     console.warn("recordLearning failed:", error.message);
     return null;
   }
-  return data as HelperLearning;
+  const row = data as HelperLearning;
+
+  // Post-insert: if this is a new skill that smells demo-able (has an
+  // action verb + triggers), push admin a "want to smoke-test?" card.
+  // Best-effort, non-blocking.
+  if (row && row.kind === "skill") {
+    try {
+      const { suggestDemoForNewSkill } = await import("@/lib/skill-demo-suggester");
+      void suggestDemoForNewSkill({
+        learning_id: row.id,
+        body: row.body,
+        triggers: row.triggers ?? [],
+        proposed_by_rep_id: row.scope_rep_id,
+      });
+    } catch (err) {
+      console.warn("[recordLearning] demo-suggester hook failed:", err);
+    }
+  }
+  return row;
 }
 
 /** Mark an existing learning as superseded — useful when reality contradicts it. */

@@ -909,6 +909,121 @@ export async function runReadTool(
         if (error) return { tool: call.tool, result: { error: error.message } };
         return { tool: call.tool, result: { ok: true, status, count: (data ?? []).length, proposals: data ?? [] } };
       }
+      case "start_guided_task": {
+        // Multi-step plan with admin checkpoints. Leon writes steps,
+        // admin Yes on the plan card → running → Leon executes step 0
+        // → DMs admin "step done, next is X, ack?" → admin says
+        // continue/改 ... /停 → next step.
+        const goal = String(args.goal ?? "").trim();
+        const constraints = typeof args.constraints === "string" ? args.constraints : undefined;
+        const stepsRaw = Array.isArray(args.steps) ? args.steps : [];
+        const steps = stepsRaw.map((s: unknown) => {
+          const o = (s ?? {}) as { intent?: string; verification?: string };
+          return { intent: String(o.intent ?? ""), verification: o.verification ? String(o.verification) : undefined };
+        });
+        const { proposeGuidedTask } = await import("@/lib/guided-tasks");
+        const r = await proposeGuidedTask({
+          goal,
+          constraints,
+          steps,
+          proposed_by_rep_id: session.repId,
+        });
+        if (!r.ok) return { tool: call.tool, result: { error: r.error } };
+        return {
+          tool: call.tool,
+          result: {
+            ok: true,
+            id: r.id,
+            inbox_id: r.inbox_id,
+            message: `Pushed plan to admin Lark card. Tell user: 我把 ${steps.length} 步的计划推给 admin 了, Yes 后我就开始一步一步做, 每步停下来等你 ack.`,
+          },
+        };
+      }
+      case "record_step_result": {
+        const taskId = String(args.task_id ?? "").trim();
+        const stepIndex = Number(args.step_index);
+        const summary = String(args.summary ?? "").trim();
+        const ok = args.ok !== false;
+        const evidence = args.evidence ?? undefined;
+        if (!taskId || !Number.isFinite(stepIndex) || !summary) {
+          return { tool: call.tool, result: { error: "task_id, step_index, summary required" } };
+        }
+        const { recordStepResult, getGuidedTask, notifyAdminStepDone } = await import("@/lib/guided-tasks");
+        const r = await recordStepResult({
+          task_id: taskId,
+          step_index: stepIndex,
+          result: { ok, summary, evidence },
+        });
+        if (!r.ok) return { tool: call.tool, result: { error: r.error } };
+        const task = await getGuidedTask(taskId);
+        if (task) {
+          await notifyAdminStepDone({
+            task,
+            step_index: stepIndex,
+            result_summary: summary,
+            is_last: !!r.done,
+          });
+        }
+        return {
+          tool: call.tool,
+          result: {
+            ok: true,
+            done: r.done ?? false,
+            next_step_index: r.done ? null : stepIndex + 1,
+          },
+        };
+      }
+      case "ack_guided_step": {
+        if (session.role !== "admin") {
+          return { tool: call.tool, result: { error: "admin only" } };
+        }
+        const taskId = String(args.task_id ?? "").trim();
+        const ack = String(args.ack ?? "").toLowerCase();
+        if (!taskId || !["continue", "modified", "aborted"].includes(ack)) {
+          return { tool: call.tool, result: { error: "task_id + ack ∈ {continue, modified, aborted}" } };
+        }
+        const { ackGuidedStep } = await import("@/lib/guided-tasks");
+        const r = await ackGuidedStep({
+          task_id: taskId,
+          ack: ack as "continue" | "modified" | "aborted",
+          abort_reason: typeof args.abort_reason === "string" ? args.abort_reason : undefined,
+        });
+        return { tool: call.tool, result: r };
+      }
+      case "list_guided_tasks": {
+        const { listGuidedTasks } = await import("@/lib/guided-tasks");
+        const status = ["planned", "running", "paused", "completed", "aborted", "failed", "all"].includes(
+          String(args.status ?? ""),
+        )
+          ? (String(args.status) as "planned" | "running" | "paused" | "completed" | "aborted" | "failed" | "all")
+          : "running";
+        const limit = Math.max(1, Math.min(50, Number(args.limit) || 10));
+        const rows = await listGuidedTasks({ status, limit });
+        return {
+          tool: call.tool,
+          result: {
+            status,
+            count: rows.length,
+            tasks: rows.map((t) => ({
+              id: t.id,
+              goal: t.goal,
+              status: t.status,
+              current_step: t.current_step,
+              total_steps: t.steps.length,
+              steps: t.steps,
+              created_at: t.created_at,
+            })),
+          },
+        };
+      }
+      case "get_guided_task": {
+        const taskId = String(args.task_id ?? "").trim();
+        if (!taskId) return { tool: call.tool, result: { error: "task_id required" } };
+        const { getGuidedTask } = await import("@/lib/guided-tasks");
+        const t = await getGuidedTask(taskId);
+        if (!t) return { tool: call.tool, result: { error: "task not found" } };
+        return { tool: call.tool, result: { task: t } };
+      }
       case "propose_db_write": {
         // Leon proposes a DB write (INSERT/UPDATE/DELETE). Inserts a
         // pending row in dynamic_writes + pushes Lark Yes/No card to
