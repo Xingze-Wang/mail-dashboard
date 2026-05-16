@@ -15,3 +15,14 @@ const { data, error: probeErr } = await sb
   .limit(1);
 if (probeErr) { console.error("probe FAIL:", probeErr.message); process.exit(1); }
 console.log("✓ all three columns reachable. sample row:", data?.[0]);
+// Note: _exec_sql discards SELECT output (DDL exec only). Use _run_select_sql
+// for the index probe. We still handle both array and {rows} envelope shapes
+// in case the RPC's return signature evolves.
+const { data: idxCheck, error: idxErr } = await sb.rpc("_run_select_sql", {
+  sql_text: "SELECT indexname FROM pg_indexes WHERE tablename='email_templates' AND indexname='email_templates_pending_rep_propose_idx'",
+  sql_params: [],
+});
+if (idxErr) { console.error("index probe FAIL:", idxErr.message); process.exit(1); }
+const idxRows = Array.isArray(idxCheck) ? idxCheck : (idxCheck?.rows ?? []);
+console.log("✓ partial index exists:", idxRows.length > 0 ? idxRows[0]?.indexname ?? "yes" : "NO — rerun migration");
+if (idxRows.length === 0) process.exit(1);
