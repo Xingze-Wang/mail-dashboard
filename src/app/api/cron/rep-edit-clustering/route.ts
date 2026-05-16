@@ -146,20 +146,23 @@ async function run(dry: boolean): Promise<RunResult> {
       continue;
     }
 
-    if (existing.data) {
-      await supabase
-        .from("email_templates")
-        .update({ active: false, status: "archived" })
-        .eq("id", existing.data.id);
-    }
+    // IMPORTANT: do NOT touch the existing active template here. The
+    // previous behavior was to deactivate + replace atomically, which
+    // skipped admin approval entirely (any LLM clustering would silently
+    // swap a rep's voice). New flow: insert a PROPOSAL (active:false,
+    // status:'proposal') and notify admin via the Lark approval card.
+    // Existing active template stays live until admin clicks Activate
+    // on the card, at which point the card handler runs the
+    // deactivate-competitors-then-activate step (admin-approval-cards.ts).
+    const proposalName = `${rep.name}'s edit pattern (${winner.members.length} edits)`;
 
     const ins = await supabase
       .from("email_templates")
       .insert({
-        name: `${rep.name}'s edit pattern (${winner.members.length} edits)`,
+        name: proposalName,
         rep_id: rep.id,
-        active: true,
-        status: "active",
+        active: false,
+        status: "proposal",
         proposed_by: "rep_edit_cluster",
         proposed_reason: `Auto-detected from ${winner.members.length} similar edits by ${rep.name} in the last ${LOOKBACK_DAYS} days. Tightness ${evidence.centroid_tightness.toFixed(3)}.`,
         proposed_evidence: evidence,
@@ -173,6 +176,23 @@ async function run(dry: boolean): Promise<RunResult> {
     } else {
       entry.template_action = existing.data ? "replaced" : "created";
       entry.new_template_id = ins.data?.id as string;
+      // Push the approval card to admin's Lark DM. Buttons let admin
+      // click ✓ Approve draft / 🚀 Activate now / ❌ Reject without
+      // leaving Lark. Until admin clicks Activate, the existing template
+      // stays live — no silent swaps.
+      if (entry.new_template_id) {
+        try {
+          const { sendTemplateProposalCard } = await import("@/lib/admin-approval-cards");
+          await sendTemplateProposalCard({
+            template_id: entry.new_template_id,
+            template_name: proposalName,
+            proposed_by: "rep_edit_cluster",
+            proposed_reason: `${rep.name}'s edit pattern detected from ${winner.members.length} similar sales-edits in the last ${LOOKBACK_DAYS}d (tightness ${evidence.centroid_tightness.toFixed(3)}). Click Activate to make it ${rep.name}'s active template, replacing the current one.`,
+          });
+        } catch (err) {
+          console.error("[rep-edit-clustering] approval card failed:", String(err).slice(0, 200));
+        }
+      }
     }
     result.per_rep.push(entry);
   }
