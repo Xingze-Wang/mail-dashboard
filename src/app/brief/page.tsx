@@ -20,6 +20,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { formatDate } from "@/lib/utils";
+import { MpSignalPills, type MpSignals } from "@/components/MpSignalPills";
 
 interface Paper {
   title: string;
@@ -57,6 +58,9 @@ interface Brief {
   } | null;
   matchTypes: string[];
   createdAt: string;
+  // MP+WeChat signals from /api/brief (per-recipient, via canonical-counts).
+  // Null when we have no email to join on or no signal exists.
+  mpSignals?: (MpSignals & { applicationProgress?: string | null }) | null;
 }
 
 function computeBadgeClass(level: string | null) {
@@ -122,6 +126,12 @@ function ResultCard({
                 Emailed
               </span>
             )}
+            <MpSignalPills
+              signals={brief.mpSignals ?? null}
+              size="sm"
+              hideIfEmpty
+              applicationProgress={brief.mpSignals?.applicationProgress ?? null}
+            />
           </div>
           <p style={{ fontSize: 13, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginBottom: 6 }}>
             {brief.paper.title}
@@ -280,27 +290,35 @@ function DetailView({
           Back to results
         </button>
 
-        {wechatMarked ? (
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "6px 14px", borderRadius: 999, background: "#ECFDF5", border: "1px solid #A7F3D0", color: "#047857", fontSize: 12, fontWeight: 500 }}>
-            <Check style={{ width: 14, height: 14 }} />
-            Added on WeChat
-            {wechatAt && (
-              <span style={{ color: "#047857", opacity: 0.7, marginLeft: 4 }}>
-                · {formatDate(wechatAt)}
-              </span>
-            )}
-          </div>
-        ) : (
-          <button
-            onClick={markWechat}
-            disabled={wechatSaving}
-            className="btn btn-primary"
-            style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
-          >
-            <MessageCircle style={{ width: 14, height: 14 }} />
-            {wechatSaving ? "Saving…" : "Mark: Added on WeChat"}
-          </button>
-        )}
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <MpSignalPills
+            signals={brief.mpSignals ?? null}
+            size="md"
+            showLabels
+            applicationProgress={brief.mpSignals?.applicationProgress ?? null}
+          />
+          {wechatMarked ? (
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "6px 14px", borderRadius: 999, background: "#ECFDF5", border: "1px solid #A7F3D0", color: "#047857", fontSize: 12, fontWeight: 500 }}>
+              <Check style={{ width: 14, height: 14 }} />
+              Added on WeChat
+              {wechatAt && (
+                <span style={{ color: "#047857", opacity: 0.7, marginLeft: 4 }}>
+                  · {formatDate(wechatAt)}
+                </span>
+              )}
+            </div>
+          ) : (
+            <button
+              onClick={markWechat}
+              disabled={wechatSaving}
+              className="btn btn-primary"
+              style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+            >
+              <MessageCircle style={{ width: 14, height: 14 }} />
+              {wechatSaving ? "Saving…" : "Mark: Added on WeChat"}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Name header (compact) */}

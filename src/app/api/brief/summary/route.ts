@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { llmChat } from "@/lib/llm-proxy";
 import { requireSession } from "@/lib/auth-helpers";
+import { getMpSignalsForEmails, type MpLeadSignals } from "@/lib/canonical-counts";
 
 export const dynamic = "force-dynamic";
 
@@ -116,11 +117,26 @@ export async function GET(req: NextRequest) {
     `【怎么切入】${brief.approach}`,
   ].join("\n");
 
+  // Attach MP+WeChat signals (registered / submitted / wechat) for the
+  // lead's author_email. Lets the detail UI show the same 3-signal pills
+  // that /pipeline + the search-results list use.
+  let mpSignals: MpLeadSignals | null = null;
+  const email = ((info.author_email as string) ?? "").trim().toLowerCase();
+  if (email && email.includes("@")) {
+    try {
+      const sigMap = await getMpSignalsForEmails([email]);
+      mpSignals = sigMap.get(email) ?? null;
+    } catch {
+      mpSignals = null;
+    }
+  }
+
   return NextResponse.json({
     ...brief,
     summary,
     // Also return `talkingPoints` for any lingering callers reading the old shape.
     talkingPoints: brief.questions,
+    mpSignals,
   });
 }
 

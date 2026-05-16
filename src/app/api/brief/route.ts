@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { requireSession } from "@/lib/auth-helpers";
+import { getMpSignalsForEmails, type MpLeadSignals } from "@/lib/canonical-counts";
 
 /**
  * GET /api/brief?name=jiahao     — search by name (WeChat scenario)
@@ -60,6 +61,10 @@ interface BriefResult {
   matchTypes: string[];
   createdAt: string;
   source?: "pipeline_lead" | "paper_author" | "email-only";
+  // MP+WeChat conversion signals for the email we reached out to.
+  // Wired through getMpSignalsForEmails() after dedup. Null when we
+  // have no email to join on (e.g. paper_author hits with no lead row).
+  mpSignals?: MpLeadSignals | null;
 }
 
 // Infer a display name from an email address. We only use this when
@@ -353,6 +358,35 @@ export async function GET(req: NextRequest) {
 
   const briefs = Array.from(results.values());
 
+  // ─── Attach MP+WeChat signals for each brief's emailedTo ───────────────
+  // Bulk-fetch all signals in one canonical-counts call (registered /
+  // submitted / addedWechat per email), then attach inline. Absence of
+  // a map entry means "no signal" — we keep mpSignals null so the UI
+  // can render ghost pills via MpSignalPills.
+  const emails = Array.from(
+    new Set(
+      briefs
+        .map((b) => b.outreach.emailedTo)
+        .filter((e): e is string => !!e && e.includes("@")),
+    ),
+  );
+  if (emails.length > 0) {
+    try {
+      const sigMap = await getMpSignalsForEmails(emails);
+      for (const b of briefs) {
+        const key = (b.outreach.emailedTo ?? "").trim().toLowerCase();
+        if (!key) {
+          b.mpSignals = null;
+          continue;
+        }
+        b.mpSignals = sigMap.get(key) ?? null;
+      }
+    } catch {
+      // Signal lookup is non-fatal — UI degrades to "no signal" pills.
+      for (const b of briefs) b.mpSignals = b.mpSignals ?? null;
+    }
+  }
+
   // Sort: direct matches first, then co-author/paper_author matches; newest first
   briefs.sort((a, b) => {
     const aScore = a.authorMismatch ? 0 : 1;
@@ -393,7 +427,14 @@ export async function GET(req: NextRequest) {
       matchTypes: [],
       createdAt: new Date().toISOString(),
       source: "email-only",
+      mpSignals: null,
     };
+    try {
+      const sigMap = await getMpSignalsForEmails([email]);
+      synthetic.mpSignals = sigMap.get(email.trim().toLowerCase()) ?? null;
+    } catch {
+      synthetic.mpSignals = null;
+    }
     briefs.push(synthetic);
   }
 
