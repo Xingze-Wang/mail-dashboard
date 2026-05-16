@@ -288,6 +288,16 @@ export interface LarkSession {
 }
 
 async function callLLM(system: string, user: string): Promise<{ text: string; model: string }> {
+  // Default timeout: 180s (was effectively 60s via llmChat's default).
+  // Long-form Chinese replies that involve memory dumps, multi-section
+  // docs, or onboarding redesigns regularly exceed 60s — the agent
+  // doesn't know it should be terse for those questions. Better to wait
+  // than to surface "I timed out" mid-thought.
+  //
+  // Retry once on timeout with a heavily-trimmed system prompt (essentially:
+  // drop all the "soft" personality + rule sections, keep only the
+  // hard rules + tools). Better to deliver a slightly less polished
+  // answer than nothing.
   try {
     const r = await llmChat({
       model: "claude-opus-4.7",
@@ -295,15 +305,41 @@ async function callLLM(system: string, user: string): Promise<{ text: string; mo
       user,
       temperature: 0.4,
       max_tokens: 20000,
+      timeoutMs: 180_000,
     });
     return { text: r.text ?? "(empty)", model: r.meta?.model ?? "claude-opus-4.7" };
   } catch (err) {
+    // Timeout retry: drop ~70% of the system prompt and try again
+    // with 90s. The agent loses some context but typically still
+    // answers correctly because the user's question + recent history
+    // carry most of the signal.
+    const errMsg = err instanceof Error ? err.message : String(err);
+    if (/aborted|timeout/i.test(errMsg)) {
+      console.error("[lark-agent] first LLM call timed out at 180s — retrying with trimmed prompt");
+      try {
+        // Keep only the first ~3000 chars of system (brand DNA + most-
+        // critical rules) and skip the rest of the multi-section prompt.
+        const trimmed = system.slice(0, 3000) + "\n\n[note: prompt truncated to recover from upstream timeout; answer concisely]";
+        const r2 = await llmChat({
+          model: "claude-opus-4.7",
+          system: trimmed,
+          user,
+          temperature: 0.4,
+          max_tokens: 8000,
+          timeoutMs: 90_000,
+        });
+        return { text: r2.text ?? "(empty)", model: (r2.meta?.model ?? "claude-opus-4.7") + ":retry" };
+      } catch (retryErr) {
+        console.error("[lark-agent] retry also failed:", String(retryErr).slice(0, 200));
+        // fall through to the original error-class messaging below
+      }
+    }
     // Differentiate the failure class so Leon's reply tells the user
     // (and admin reading logs) what actually broke. The old generic
     // "LLM error — try again" left admin guessing whether it was a
     // proxy outage, a timeout, a config gap, or a safety-filter
-    // empty-response.
-    const errMsg = err instanceof Error ? err.message : String(err);
+    // empty-response. errMsg was already computed above for the retry
+    // gate; reuse it.
     console.error("[lark-agent] llm error:", errMsg);
 
     // Best-effort: drop a breadcrumb so the next admin/Leon dashboard
