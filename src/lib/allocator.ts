@@ -116,6 +116,20 @@ export async function allocateForRep(input: AllocateForRepInput): Promise<Alloca
       if (updErr) {
         console.error(`[allocator] pipeline_leads update failed for pool=${pk}: ${updErr.message}`);
       }
+
+      // Assemble drafts with THIS rep's effective template — happens
+      // here because the rep wasn't known before allocation. Per-rep
+      // templates (e.g. Leo's voice vs Yujie's) only resolve correctly
+      // once a rep_id exists on the lead. After assembly the lead is
+      // ready to send; flip status to 'ready'. Failures are non-blocking
+      // — a failed assembly leaves the lead in queued, picked up by the
+      // best-effort draft-queue worker fan-out later in the day.
+      const { renderDraftsForRep } = await import("@/lib/draft-render");
+      try {
+        await renderDraftsForRep(input.rep_id, ids);
+      } catch (err) {
+        console.error(`[allocator] render-drafts failed for rep=${input.rep_id}: ${String(err).slice(0, 200)}`);
+      }
     }
   }
 

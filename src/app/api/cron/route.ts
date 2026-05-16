@@ -234,6 +234,15 @@ export async function GET(req: NextRequest) {
   const fanOutSteps: Array<[string, () => Promise<unknown>]> = [
     ["mission_seed",        () => callInternalCron("/api/missions/heuristic-seed", secret)],
     ["mission_allocate",    () => callInternalCron("/api/missions/allocate-leads", secret)],
+    // Drain the draft queue in the same cron. Without this, leads sit
+    // in 'queued' forever (caught 2026-05-16: 487 'new' + 1053 'queued'
+    // backlog because draft-queue had no scheduler). Each call processes
+    // BATCH=3 leads; we kick it multiple times here to drain ~30/run.
+    ["draft_queue_1",       () => callInternalCron("/api/pipeline/draft-queue", secret)],
+    ["draft_queue_2",       () => callInternalCron("/api/pipeline/draft-queue", secret)],
+    ["draft_queue_3",       () => callInternalCron("/api/pipeline/draft-queue", secret)],
+    ["draft_queue_4",       () => callInternalCron("/api/pipeline/draft-queue", secret)],
+    ["draft_queue_5",       () => callInternalCron("/api/pipeline/draft-queue", secret)],
     ["insights_realign",    () => callInternalCron("/api/cron/insights-realign", secret)],
     ["insights_prewarm",    () => callInternalCron("/api/cron/insights-prewarm", secret)],
     ["enrich_h_index",      () => callInternalCron("/api/cron/enrich-h-index?limit=50", secret)],

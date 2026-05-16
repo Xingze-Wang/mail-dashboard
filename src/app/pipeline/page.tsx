@@ -356,6 +356,11 @@ export default function PipelinePage() {
   // even though the DB has thousands. Now the stat strip reads the
   // same primitive as the sidebar badge.
   const [readyCounts, setReadyCounts] = useState<{ count: number; readyNow: number; ripening: number }>({ count: 0, readyNow: 0, ripening: 0 });
+  // Per-status breakdown for the filter chips. Comes from
+  // /api/pipeline/status-counts (canonical-counts.countLeadsByStatus).
+  // NEVER compute chip counts from leads.filter(...).length — that
+  // array is the paginated render slice.
+  const [statusCounts, setStatusCounts] = useState<{ total: number; byStatus: Record<string, number>; ready: { total: number; sendable: number; ripening: number } } | null>(null);
   const [discoveryLeads, setDiscoveryLeads] = useState<DiscoveryLead[]>([]);
   const [discoveryBySource, setDiscoveryBySource] = useState<{ hf: number; ph: number; github: number }>({ hf: 0, ph: 0, github: 0 });
   const [loading, setLoading] = useState(true);
@@ -426,8 +431,9 @@ export default function PipelinePage() {
       return Promise.all([
         fetch(`/api/pipeline?limit=1000`, { signal }).then((r) => r.json()),
         fetch(`/api/pipeline/ready-count`, { signal, cache: "no-store" }).then((r) => r.json()),
+        fetch(`/api/pipeline/status-counts`, { signal, cache: "no-store" }).then((r) => r.json()),
       ])
-        .then(([data, rc]) => {
+        .then(([data, rc, sc]) => {
           setLeads(data.leads || []);
           setArxivTotalAll(typeof data.total === "number" ? data.total : (data.leads?.length ?? 0));
           setReadyCounts({
@@ -435,6 +441,13 @@ export default function PipelinePage() {
             readyNow: typeof rc?.readyNow === "number" ? rc.readyNow : 0,
             ripening: typeof rc?.ripening === "number" ? rc.ripening : 0,
           });
+          if (sc && typeof sc.total === "number") {
+            setStatusCounts({
+              total: sc.total,
+              byStatus: sc.byStatus ?? {},
+              ready: sc.ready ?? { total: 0, sendable: 0, ripening: 0 },
+            });
+          }
         })
         .catch((err) => { if (err.name !== "AbortError") console.error(err); })
         .finally(() => {
@@ -1037,19 +1050,27 @@ export default function PipelinePage() {
 
             <div className="dx-chip-group">
               {STATUS_CHIPS_L.map((s) => {
-                // Apply the same repFilter as the rendered list so chip
-                // counts match what sales actually sees. Previously
-                // counts used raw `leads` ignoring repFilter, so the
-                // chip showed "Ready 42" while the list had 6 rows.
-                const scopedLeads = repFilter === "all"
-                  ? leads
-                  : leads.filter((l) => l.assignedRepId === repFilter);
+                // Counts come from /api/pipeline/status-counts (canonical-
+                // counts). NEVER recompute these from leads.filter() —
+                // that's the paginated render slice and can show "0
+                // Ready" while the DB has 1207 ready (caught 2026-05-16).
+                //
+                // repFilter: when admin filters down to one rep client-
+                // side, the chip count still reflects the session-wide
+                // scope. That's the right behavior — switching the chip
+                // count when you filter by rep would mean the count
+                // changes meaning ("ready in scope" vs "ready for this
+                // rep"). If a per-rep breakdown is needed, the endpoint
+                // takes ?rep_id=N — wire that into the URL when admin
+                // changes the dropdown.
+                const sc = statusCounts;
                 const count = (() => {
-                  if (s.key === "all") return scopedLeads.length;
-                  if (s.key === "drafting") return scopedLeads.filter((l) => l.status === "queued" || l.status === "drafting" || l.status === "new").length;
-                  if (s.key === "ripening") return scopedLeads.filter((l) => isRipening(l)).length;
-                  if (s.key === "ready") return scopedLeads.filter((l) => l.status === "ready" && !isRipening(l)).length;
-                  return scopedLeads.filter((l) => l.status === s.key).length;
+                  if (!sc) return 0;
+                  if (s.key === "all") return sc.total;
+                  if (s.key === "drafting") return (sc.byStatus.queued ?? 0) + (sc.byStatus.drafting ?? 0) + (sc.byStatus.new ?? 0);
+                  if (s.key === "ripening") return sc.ready.ripening;
+                  if (s.key === "ready") return sc.ready.sendable;
+                  return sc.byStatus[s.key] ?? 0;
                 })();
                 return (
                   <button

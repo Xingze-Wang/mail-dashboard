@@ -18,11 +18,15 @@ import { scoreWithGemini } from "@/lib/gemini-scorer";
  *
  * Stays well under Vercel's 60s function limit: 5 leads * ~5s Gemini = 25s.
  */
-// 3 leads × (S2 ~2s + Tavily ~3s + Gemini ~5s + DB ~0.5s) ≈ 30s comfortably,
-// but Tavily/S2 occasionally spike to 10s+. Pin maxDuration so a slow batch
-// doesn't get killed at Hobby's 60s default.
-const BATCH = 3;
-export const maxDuration = 90;
+// Drain ~15 leads per invocation. maxDuration is bumped to 300s (Pro
+// limit) so a 15-lead batch with occasional S2/LLM spikes has headroom.
+// Previously 3, which created a 1500-row backlog when the queue had no
+// scheduler. The master /api/cron now also calls draft-queue 5x in its
+// fan-out, so worst-case daily drain ≈ 75 leads. Python imports ~70-90/day
+// — this barely keeps up. If backlog grows again, raise BATCH or add
+// a dedicated cron schedule (not a fan-out hop).
+const BATCH = 15;
+export const maxDuration = 300;
 
 async function checkAuth(req: NextRequest): Promise<boolean> {
   const secret = process.env.CRON_SECRET;
