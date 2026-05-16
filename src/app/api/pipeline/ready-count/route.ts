@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/lib/db";
 import { requireSession } from "@/lib/auth-helpers";
-import { beijingDaysAgoStartUtc } from "@/lib/override-quota";
+import { countReadyQueue } from "@/lib/canonical-counts";
 
 /**
  * GET /api/pipeline/ready-count
@@ -30,26 +29,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ count: 0, readyNow: 0, ripening: 0 });
   }
   const isPrivileged = session.role === "admin";
-
-  const baseQ = () => {
-    let q = supabase
-      .from("pipeline_leads")
-      .select("*", { count: "exact", head: true })
-      .eq("status", "ready");
-    if (!isPrivileged) q = q.eq("assigned_rep_id", session.repId);
-    return q;
-  };
-  // Beijing-anchored so "ripening" matches the age-gate the send
-  // routes actually enforce (policy.isAgeGated uses a 7d window; we
-  // need the count UI to agree with what sales see blocked at send).
-  const sevenDaysAgo = beijingDaysAgoStartUtc(7).toISOString();
-
-  const [{ count: total }, { count: ripening }] = await Promise.all([
-    baseQ(),
-    baseQ().gt("created_at", sevenDaysAgo),
-  ]);
-  const totalCount = total ?? 0;
-  const ripeningCount = ripening ?? 0;
-  const readyNow = Math.max(0, totalCount - ripeningCount);
-  return NextResponse.json({ count: totalCount, readyNow, ripening: ripeningCount });
+  const { sendable, ripening, total } = await countReadyQueue(
+    isPrivileged ? {} : { repId: session.repId },
+  );
+  return NextResponse.json({ count: total, readyNow: sendable, ripening });
 }

@@ -146,7 +146,16 @@ async function _computeOverviewInner(today: string, since7d: string): Promise<{ 
     wechatByRep.set(rid, (wechatByRep.get(rid) ?? 0) + 1);
   }
 
-  // 5. Ready queue depth — pipeline_leads assigned to this rep, status=ready
+  // 5. Ready queue depth — pipeline_leads assigned to this rep, status=ready.
+  //
+  // Bulk-fetch-and-bucket pattern (intentional, not migrated to
+  // canonical-counts). For N reps × M metrics this dashboard would emit
+  // N×M = 25-49 round trips if it called countLeads() per rep — we'd
+  // regress p95 from ~400ms to ~3s. canonical-counts is for surfaces
+  // that ask "what is THE count for THIS predicate"; team-overview asks
+  // "give me one row per rep." When that pattern shows up in a second
+  // place, add a bulk primitive to canonical-counts (e.g. countLeadsByRep)
+  // and migrate this. Until then, keep it local. See CANONICAL_COUNTS.md.
   const { data: ready } = await supabase
     .from("pipeline_leads")
     .select("assigned_rep_id, status")

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { sendMessage } from "@/lib/lark";
+import { countLeads, countReplies, countWechatConversions } from "@/lib/canonical-counts";
 
 export const maxDuration = 60;
 
@@ -68,34 +69,18 @@ export async function GET(req: NextRequest) {
         continue;
       }
 
-      // ─── Sales-rep path (unchanged) ────────────────────────────────
+      // ─── Sales-rep path — all counts via canonical-counts ─────────
       // 1. Ready leads in their queue
-      const { count: readyCount } = await supabase
-        .from("pipeline_leads")
-        .select("id", { count: "exact", head: true })
-        .eq("assigned_rep_id", rep.id)
-        .eq("status", "ready");
-
-      // 2. Inbound replies in last 24h to their threads (rep_id set by
-      //    migration 014 attribution)
-      const { count: replyCount } = await supabase
-        .from("inbound_emails")
-        .select("id", { count: "exact", head: true })
-        .eq("rep_id", rep.id)
-        .gte("created_at", since24h);
-
-      // 3. Wechat marks ≥4 days old without an inbound since (handled
-      //    by the dedicated wechat-followup cron, but we surface a
-      //    one-line count here so reps see the queue size). Just count
-      //    the brief_lookups they've marked recently for "you've been
-      //    busy" framing — the followup-specific nudge fires from a
-      //    different cron with its own logic.
-      const { count: weeklyWechat } = await supabase
-        .from("brief_lookups")
-        .select("id", { count: "exact", head: true })
-        .eq("marked_by_rep_id", rep.id)
-        .eq("added_wechat", true)
-        .gte("wechat_at", sinceWeek);
+      // 2. Inbound replies in last 24h (rep_id stamped at write time)
+      // 3. Wechat marks this week (for "you've been busy" framing)
+      const [readyResult, replyResult, wechatResult] = await Promise.all([
+        countLeads({ repId: rep.id, status: "ready" }),
+        countReplies({ repId: rep.id, since: since24h }),
+        countWechatConversions({ markedByRepId: rep.id, since: sinceWeek }),
+      ]);
+      const readyCount = readyResult.count;
+      const replyCount = replyResult.count;
+      const weeklyWechat = wechatResult.count;
 
       // Skip silently if everything is zero — no nag-spam.
       if ((readyCount ?? 0) === 0 && (replyCount ?? 0) === 0) {

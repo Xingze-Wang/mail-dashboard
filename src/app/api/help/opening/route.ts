@@ -4,6 +4,7 @@ import { requireSession } from "@/lib/auth-helpers";
 import { llmChat } from "@/lib/llm-proxy";
 import { DAILY_OVERRIDE_CAP, countOverridesTodayByRep, beijingDayStartUtc } from "@/lib/override-quota";
 import { CONTACTED_LEAD_STATUSES } from "@/lib/status";
+import { countLeads, countReplies, getThreadIdsForRep } from "@/lib/canonical-counts";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -52,36 +53,23 @@ export async function GET(req: NextRequest) {
   // Gather today/yesterday stats.
   const { data: rep } = await supabase.from("sales_reps").select("sender_email").eq("id", repId).maybeSingle();
 
-  // "sent today / yesterday" = leads contacted in that window. .eq('sent')
-  // alone drops anything that already flipped to replied / wechat_added,
-  // so a successful follow-up day under-reports. Use the canonical set.
+  // All "ready / sent today / sent yesterday / unread replies" come from
+  // canonical-counts. CONTACTED_LEAD_STATUSES lives inside countLeads via
+  // the array-status path — no need to spread the constant here.
   const contacted = [...CONTACTED_LEAD_STATUSES];
-  const [readyQ, sentTodayQ, sentYesterdayQ] = await Promise.all([
-    supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).eq("status", "ready"),
-    supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).in("status", contacted).gte("sent_at", todayStartIso),
-    supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).in("status", contacted).gte("sent_at", yesterdayStartIso).lt("sent_at", todayStartIso),
+  const threadIds = rep?.sender_email
+    ? await getThreadIdsForRep(repId, rep.sender_email)
+    : [];
+  const [readyResult, sentTodayResult, sentYesterdayResult, replyResult] = await Promise.all([
+    countLeads({ repId, status: "ready" }),
+    countLeads({ repId, status: contacted, sentSince: todayStartIso }),
+    countLeads({ repId, status: contacted, sentSince: yesterdayStartIso, sentUntil: todayStartIso }),
+    countReplies({ repId, threadIds, isRead: false }),
   ]);
-  const readyCount = readyQ.count ?? 0;
-  const sentToday = sentTodayQ.count ?? 0;
-  const sentYesterday = sentYesterdayQ.count ?? 0;
-
-  let unreadReplies = 0;
-  if (rep?.sender_email) {
-    const { data: outs } = await supabase
-      .from("emails")
-      .select("thread_id")
-      .ilike("from", `%${rep.sender_email}%`)
-      .not("thread_id", "is", null);
-    const threadIds = (outs ?? []).map((r) => r.thread_id as string).filter(Boolean);
-    if (threadIds.length > 0) {
-      const { count } = await supabase
-        .from("inbound_emails")
-        .select("*", { count: "exact", head: true })
-        .eq("is_read", false)
-        .in("thread_id", threadIds);
-      unreadReplies = count ?? 0;
-    }
-  }
+  const readyCount = readyResult.count;
+  const sentToday = sentTodayResult.count;
+  const sentYesterday = sentYesterdayResult.count;
+  const unreadReplies = replyResult.count;
 
   const overrideUsed = (await countOverridesTodayByRep(repId)) ?? 0;
 

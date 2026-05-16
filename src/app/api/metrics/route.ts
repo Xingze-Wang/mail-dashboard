@@ -3,7 +3,7 @@ import { supabase } from "@/lib/db";
 import { requireSession } from "@/lib/auth-helpers";
 import { getRep } from "@/lib/assignment";
 import { getDbFunnel } from "@/lib/db-funnel";
-import { CONTACTED_LEAD_STATUSES } from "@/lib/status";
+import { countLeadsByStatus, countWechatConversions } from "@/lib/canonical-counts";
 
 // Live data every request — never cache.
 export const dynamic = "force-dynamic";
@@ -61,43 +61,31 @@ export async function GET(req: NextRequest) {
     ? await recentActivityFromResend(fromContains, 20)
     : [];
 
-  // ── Pipeline + WeChat (DB-derived, unchanged) ──
-  let readyQ = supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("status", "ready");
-  // "Sent" here means "the lead has been contacted at least once" — leads
-  // that progressed to replied / wechat_added still count, otherwise the
-  // tile under-reports by every successful conversion. Use the canonical
-  // set from src/lib/status.ts.
-  let sentQ = supabase
-    .from("pipeline_leads")
-    .select("*", { count: "exact", head: true })
-    .in("status", [...CONTACTED_LEAD_STATUSES]);
-  let totalQ = supabase.from("pipeline_leads").select("*", { count: "exact", head: true });
-  if (!isPrivileged) {
-    readyQ = readyQ.eq("assigned_rep_id", session.repId);
-    sentQ = sentQ.eq("assigned_rep_id", session.repId);
-    totalQ = totalQ.eq("assigned_rep_id", session.repId);
-  }
-
+  // ── Pipeline + WeChat (DB-derived, all through canonical-counts) ──
+  //
+  // "Sent" means "the lead has been contacted at least once" — includes
+  // the 'replied' status because a reply is a later phase of the same
+  // send, not a displacement. countLeadsByStatus.contacted enforces this
+  // using the canonical CONTACTED_LEAD_STATUSES set.
+  const repScope = isPrivileged ? {} : { repId: session.repId };
+  const wechatScope = isPrivileged ? {} : { markedByRepId: session.repId };
   const [
-    { count: pipelineReady },
-    { count: pipelineSent },
-    { count: pipelineTotal },
-    { count: wechatTotal },
+    pipelineStatus,
+    wechatResult,
     { data: recentWechat },
     { count: totalInbound },
   ] = await Promise.all([
-    readyQ,
-    sentQ,
-    totalQ,
-    isPrivileged
-      ? supabase.from("brief_lookups").select("*", { count: "exact", head: true }).eq("added_wechat", true)
-      : supabase.from("brief_lookups").select("*", { count: "exact", head: true }).eq("added_wechat", true).eq("marked_by_rep_id", session.repId),
+    countLeadsByStatus(repScope),
+    countWechatConversions(wechatScope),
     isPrivileged
       ? supabase.from("brief_lookups").select("query, arxiv_id, created_at").eq("added_wechat", true).order("created_at", { ascending: false }).limit(10)
       : supabase.from("brief_lookups").select("query, arxiv_id, created_at").eq("added_wechat", true).eq("marked_by_rep_id", session.repId).order("created_at", { ascending: false }).limit(10),
-    // Inbound total (per-rep scoped via thread join if needed).
     inboundCount(isPrivileged ? null : await inboundThreadScope(fromContains)),
   ]);
+  const pipelineReady = pipelineStatus.byStatus.ready;
+  const pipelineSent = pipelineStatus.contacted;
+  const pipelineTotal = pipelineStatus.total;
+  const wechatTotal = wechatResult.count;
 
   return NextResponse.json({
     overview: {

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { requireSession } from "@/lib/auth-helpers";
 import { getRep } from "@/lib/assignment";
+import { countReplies, getThreadIdsForRep } from "@/lib/canonical-counts";
 
 export async function GET(req: NextRequest) {
   // Auth required + per-sales scoping. Fail-closed: no session → 0;
@@ -16,35 +17,18 @@ export async function GET(req: NextRequest) {
   if (!isPrivileged) {
     const rep = await getRep(session.repId);
     if (!rep?.sender_email) return NextResponse.json({ count: 0 });
-    // Thread ids this rep owns.
-    const { data: outbound } = await supabase
-      .from("emails")
-      .select("thread_id")
-      .ilike("from", `%${rep.sender_email}%`)
-      .not("thread_id", "is", null);
-    const threadIds = (outbound ?? [])
-      .map((r) => r.thread_id as string | null)
-      .filter((t): t is string => !!t);
-    if (threadIds.length === 0) return NextResponse.json({ count: 0 });
-
-    const { count, error } = await supabase
-      .from("inbound_emails")
-      .select("*", { count: "exact", head: true })
-      .eq("is_read", false)
-      .in("thread_id", threadIds);
-    if (error) {
-      console.error("inbox/unread-count query error — returning 0", error);
-      return NextResponse.json({ count: 0 });
-    }
-    return NextResponse.json({ count: count ?? 0 });
+    // Same scope shape as /api/inbound GET: `rep_id = self` OR
+    // `thread_id IN my-sent-threads`. Previously this route only
+    // checked thread_id and undercounted any correctly-stamped reply
+    // (e.g. rep_id matched via the resolver's exact-address path) whose
+    // outbound chain didn't carry a matching thread_id. The badge now
+    // can't disagree with the list view.
+    const threadIds = await getThreadIdsForRep(session.repId, rep.sender_email);
+    const { unread } = await countReplies({ repId: session.repId, threadIds, isRead: false });
+    return NextResponse.json({ count: unread });
   }
 
-  // Admin / senior / unauthenticated: unchanged, whole-team count.
-  const { count, error } = await supabase
-    .from("inbound_emails")
-    .select("*", { count: "exact", head: true })
-    .eq("is_read", false);
-
-  if (error) return NextResponse.json({ count: 0, error: error.message }, { status: 500 });
-  return NextResponse.json({ count: count ?? 0 });
+  // Admin / senior: whole-team unread.
+  const { unread } = await countReplies({ isRead: false });
+  return NextResponse.json({ count: unread });
 }

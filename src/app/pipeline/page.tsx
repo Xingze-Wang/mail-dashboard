@@ -343,6 +343,12 @@ export default function PipelinePage() {
   const [meLoaded, setMeLoaded] = useState(false);
 
   const [leads, setLeads] = useState<Lead[]>([]);
+  // True DB-side total of arXiv leads matching the current scope (server
+  // returns this from canonical-counts). `leads.length` only reflects the
+  // current page, which used to cap at the paginated limit and produce
+  // "1,000 active leads" while the DB had 3,068. Always read this state
+  // for any "total leads" number on this page.
+  const [arxivTotalAll, setArxivTotalAll] = useState<number>(0);
   const [discoveryLeads, setDiscoveryLeads] = useState<DiscoveryLead[]>([]);
   const [discoveryBySource, setDiscoveryBySource] = useState<{ hf: number; ph: number; github: number }>({ hf: 0, ph: 0, github: 0 });
   const [loading, setLoading] = useState(true);
@@ -403,13 +409,16 @@ export default function PipelinePage() {
     (signal?: AbortSignal) => {
       if (!hasInitialised.current) setLoading(true);
       else setRefreshing(true);
-      // 1000 covers the current ~300 leads with plenty of room. Payload
-      // stays under ~500KB so this is a non-event for performance. If we
-      // ever cross 1000 active leads, switch to load-more pagination.
+      // The `leads` array is intentionally the most recent 1000 rows for
+      // rendering — older leads aren't worth scrolling through. The
+      // grand-total count comes separately from `data.total` (sourced
+      // from canonical-counts.countLeads on the server) so any "total"
+      // displayed on this page matches the DB, not the paginated array.
       return fetch(`/api/pipeline?limit=1000`, { signal })
         .then((r) => r.json())
         .then((data) => {
           setLeads(data.leads || []);
+          setArxivTotalAll(typeof data.total === "number" ? data.total : (data.leads?.length ?? 0));
         })
         .catch((err) => { if (err.name !== "AbortError") console.error(err); })
         .finally(() => {
@@ -476,11 +485,12 @@ export default function PipelinePage() {
   /* ── Channel counts ──────────────────────────────────────────────── */
 
   const channelCounts = useMemo(() => {
-    // Derive from the ACTUAL loaded `leads` array (which is already
-    // rep-scoped server-side for sales). Previously used
-    // analytics.channels.sources[].total which mixed scoped and
-    // unscoped aggregations and produced the "28 vs 718" mismatch.
-    const arxivTotal = leads.length;
+    // arxivTotal is the DB-side total returned by /api/pipeline (which
+    // delegates to canonical-counts.countLeads). NOT `leads.length` —
+    // that's just the current paginated render slice and silently caps
+    // at the API's limit. The /pipeline page subtitle and the "Total
+    // leads" analytics card now read from the same primitive.
+    const arxivTotal = arxivTotalAll;
     const hf = discoveryBySource.hf ?? 0;
     const gh = discoveryBySource.github ?? 0;
     const ph = discoveryBySource.ph ?? 0;
@@ -491,7 +501,7 @@ export default function PipelinePage() {
       github: gh,
       ph,
     };
-  }, [leads.length, discoveryBySource]);
+  }, [arxivTotalAll, discoveryBySource]);
 
   /* ── Filtered + sorted streams ───────────────────────────────────── */
 

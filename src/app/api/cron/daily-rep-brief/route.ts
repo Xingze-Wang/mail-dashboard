@@ -13,6 +13,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { llmChat } from "@/lib/llm-proxy";
+import { countSent } from "@/lib/canonical-counts";
+import { REACHABLE_EMAIL_STATUSES } from "@/lib/status";
 
 export const preferredRegion = ["hkg1"];
 export const maxDuration = 300;
@@ -27,9 +29,11 @@ interface BriefShape {
 }
 
 async function briefForRep(repId: number, repName: string, today: string): Promise<BriefShape | null> {
-  // Inputs: today's missions, today's insights card, recent rep activity,
-  // rep memory (rep_pref / self_critique). Pull in parallel, hand to LLM.
-  const [missionsR, cardsR, activityR, memoryR] = await Promise.all([
+  // Inputs: today's missions, today's insights card, rep memory
+  // (rep_pref / self_critique). Pull in parallel, hand to LLM. Recent
+  // activity used to come from a `.limit(50)` slice of emails; counts
+  // now come from canonical-counts below.
+  const [missionsR, cardsR, memoryR] = await Promise.all([
     supabase.from("missions")
       .select("kind, target, scope, description, status")
       .eq("rep_id", repId)
@@ -40,11 +44,6 @@ async function briefForRep(repId: number, repName: string, today: string): Promi
       .eq("role_view", "rep")
       .eq("effective_date", today)
       .maybeSingle(),
-    supabase.from("emails")
-      .select("status, created_at")
-      .eq("actor_rep_id", repId)
-      .gte("created_at", new Date(Date.now() - 7 * 86_400_000).toISOString())
-      .limit(50),
     supabase.from("helper_learnings")
       .select("kind, body")
       .or(`scope_rep_id.eq.${repId},scope_rep_id.is.null`)
@@ -53,8 +52,23 @@ async function briefForRep(repId: number, repName: string, today: string): Promi
       .limit(10),
   ]);
 
-  const last7d = (activityR.data ?? []).length;
-  const sentCount = (activityR.data ?? []).filter((e) => ["sent", "delivered", "opened", "clicked"].includes(String(e.status))).length;
+  // last7d / sentCount via canonical-counts so this brief's numbers
+  // agree with /api/metrics/me and the dashboard tile the rep sees.
+  // Prior version computed both from a `.limit(50)` slice, silently
+  // capping reps who sent more than 50 emails/week. The brief was
+  // pre-warmed nightly so the cap looked invisible until reps started
+  // hitting it.
+  const sevenDaysAgo = new Date(Date.now() - 7 * 86_400_000).toISOString();
+  // last7d = every row in the emails table for this rep in the window,
+  // regardless of delivery status. sentCount = only REACHABLE (excludes
+  // bounced/complained).
+  const ALL_STATUSES = ["queued", "sent", "delivered", "opened", "clicked", "bounced", "complained"] as const;
+  const [last7dResult, sentResult] = await Promise.all([
+    countSent({ actorRepId: repId, since: sevenDaysAgo, status: ALL_STATUSES }),
+    countSent({ actorRepId: repId, since: sevenDaysAgo, status: REACHABLE_EMAIL_STATUSES }),
+  ]);
+  const last7d = last7dResult.count;
+  const sentCount = sentResult.count;
 
   const userPayload = {
     rep_name: repName,

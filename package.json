@@ -16,6 +16,7 @@
     "build:migrations": "node scripts/build-migration-bundle.mjs",
     "lint:integrity": "node scripts/lint-status-eq.mjs",
     "lint:fetch": "node scripts/lint-fetch.mjs",
+    "lint:counts": "node scripts/lint-counts.mjs",
     "integrity": "node scripts/integrity.mjs"
   },
   "dependencies": {

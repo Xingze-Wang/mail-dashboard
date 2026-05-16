@@ -13,6 +13,8 @@ import {
 import { requireSession } from "@/lib/auth-helpers";
 import { listEnvelope } from "@/lib/list-envelope";
 import { resolveLatePlaceholders } from "@/lib/template-assembler";
+import { countLeads, type LeadFilter } from "@/lib/canonical-counts";
+import type { LeadStatus } from "@/lib/status";
 
 // ─── Shared field mapper ────────────────────────────────────────────────────
 
@@ -130,38 +132,40 @@ export async function GET(req: NextRequest) {
     .order("created_at", { ascending: false })
     .range(offset, offset + limit - 1);
 
-  let countQuery = supabase
-    .from("pipeline_leads")
-    .select("*", { count: "exact", head: true });
-
+  // Build the canonical-counts filter that mirrors `query`. The list
+  // query stays inline (it needs row data + range), but the COUNT goes
+  // through canonical-counts so this number and the analytics route's
+  // totalLeads come out of the same primitive — by definition, they
+  // can't disagree the way they did before this module existed.
+  const countFilter: LeadFilter = {};
   if (status) {
     query = query.eq("status", status);
-    countQuery = countQuery.eq("status", status);
+    countFilter.status = status as LeadStatus;
   }
   if (tier) {
     query = query.eq("lead_tier", tier);
-    countQuery = countQuery.eq("lead_tier", tier);
+    countFilter.tier = tier as "strong" | "normal";
   }
   if (effectiveRepId !== null) {
     query = query.eq("assigned_rep_id", effectiveRepId);
-    countQuery = countQuery.eq("assigned_rep_id", effectiveRepId);
+    countFilter.repId = effectiveRepId;
   }
   if (dateRange === "today") {
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
     query = query.gte("created_at", todayStart.toISOString());
-    countQuery = countQuery.gte("created_at", todayStart.toISOString());
+    countFilter.since = todayStart.toISOString();
   } else if (dateRange === "week") {
     const weekAgo = new Date();
     weekAgo.setDate(weekAgo.getDate() - 7);
     weekAgo.setHours(0, 0, 0, 0);
     query = query.gte("created_at", weekAgo.toISOString());
-    countQuery = countQuery.gte("created_at", weekAgo.toISOString());
+    countFilter.since = weekAgo.toISOString();
   }
 
   const [{ data: leads }, { count: total }] = await Promise.all([
     query,
-    countQuery,
+    countLeads(countFilter).then((r) => ({ count: r.count })),
   ]);
 
   let mapped = (leads || []).map(mapLead);

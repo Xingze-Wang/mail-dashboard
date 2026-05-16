@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { verifySession, AUTH_COOKIE } from "@/lib/auth";
-import { CONTACTED_LEAD_STATUSES } from "@/lib/status";
 import { getResendFunnel } from "@/lib/resend-funnel";
 import { getRep } from "@/lib/assignment";
+import { countLeads, countLeadsByStatus } from "@/lib/canonical-counts";
 
 /**
  * GET /api/metrics/me
@@ -31,18 +31,17 @@ export async function GET(req: NextRequest) {
   // via @/lib/status.ts. (WeChat conversions live entirely in
   // brief_lookups; see status.ts header note on the removed
   // 'wechat_added' value.)
-  const [
-    { count: assigned },
-    { count: ready },
-    { count: sent },
-    { count: replied },
-  ] = await Promise.all([
-    supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId),
-    supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).eq("status", "ready"),
-    supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).in("status", [...CONTACTED_LEAD_STATUSES]),
-    supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).eq("status", "replied"),
-  ]);
-  const sentCount = sent ?? 0;
+  // One canonical-counts round trip — `countLeadsByStatus` returns the
+  // full status breakdown PLUS `contacted` (sum of CONTACTED_LEAD_STATUSES)
+  // and `total`. Cheaper than the 4 separate count queries this used to
+  // do, AND uses the exact same primitive as every other "how many
+  // ${status} leads" surface on the site.
+  const { byStatus, contacted, total } = await countLeadsByStatus({ repId });
+  const assigned = total;
+  const ready = byStatus.ready;
+  const sent = contacted;
+  const replied = byStatus.replied;
+  const sentCount = sent;
 
   // WeChat conversions — attributed to WHOEVER MARKED the row (the
   // rep who clicked "Added on WeChat"), not to the lead's owner.

@@ -16,7 +16,7 @@
 
 import { supabase } from "@/lib/db";
 import { DAILY_OVERRIDE_CAP, countOverridesTodayByRep } from "@/lib/override-quota";
-import { CONTACTED_LEAD_STATUSES } from "@/lib/status";
+import { countLeadsByStatus, fetchAllLeads } from "@/lib/canonical-counts";
 import { computeGrowth } from "@/lib/rep-growth";
 import { loadActiveLearnings } from "@/lib/helper-learnings";
 import { getAdminAlerts } from "@/lib/admin-alerts";
@@ -100,20 +100,18 @@ async function getMyStats(session: Session) {
   // WeChat", not the lead's owner. Pre-migration-012 rows
   // (marked_by_rep_id=null) are excluded because their attribution
   // is genuinely unknown.
-  const [
-    { count: assigned },
-    { count: ready },
-    { count: sent },
-    { count: replied },
-    { data: wechatRows },
-  ] = await Promise.all([
-    supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId),
-    supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).eq("status", "ready"),
-    supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).in("status", [...CONTACTED_LEAD_STATUSES]),
-    supabase.from("pipeline_leads").select("*", { count: "exact", head: true }).eq("assigned_rep_id", repId).eq("status", "replied"),
+  // Lead counts via canonical-counts — same primitive that /api/metrics/me
+  // and the dashboard tiles use. The bot now literally cannot disagree
+  // with the UI on these numbers. CONTACTED_LEAD_STATUSES is honored
+  // inside countLeadsByStatus via the `contacted` field.
+  const [statusBreakdown, { data: wechatRows }] = await Promise.all([
+    countLeadsByStatus({ repId }),
     supabase.from("brief_lookups").select("lead_id").eq("added_wechat", true).eq("marked_by_rep_id", repId).not("lead_id", "is", null),
   ]);
-  const sentCount = sent ?? 0;
+  const assigned = statusBreakdown.total;
+  const ready = statusBreakdown.byStatus.ready;
+  const sentCount = statusBreakdown.contacted;
+  const replied = statusBreakdown.replied;
   const wechatDistinct = new Set<string>();
   for (const r of wechatRows ?? []) {
     const id = (r as { lead_id: string | null }).lead_id;
@@ -123,10 +121,10 @@ async function getMyStats(session: Session) {
   const overrideUsed = (await countOverridesTodayByRep(repId)) ?? 0;
   return {
     stats: {
-      assigned: assigned ?? 0,
-      ready: ready ?? 0,
+      assigned,
+      ready,
       sent: sentCount,
-      replied: replied ?? 0,
+      replied,
       wechat,
       override_used_today: overrideUsed,
       override_cap: DAILY_OVERRIDE_CAP,
@@ -169,8 +167,13 @@ async function getMyWeeklyRecap(session: Session) {
 
   const fromIlike = `%${senderEmail}%`;
 
+  // weekly recap uses `from ilike '%email%'` attribution (historical
+  // fallback for pre-actor_rep_id rows), which canonical-counts'
+  // EmailFilter doesn't model. If we add a senderEmail arg to
+  // countSent, migrate this.
   const [{ count: sent }, { count: clicked }, { data: wechatRows }] = await Promise.all([
     supabase
+      // canonical-counts:ignore
       .from("emails")
       .select("*", { count: "exact", head: true })
       .ilike("from", fromIlike)
@@ -664,32 +667,29 @@ export async function runReadTool(
         // Way cheaper than list_leads when the question is aggregate
         // ("how many cn leads this week", "who owns the most"). Filter
         // by geo / tier / since to scope.
+        //
+        // Implementation: canonical-counts.fetchAllLeads paginates and
+        // applies the geo bucketing JS-side (same domain rules as
+        // v_lead_pool). The bot answers from this exact primitive, so
+        // it can never disagree with the UI's "X cn leads this week".
         const sinceArg = typeof args.since_days === "number" ? args.since_days : 7;
         const cutoff = new Date(Date.now() - Math.max(1, Math.min(365, sinceArg)) * 86_400_000).toISOString();
         const geo = typeof args.geo === "string" ? args.geo : null;  // 'cn' | 'edu' | 'overseas'
         const tier = typeof args.lead_tier === "string" ? args.lead_tier : null;  // 'strong' | 'normal'
 
-        // Build a base query — chained .eq / .gte conditionally
-        let base = supabase
-          .from("pipeline_leads")
-          .select("id, assigned_rep_id, lead_tier, author_email", { count: "exact", head: false })
-          .gte("created_at", cutoff);
-        if (tier) base = base.eq("lead_tier", tier);
-
-        const { data, error, count } = await base;
-        if (error) return { tool: call.tool, result: { error: error.message } };
-        let rows = (data ?? []) as { id: string; assigned_rep_id: number | null; lead_tier: string | null; author_email: string | null }[];
-
-        // Apply geo filter in-app (author_email domain rules — same as v_lead_pool)
-        if (geo) {
-          rows = rows.filter((r) => {
-            const dom = (r.author_email ?? "").toLowerCase().split("@")[1] ?? "";
-            if (geo === "cn") return /\.cn$|\.com\.cn$/i.test(dom);
-            if (geo === "edu") return /\.edu$|\.edu\./i.test(dom);
-            if (geo === "overseas") return !(/\.cn$|\.com\.cn$|\.edu$|\.edu\./i.test(dom));
-            return true;
-          });
-        }
+        const { rows } = await fetchAllLeads<{
+          id: string;
+          assigned_rep_id: number | null;
+          lead_tier: string | null;
+          author_email: string | null;
+        }>(
+          {
+            since: cutoff,
+            tier: tier === "strong" || tier === "normal" ? tier : undefined,
+            geo: geo === "cn" || geo === "edu" || geo === "overseas" ? geo : undefined,
+          },
+          "id, assigned_rep_id, lead_tier, author_email",
+        );
 
         // Bucket per rep
         const perRep: Record<string, number> = {};
@@ -714,7 +714,7 @@ export async function runReadTool(
           result: {
             window_days: sinceArg,
             filters: { geo, lead_tier: tier },
-            total: geo || tier ? rows.length : count ?? rows.length,
+            total: rows.length,
             unassigned,
             per_rep: perRepArr,
           },
