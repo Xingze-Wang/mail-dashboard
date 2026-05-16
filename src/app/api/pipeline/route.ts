@@ -13,7 +13,8 @@ import {
 import { requireSession } from "@/lib/auth-helpers";
 import { listEnvelope } from "@/lib/list-envelope";
 import { resolveLatePlaceholders } from "@/lib/template-assembler";
-import { countLeads, type LeadFilter } from "@/lib/canonical-counts";
+import { countLeads, getMpSignalsForEmails, type LeadFilter } from "@/lib/canonical-counts";
+import type { MpSignals } from "@/components/MpSignalPills";
 import type { LeadStatus } from "@/lib/status";
 
 // ─── Shared field mapper ────────────────────────────────────────────────────
@@ -73,6 +74,9 @@ function mapLead(l: Record<string, unknown>) {
     // client (stripped in attachHfUser before response).
     personId: (l.person_id as string | null) ?? null,
     hfUser: null as string | null,
+    // MP+WeChat signals attached after the page is built via a single
+    // bulk getMpSignalsForEmails() lookup keyed on author_email.
+    mpSignals: null as MpSignals | null,
   };
 }
 
@@ -215,6 +219,41 @@ export async function GET(req: NextRequest) {
   // HF pill on LeadRow. Coverage is sparse today but the join is cheap;
   // see attachHfUser() above for the data-coverage note.
   mapped = await attachHfUser(mapped);
+
+  // Bulk-attach MP+WeChat conversion signals (注册 / 开表 / 微信) for
+  // every lead in this page in ONE round-trip. Rendered inside the
+  // existing dx-head-meta row on LeadRow (no new section). Absent
+  // signals (no MP contact + no wechat add) → mpSignals stays null and
+  // the pill renderer hides itself via hideIfEmpty.
+  {
+    const recipientEmails = Array.from(
+      new Set(
+        mapped
+          .map((l) => (l.authorEmail as string | null | undefined) ?? "")
+          .map((e) => e.trim().toLowerCase())
+          .filter((e) => e.includes("@")),
+      ),
+    );
+    if (recipientEmails.length > 0) {
+      const sigMap = await getMpSignalsForEmails(recipientEmails);
+      mapped = mapped.map((l) => {
+        const em = ((l.authorEmail as string | null | undefined) ?? "")
+          .trim()
+          .toLowerCase();
+        if (!em) return l;
+        const sig = sigMap.get(em);
+        if (!sig) return l;
+        return {
+          ...l,
+          mpSignals: {
+            registered: sig.registered,
+            submittedApplication: sig.submittedApplication,
+            addedWechat: sig.addedWechat,
+          },
+        };
+      });
+    }
+  }
 
   // Resolve {{REP_*}} late-binding placeholders in draftHtml/draftSubject
   // for the preview shown on /pipeline. This mirrors what the send route

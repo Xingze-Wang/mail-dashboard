@@ -1,3 +1,5 @@
+import type { MpSignals } from "@/components/MpSignalPills";
+
 export interface Lead {
   id: string;
   arxivId: string;
@@ -39,6 +41,12 @@ export interface Lead {
   // 2026-05-16) — broader person-side HF extraction is tracked as a
   // separate plan (S2 homepage + GitHub commit-author lookup).
   hfUser?: string | null;
+  // MP+WeChat conversion signals (registered / submittedApplication /
+  // addedWechat). Attached server-side in /api/pipeline via a single
+  // bulk getMpSignalsForEmails() call across the page. Null when no
+  // signal at all for this recipient. Rendered as MpSignalPills inside
+  // the existing dx-head-meta row on LeadRow (no new section).
+  mpSignals?: MpSignals | null;
 }
 
 export interface Rep {
@@ -132,6 +140,13 @@ export interface RepStats {
   convRate: number;
   tiers: TierRow[];
   categories: CategoryRow[];
+  // MP conversion trio from getMpConversionMatrix().perRep, joined by
+  // rep_id server-side. Used on SalesTab to swap the single WeChat
+  // number for the 3-signal trio (注册 / 开表 / 微信). Absent when MP
+  // data hasn't been fetched / no overlap with this rep's sends.
+  mpRegistered?: number;
+  mpSubmittedApplication?: number;
+  mpAddedWechat?: number;
 }
 
 export interface HIndexBucket {

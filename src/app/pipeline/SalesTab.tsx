@@ -3,6 +3,7 @@
 import { Globe, MapPin, Crown } from "lucide-react";
 import { Analytics } from "./types";
 import { paletteFor, initialsFor } from "./repColors";
+import { MpSignalCounts } from "@/components/MpSignalPills";
 
 const TIER_ORDER: Record<string, number> = { strong: 0, normal: 1 };
 
@@ -73,7 +74,6 @@ export function SalesTab({ analytics }: { analytics: Analytics }) {
                 {[
                   { label: "Assigned", value: r.assigned },
                   { label: "Sent",     value: r.sent },
-                  { label: "WeChat",   value: r.wechat, color: "var(--green)" },
                   { label: "Conv.",    value: `${r.convRate}%`, color: "var(--green)" },
                 ].map((s) => (
                   <div key={s.label}>
@@ -85,6 +85,24 @@ export function SalesTab({ analytics }: { analytics: Analytics }) {
                     </div>
                   </div>
                 ))}
+                {/* MP conversion trio replaces the lone "WeChat" tile.
+                    registered (注) + submittedApplication (开) + addedWechat
+                    (微). Numbers come from getMpConversionMatrix.perRep
+                    joined into analytics.sales.reps server-side. Falls
+                    back to the historical wechat count when MP fields
+                    aren't present (e.g. an older deploy). */}
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <div style={{ fontSize: 11, fontWeight: 500, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>
+                    Conversion
+                  </div>
+                  <MpSignalCounts
+                    registered={r.mpRegistered ?? 0}
+                    submittedApplication={r.mpSubmittedApplication ?? 0}
+                    addedWechat={r.mpAddedWechat ?? r.wechat}
+                    totalEmailed={r.sent}
+                    size="sm"
+                  />
+                </div>
               </div>
 
               <div style={{ height: 6, background: "var(--bg)", borderRadius: 3, border: "1px solid var(--border-light)", overflow: "hidden" }}>

@@ -21,6 +21,7 @@ import { sanitizeHtml } from "@/lib/sanitize";
 import { Lead, Rep, canSend } from "./types";
 import { colorForRep, initialsFor } from "./repColors";
 import { isAgeGated, leadAgeDays, MIN_AGE_DAYS } from "@/lib/policy";
+import { MpSignalPills } from "@/components/MpSignalPills";
 
 interface Props {
   lead: Lead;
@@ -180,12 +181,21 @@ function LeadRowInner({
   const repName = currentRep?.name ?? null;
   const repColor = colorForRep(repName);
 
+  // mpSignals is null when the recipient has no MP / wechat signal at
+  // all — in that case we don't want the pills row to appear at all.
+  const hasMpSignals =
+    !!lead.mpSignals &&
+    (lead.mpSignals.registered ||
+      lead.mpSignals.submittedApplication ||
+      lead.mpSignals.addedWechat);
+
   const hasMeta =
     lead.localScore !== null ||
     lead.citationCount !== null ||
     lead.hIndex !== null ||
     lead.publishedAt ||
-    lead.sentAt;
+    lead.sentAt ||
+    hasMpSignals;
 
   const cardClass = ["dx-card", status, isExcluded && "is-excluded"]
     .filter(Boolean)
@@ -275,6 +285,20 @@ function LeadRowInner({
                 >
                   {lead.clickCount}× click{lead.clickCount > 1 ? "s" : ""}
                 </span>
+              </>
+            )}
+            {hasMpSignals && (
+              <>
+                <span className="dx-meta-dot" />
+                {/* MP+WeChat conversion trio (注册 / 开表 / 微信). Bulk-
+                    attached server-side; rendered inline inside the
+                    existing meta row (no new section). hideIfEmpty so
+                    rows with no signal don't waste real estate. */}
+                <MpSignalPills
+                  signals={lead.mpSignals ?? null}
+                  size="sm"
+                  hideIfEmpty
+                />
               </>
             )}
           </span>

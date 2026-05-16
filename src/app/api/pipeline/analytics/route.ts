@@ -3,7 +3,7 @@ import { supabase } from "@/lib/db";
 import { requireSession } from "@/lib/auth-helpers";
 import { beijingDaysAgoStartUtc } from "@/lib/override-quota";
 import { REACHABLE_EMAIL_STATUSES, CONTACTED_LEAD_STATUSES, REPLIED_LEAD_STATUSES } from "@/lib/status";
-import { fetchAllLeads } from "@/lib/canonical-counts";
+import { fetchAllLeads, getMpConversionMatrix } from "@/lib/canonical-counts";
 
 // Analytics must always reflect the live DB — "This week" is time-sensitive
 // and drifts by a full day if cached. Force a fresh query on every hit.
@@ -48,6 +48,7 @@ export async function GET(req: NextRequest) {
     discoveryCountsBySource,
     deliveredRecipients,
     repBySenderEmail,
+    mpMatrix,
   ] = await Promise.all([
     // Use canonical-counts.fetchAllLeads — paginated, no 1k cap. Before
     // canonical-counts existed, every consumer rolled its own pagination
@@ -79,6 +80,13 @@ export async function GET(req: NextRequest) {
     fetchDiscoveryCounts(),
     fetchDeliveredRecipients(),
     fetchRepRecipientCounts(),
+    // MP conversion matrix — provides perRep registered/submitted/wechat
+    // trio used by SalesTab to swap the lone WeChat number for the 3-
+    // signal trio. Scoped per-rep when the caller is a non-privileged
+    // session; admins get the full perRep[] array for their own join.
+    getMpConversionMatrix(
+      scopeRepId !== null ? { actorRepId: scopeRepId } : {},
+    ),
   ]);
 
   // Scope the arrays to the current rep BEFORE any aggregation. The
@@ -168,6 +176,30 @@ export async function GET(req: NextRequest) {
     wechat.map((w) => (w.query as string | null)?.toLowerCase().trim()).filter(Boolean) as string[],
   );
 
+  // Per-rep MP conversion trio. When the caller is scoped to a single
+  // rep, getMpConversionMatrix() returns aggregate totals (perRep is
+  // undefined) — we attribute those totals to scopeRepId. When admin,
+  // perRep[] is keyed by rep_id and we join directly.
+  const mpByRep = new Map<
+    number,
+    { registered: number; submittedApplication: number; wechatAdded: number }
+  >();
+  if (mpMatrix?.perRep) {
+    for (const row of mpMatrix.perRep) {
+      mpByRep.set(row.rep_id, {
+        registered: row.registered,
+        submittedApplication: row.submittedApplication,
+        wechatAdded: row.wechatAdded,
+      });
+    }
+  } else if (scopeRepId !== null && mpMatrix) {
+    mpByRep.set(scopeRepId, {
+      registered: mpMatrix.registered,
+      submittedApplication: mpMatrix.submittedApplication,
+      wechatAdded: mpMatrix.wechatAdded,
+    });
+  }
+
   const repStats = (reps ?? []).map((rep) => {
     const repLeads = leads.filter((l) => l.assigned_rep_id === rep.id);
     const assigned = repLeads.length;
@@ -244,6 +276,8 @@ export async function GET(req: NextRequest) {
       }))
       .sort((a, b) => b.assigned - a.assigned);
 
+    const mp = mpByRep.get(rep.id);
+
     return {
       rep: { id: rep.id, name: rep.name, sender_email: rep.sender_email, wechat_id: rep.wechat_id, active: rep.active },
       assigned,
@@ -253,6 +287,14 @@ export async function GET(req: NextRequest) {
       convRate: repConvRate,
       tiers,
       categories,
+      // MP conversion trio (registered / submittedApplication /
+      // addedWechat) from getMpConversionMatrix.perRep. SalesTab swaps
+      // its lone WeChat stat for this trio via MpSignalCounts. Default
+      // to 0 when this rep has no MP overlap so the trio renders
+      // greyed-out instead of disappearing.
+      mpRegistered: mp?.registered ?? 0,
+      mpSubmittedApplication: mp?.submittedApplication ?? 0,
+      mpAddedWechat: mp?.wechatAdded ?? repWechat,
     };
   });
 
