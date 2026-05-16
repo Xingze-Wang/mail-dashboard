@@ -349,6 +349,13 @@ export default function PipelinePage() {
   // "1,000 active leads" while the DB had 3,068. Always read this state
   // for any "total leads" number on this page.
   const [arxivTotalAll, setArxivTotalAll] = useState<number>(0);
+  // Ready / sendable / ripening also come from canonical-counts via
+  // /api/pipeline/ready-count — NOT from leads.filter(status='ready').
+  // The leads array is the most-recent-1000 slice; admin views where
+  // none of the recent-1000 are status='ready' would show 0 sendable
+  // even though the DB has thousands. Now the stat strip reads the
+  // same primitive as the sidebar badge.
+  const [readyCounts, setReadyCounts] = useState<{ count: number; readyNow: number; ripening: number }>({ count: 0, readyNow: 0, ripening: 0 });
   const [discoveryLeads, setDiscoveryLeads] = useState<DiscoveryLead[]>([]);
   const [discoveryBySource, setDiscoveryBySource] = useState<{ hf: number; ph: number; github: number }>({ hf: 0, ph: 0, github: 0 });
   const [loading, setLoading] = useState(true);
@@ -414,11 +421,20 @@ export default function PipelinePage() {
       // grand-total count comes separately from `data.total` (sourced
       // from canonical-counts.countLeads on the server) so any "total"
       // displayed on this page matches the DB, not the paginated array.
-      return fetch(`/api/pipeline?limit=1000`, { signal })
-        .then((r) => r.json())
-        .then((data) => {
+      // Ready-count is fetched in parallel from the same primitive that
+      // powers the sidebar badge — see the readyCounts state comment.
+      return Promise.all([
+        fetch(`/api/pipeline?limit=1000`, { signal }).then((r) => r.json()),
+        fetch(`/api/pipeline/ready-count`, { signal, cache: "no-store" }).then((r) => r.json()),
+      ])
+        .then(([data, rc]) => {
           setLeads(data.leads || []);
           setArxivTotalAll(typeof data.total === "number" ? data.total : (data.leads?.length ?? 0));
+          setReadyCounts({
+            count: typeof rc?.count === "number" ? rc.count : 0,
+            readyNow: typeof rc?.readyNow === "number" ? rc.readyNow : 0,
+            ripening: typeof rc?.ripening === "number" ? rc.ripening : 0,
+          });
         })
         .catch((err) => { if (err.name !== "AbortError") console.error(err); })
         .finally(() => {
@@ -834,11 +850,13 @@ export default function PipelinePage() {
     const thisWeek = ch?.leadsThisWeek ?? 0;
     const sent = ch?.sentLeads ?? 0;
     // Two distinct counts: ready+sendable (passed cooldown) vs total ready
-    // (includes papers <7d old that aren't yet eligible to send). The stat
-    // strip should headline what sales can actually act on.
-    const readyAll = leads.filter((l) => l.status === "ready").length;
-    const ripening = leads.filter((l) => isRipening(l)).length;
-    const ready = readyAll - ripening;
+    // (includes papers <7d old that aren't yet eligible to send). Both
+    // come from /api/pipeline/ready-count (canonical-counts) — NOT from
+    // leads.filter(), because the leads array is a paginated render
+    // slice that can miss the rows we're counting.
+    const readyAll = readyCounts.count;
+    const ripening = readyCounts.ripening;
+    const ready = readyCounts.readyNow;
     const conv = ch?.conversionRate ?? 0;
     const sparkPoints = dailyToSparkline(ch?.daily);
     return [
@@ -888,7 +906,7 @@ export default function PipelinePage() {
         spark: { color: "#6D28D9", points: sparkPoints },
       },
     ];
-  }, [analytics, leads, discoveryBySource]);
+  }, [analytics, leads, discoveryBySource, readyCounts]);
 
   /* ── Render ──────────────────────────────────────────────────────── */
 
