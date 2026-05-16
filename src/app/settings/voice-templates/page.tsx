@@ -17,12 +17,15 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, Check, X, Trash2, Save, ChevronDown, ChevronRight, Sparkles, Eye, Wand2, History as HistoryIcon, RotateCcw } from "lucide-react";
 import { sanitizeHtml } from "@/lib/sanitize";
+import { MpSignalCounts } from "@/components/MpSignalPills";
 
 interface TemplatePerf {
   id: string;
   sent: number;
   clicked: number;
   wechat: number;
+  registered: number;
+  submitted: number;
   clickRate: number;
   wechatRate: number;
   vsClickBaseline: number;
@@ -473,8 +476,11 @@ function PerfChip({ perf }: { perf: TemplatePerf }) {
           : "var(--text-secondary)";
   return (
     <span
-      title={`Last window: ${perf.sent} sent · ${perf.clicked} click (${(perf.clickRate * 100).toFixed(1)}%) · ${perf.wechat} wechat (${(perf.wechatRate * 100).toFixed(1)}%). vs baseline: ${perf.vsClickBaseline.toFixed(2)}x click, ${perf.vsWechatBaseline.toFixed(2)}x wechat.`}
+      title={`Last window: ${perf.sent} sent · ${perf.clicked} click (${(perf.clickRate * 100).toFixed(1)}%) · ${perf.registered} 注册 · ${perf.submitted} 开表 · ${perf.wechat} 微信. vs baseline: ${perf.vsClickBaseline.toFixed(2)}x click, ${perf.vsWechatBaseline.toFixed(2)}x wechat.`}
       style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
         fontSize: 10.5,
         padding: "2px 6px",
         borderRadius: 4,
@@ -485,9 +491,19 @@ function PerfChip({ perf }: { perf: TemplatePerf }) {
         fontWeight: 600,
       }}
     >
-      {perf.sent} sent · {(perf.wechatRate * 100).toFixed(1)}% wechat
+      <span>{perf.sent} sent</span>
+      <span style={{ color: "var(--border, #e2e8f0)" }}>·</span>
+      <MpSignalCounts
+        size="sm"
+        registered={perf.registered}
+        submittedApplication={perf.submitted}
+        addedWechat={perf.wechat}
+        totalEmailed={perf.sent}
+      />
       {reliable && perf.vsWechatBaseline !== 0 && (
-        <> · {perf.vsWechatBaseline >= 1 ? "+" : ""}{((perf.vsWechatBaseline - 1) * 100).toFixed(0)}%</>
+        <span style={{ color: liftTone }}>
+          · {perf.vsWechatBaseline >= 1 ? "+" : ""}{((perf.vsWechatBaseline - 1) * 100).toFixed(0)}%
+        </span>
       )}
     </span>
   );

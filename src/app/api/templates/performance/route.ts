@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { requireAdmin } from "@/lib/auth-helpers";
+import { getMpSignalsForEmails, type MpLeadSignals } from "@/lib/canonical-counts";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -72,45 +73,65 @@ export async function GET(req: NextRequest) {
     for (const r of clicks ?? []) clickedSet.add(r.email_id as string);
   }
 
-  // WeChat conversions in window matched to recipients we sent to.
-  // brief_lookups is the canonical actor-attributed table.
-  const { data: wechatRows } = recipientSet.size > 0
-    ? await supabase
-        .from("brief_lookups")
-        .select("query, wechat_at")
-        .eq("added_wechat", true)
-        .gte("wechat_at", since)
-    : { data: [] };
-  const wechatRecipients = new Set(
-    (wechatRows ?? [])
-      .map((r) => String(r.query ?? "").toLowerCase().trim())
-      .filter((e) => recipientSet.has(e)),
-  );
+  // MP signals (registered / submittedApplication / addedWechat) for
+  // every recipient we touched in the window. Single bulk call so we
+  // can tally all three signals per-template in JS without per-template
+  // round-trips. canonical-counts.getMpSignalsForEmails is the only
+  // source of truth — wechat now also flows through it (replaces the
+  // direct brief_lookups query that used to live here).
+  const recipientList = Array.from(recipientSet);
+  const mpSignals: Map<string, MpLeadSignals> = recipientList.length > 0
+    ? await getMpSignalsForEmails(recipientList)
+    : new Map();
 
-  // Bucket per template.
-  type Bucket = { sent: number; clicked: number; wechat: number };
+  // Bucket per template — sent + click + 3 MP signals.
+  type Bucket = {
+    sent: number;
+    clicked: number;
+    registered: number;
+    submitted: number;
+    wechat: number;
+  };
   const byTemplate = new Map<string, Bucket>();
   for (const e of emails ?? []) {
     const tid = e.template_id as string | null;
     if (!tid) continue;
-    const b = byTemplate.get(tid) ?? { sent: 0, clicked: 0, wechat: 0 };
+    const b = byTemplate.get(tid) ?? { sent: 0, clicked: 0, registered: 0, submitted: 0, wechat: 0 };
     b.sent++;
     if (clickedSet.has(e.id as string)) b.clicked++;
-    if (wechatRecipients.has(String(e.to ?? "").toLowerCase().trim())) b.wechat++;
+    const recipient = String(e.to ?? "").toLowerCase().trim();
+    const sig = recipient ? mpSignals.get(recipient) : undefined;
+    if (sig?.registered) b.registered++;
+    if (sig?.submittedApplication) b.submitted++;
+    if (sig?.addedWechat) b.wechat++;
     byTemplate.set(tid, b);
   }
 
-  // Org baselines for vs-baseline lift.
+  // Org baselines for vs-baseline lift. Wechat baseline still uses the
+  // unique-recipient count (the MP-signals map is per-recipient).
   const totalSent = emails?.length ?? 0;
   const totalClicked = clickedSet.size;
-  const totalWechat = wechatRecipients.size;
+  let totalRegistered = 0;
+  let totalSubmitted = 0;
+  let totalWechat = 0;
+  for (const sig of mpSignals.values()) {
+    if (sig.registered) totalRegistered++;
+    if (sig.submittedApplication) totalSubmitted++;
+    if (sig.addedWechat) totalWechat++;
+  }
   const baseClick = totalSent > 0 ? totalClicked / totalSent : 0;
   const baseWechat = totalSent > 0 ? totalWechat / totalSent : 0;
+  const baseRegistered = totalSent > 0 ? totalRegistered / totalSent : 0;
+  const baseSubmitted = totalSent > 0 ? totalSubmitted / totalSent : 0;
 
   const rows = (templates ?? []).map((t) => {
-    const b = byTemplate.get(t.id as string) ?? { sent: 0, clicked: 0, wechat: 0 };
+    const b = byTemplate.get(t.id as string) ?? {
+      sent: 0, clicked: 0, registered: 0, submitted: 0, wechat: 0,
+    };
     const clickRate = b.sent > 0 ? b.clicked / b.sent : 0;
     const wechatRate = b.sent > 0 ? b.wechat / b.sent : 0;
+    const registeredRate = b.sent > 0 ? b.registered / b.sent : 0;
+    const submittedRate = b.sent > 0 ? b.submitted / b.sent : 0;
     return {
       id: t.id,
       name: t.name,
@@ -120,8 +141,12 @@ export async function GET(req: NextRequest) {
       sent: b.sent,
       clicked: b.clicked,
       wechat: b.wechat,
+      registered: b.registered,
+      submitted: b.submitted,
       clickRate,
       wechatRate,
+      registeredRate,
+      submittedRate,
       // Lift only meaningful with ≥10 sends in window — otherwise it's
       // mostly noise. Caller can ignore the value when sent<10.
       vsClickBaseline: baseClick > 0 ? clickRate / baseClick : 0,
@@ -131,7 +156,17 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     windowDays: days,
-    baseline: { totalSent, totalClicked, totalWechat, clickRate: baseClick, wechatRate: baseWechat },
+    baseline: {
+      totalSent,
+      totalClicked,
+      totalWechat,
+      totalRegistered,
+      totalSubmitted,
+      clickRate: baseClick,
+      wechatRate: baseWechat,
+      registeredRate: baseRegistered,
+      submittedRate: baseSubmitted,
+    },
     templates: rows,
   });
 }

@@ -22,6 +22,7 @@
 import { useEffect, useState, use } from "react";
 import { Loader2, X, AlertCircle, Sparkles, Settings, Cog, Type, FileText } from "lucide-react";
 import { sanitizeHtml } from "@/lib/sanitize";
+import { MpSignalCounts } from "@/components/MpSignalPills";
 
 interface Part {
   slot: string;
@@ -471,6 +472,7 @@ function RoutingAndPerfStrip({
 }: { templateId: string; templateStatus: string; segmentDefault: string | null }) {
   const [perf, setPerf] = useState<{
     sent: number; clicked: number; wechat: number;
+    registered: number; submitted: number;
     clickRate: number; wechatRate: number;
     clickRateBaseline: number | null;
   } | null>(null);
@@ -490,15 +492,18 @@ function RoutingAndPerfStrip({
           // Find this template in the list. Performance API returns
           // all templates; we filter client-side because the route
           // doesn't accept a single-template filter.
-          const mine = (j.rows ?? []).find((x: { id: string }) => x.id === templateId);
+          const list = j.templates ?? j.rows ?? [];
+          const mine = list.find((x: { id: string }) => x.id === templateId);
           if (mine && !cancelled) {
             setPerf({
               sent: mine.sent ?? 0,
               clicked: mine.clicked ?? 0,
               wechat: mine.wechat ?? 0,
+              registered: mine.registered ?? 0,
+              submitted: mine.submitted ?? 0,
               clickRate: mine.clickRate ?? 0,
               wechatRate: mine.wechatRate ?? 0,
-              clickRateBaseline: j.orgBaseline?.clickRate ?? null,
+              clickRateBaseline: j.baseline?.clickRate ?? j.orgBaseline?.clickRate ?? null,
             });
           }
         }
@@ -565,8 +570,14 @@ function RoutingAndPerfStrip({
             )}
           </div>
           <div>
-            <span className="text-slate-500 uppercase tracking-wide text-[10px] mr-1.5">WeChat conv</span>
-            <span className="font-medium">{perf.wechat}</span>
+            <span className="text-slate-500 uppercase tracking-wide text-[10px] mr-1.5">Conv</span>
+            <MpSignalCounts
+              size="sm"
+              registered={perf.registered}
+              submittedApplication={perf.submitted}
+              addedWechat={perf.wechat}
+              totalEmailed={perf.sent}
+            />
           </div>
         </>
       ) : (
