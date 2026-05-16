@@ -23,18 +23,36 @@ export type InsightCard = {
 };
 
 export type GeoSplit = {
-  domestic: { delivered: number; clicked: number; wechat: number; ctr: number; postClickConv: number };
-  overseas: { delivered: number; clicked: number; wechat: number; ctr: number; postClickConv: number };
+  domestic: { delivered: number; clicked: number; wechat: number; registered: number; submitted: number; ctr: number; postClickConv: number };
+  overseas: { delivered: number; clicked: number; wechat: number; registered: number; submitted: number; ctr: number; postClickConv: number };
   /** ratio of overseas CTR to domestic CTR; >1 means overseas clicks more */
   ctr_ratio: number;
   /** ratio of domestic post-click conv to overseas post-click conv; >1 means domestic converts more once clicked */
   conv_ratio: number;
 };
 
+/**
+ * Org-/rep-wide MP signal trio (registered / submitted / wechat) over the
+ * same lookback window funnels use. Surfaced on the /analysis Hero so the
+ * trio shows alongside the weekly headline number.
+ */
+export type MpSignalTrio = {
+  registered: number;
+  submitted: number;
+  addedWechat: number;
+  totalEmailed: number;
+};
+
 export type InsightsPayload = {
   scope: "rep" | "admin";
   rep_name: string | null;
   headline: { value: number; label: string; delta?: number; period: string };
+  /**
+   * MP signal trio over the funnel lookback window (90d). Optional so
+   * cached payloads written before the wire-in still render — the page
+   * falls back to single-stat headline when absent.
+   */
+  mp_signals?: MpSignalTrio | null;
   sparkline: number[];
   intro: string;
   cards: InsightCard[];
@@ -62,8 +80,8 @@ async function computeGeoSplit(repId: number | null): Promise<GeoSplit | null> {
     const ctrRatio = dom.ctr > 0 ? ovs.ctr / dom.ctr : 0;
     const convRatio = ovs.postClickConv > 0 ? dom.postClickConv / ovs.postClickConv : 0;
     return {
-      domestic: { delivered: dom.delivered, clicked: dom.clicked, wechat: dom.wechat, ctr: dom.ctr, postClickConv: dom.postClickConv },
-      overseas: { delivered: ovs.delivered, clicked: ovs.clicked, wechat: ovs.wechat, ctr: ovs.ctr, postClickConv: ovs.postClickConv },
+      domestic: { delivered: dom.delivered, clicked: dom.clicked, wechat: dom.wechat, registered: dom.registered, submitted: dom.submitted, ctr: dom.ctr, postClickConv: dom.postClickConv },
+      overseas: { delivered: ovs.delivered, clicked: ovs.clicked, wechat: ovs.wechat, registered: ovs.registered, submitted: ovs.submitted, ctr: ovs.ctr, postClickConv: ovs.postClickConv },
       ctr_ratio: Number(ctrRatio.toFixed(2)),
       conv_ratio: Number(convRatio.toFixed(2)),
     };
@@ -79,10 +97,13 @@ async function computeGeoSplit(repId: number | null): Promise<GeoSplit | null> {
 // root cause was that only geo_binary made it into the LLM's
 // userPayload (Bug #1 from E2E test). Computing all once and passing
 // segment-level CTR + post-click is what unlocks those cards.
-async function computeAllDimensionSplits(repId: number | null): Promise<Record<string, Array<{ segment: string; delivered: number; clicked: number; wechat: number; ctr: number; postClickConv: number }>>> {
+async function computeAllDimensionSplits(repId: number | null): Promise<{
+  splits: Record<string, Array<{ segment: string; delivered: number; clicked: number; wechat: number; registered: number; submitted: number; ctr: number; postClickConv: number }>>;
+  mpSignals: MpSignalTrio | null;
+}> {
   try {
     const f = await computeSegmentFunnels({ repId, lookbackDays: 90 });
-    const out: Record<string, Array<{ segment: string; delivered: number; clicked: number; wechat: number; ctr: number; postClickConv: number }>> = {};
+    const out: Record<string, Array<{ segment: string; delivered: number; clicked: number; wechat: number; registered: number; submitted: number; ctr: number; postClickConv: number }>> = {};
     for (const d of f.dimensions) {
       // Skip the noisy "(no lead data)" bucket from the LLM's view —
       // the cards should talk about real signals only. Same with
@@ -96,14 +117,22 @@ async function computeAllDimensionSplits(repId: number | null): Promise<Record<s
           delivered: s.delivered,
           clicked: s.clicked,
           wechat: s.wechat,
+          registered: s.registered,
+          submitted: s.submitted,
           ctr: Number(s.ctr.toFixed(3)),
           postClickConv: Number(s.postClickConv.toFixed(3)),
         }));
     }
-    return out;
+    const mpSignals: MpSignalTrio = {
+      registered: f.totals.registered,
+      submitted: f.totals.submitted,
+      addedWechat: f.totals.wechat,
+      totalEmailed: f.totals.delivered,
+    };
+    return { splits: out, mpSignals };
   } catch (err) {
     console.error("[insights] all-dim splits failed", err);
-    return {};
+    return { splits: {}, mpSignals: null };
   }
 }
 
@@ -323,11 +352,13 @@ export async function computeInsightsPayload(args: {
   const memArr = (asObj(memTool?.result).memory as Array<{ kind: string; body: string }>) ?? [];
   const prefs = extractInsightsPrefs(memArr);
 
-  const [weekly, geoSplit, allDimSplits] = await Promise.all([
+  const [weekly, geoSplit, allDimResult] = await Promise.all([
     isAdmin ? getWeeklyConversionsOrgWide(8) : getWeeklyConversionsForRep(repId, 8),
     computeGeoSplit(isAdmin ? null : repId),
     computeAllDimensionSplits(isAdmin ? null : repId),
   ]);
+  const allDimSplits = allDimResult.splits;
+  const mpSignals = allDimResult.mpSignals;
   const sparkline = buildSparkline(weekly);
   const lastTwo = sparkline.slice(-2);
   const thisWeek = lastTwo[1] ?? 0;
@@ -343,9 +374,17 @@ export async function computeInsightsPayload(args: {
     headline_metric: { this_week_conversions: thisWeek, last_week_conversions: lastWeek, delta },
     weekly_history: weekly,
     geo_split: geoSplit,
+    // MP signal trio over the same lookback (90d): registered (MP-known),
+    // submitted (filled the application — the actual conversion), and
+    // addedWechat (warm touch). Use these to write cards about WHERE
+    // recipients are stalling in the funnel: many registered + few
+    // submitted = pitch is losing them after sign-up; few registered =
+    // top of funnel is leaky.
+    mp_signals: mpSignals,
     // Per-dimension funnel data — lead_tier (strong/normal), school_tier
-    // (Tier 1/2/3), h_index buckets, citation buckets, direction. The
-    // LLM uses these to write segment-specific cards.
+    // (Tier 1/2/3), h_index buckets, citation buckets, direction. Each
+    // segment now also carries registered/submitted alongside wechat so
+    // the LLM can call out "Tier 1 registers a lot but doesn't submit".
     segment_splits: allDimSplits,
     primitives: Object.fromEntries(toolResults.map((t) => [t.tool, t.result])),
   };
@@ -387,6 +426,7 @@ export async function computeInsightsPayload(args: {
       delta,
       period: "this week",
     },
+    mp_signals: mpSignals,
     sparkline,
     intro: parsed?.intro ?? FALLBACK.intro,
     cards: parsed?.cards ?? FALLBACK.cards,

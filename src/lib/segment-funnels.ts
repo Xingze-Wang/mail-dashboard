@@ -20,6 +20,7 @@
 
 import { supabase } from "@/lib/db";
 import { getSchoolInfo } from "@/lib/template-assembler";
+import { getMpSignalsForEmails } from "@/lib/canonical-counts";
 
 const REACHABLE_STATUSES = new Set(["sent", "delivered", "clicked", "complained", "bounced", "replied"]);
 const DELIVERED_STATUSES = new Set(["delivered", "clicked", "complained"]);
@@ -47,6 +48,10 @@ export interface SegmentStats {
   delivered: number;
   clicked: number;
   wechat: number;
+  /** MP signal: recipient registered on MiraclePlus open API (any state). */
+  registered: number;
+  /** MP signal: recipient submitted application (the actual conversion). */
+  submitted: number;
   ctr: number;            // clicked / delivered
   postClickConv: number;  // wechat / clicked
   endToEnd: number;       // wechat / delivered
@@ -190,6 +195,9 @@ export interface SegmentFunnels {
     delivered: number;
     clicked: number;
     wechat: number;
+    /** MP signal totals across the same recipient set. */
+    registered: number;
+    submitted: number;
     overallCtr: number;
     overallPostClick: number;
   };
@@ -343,6 +351,10 @@ export async function computeSegmentFunnels(opts: LoadOpts = {}): Promise<Segmen
     delivered: boolean;
     clicked: boolean;
     wechat: boolean;
+    /** MP signal — recipient registered on MiraclePlus open API. */
+    registered: boolean;
+    /** MP signal — recipient submitted application (the actual conversion). */
+    submitted: boolean;
     feat: LeadFeatures | null;
   };
   const byRecipient = new Map<string, RecipientState>();
@@ -434,6 +446,7 @@ export async function computeSegmentFunnels(opts: LoadOpts = {}): Promise<Segmen
     if (!recipientArxiv.has(em)) recipientArxiv.set(em, e.paper_arxiv_id);
     const cur = byRecipient.get(em) ?? {
       email: em, delivered: false, clicked: false, wechat: false,
+      registered: false, submitted: false,
       feat: resolveFeat(em, e.paper_arxiv_id),
     };
     if (DELIVERED_STATUSES.has(e.status)) cur.delivered = true;
@@ -445,6 +458,26 @@ export async function computeSegmentFunnels(opts: LoadOpts = {}): Promise<Segmen
     if (cur) cur.wechat = true;
     // If they're in wechat but not in our emails table, they don't enter
     // the funnel — we have no denominator for them.
+  }
+
+  // 4b. Tally MP signals (registered / submittedApplication) per recipient.
+  // One bulk lookup across the distinct recipient set so we don't N+1 the
+  // miracleplus_contacts table per segment. The signals map is keyed by
+  // lowercased email (same canonicalization byRecipient uses).
+  const distinctEmails = [...byRecipient.keys()];
+  if (distinctEmails.length > 0) {
+    try {
+      const mpSignals = await getMpSignalsForEmails(distinctEmails);
+      for (const [em, sig] of mpSignals.entries()) {
+        const cur = byRecipient.get(em);
+        if (!cur) continue;
+        if (sig.registered) cur.registered = true;
+        if (sig.submittedApplication) cur.submitted = true;
+      }
+    } catch (err) {
+      // Best-effort: never break funnel computation on MP lookup failure.
+      console.error("[segment-funnels] MP signals lookup failed", err);
+    }
   }
 
   const recipients = [...byRecipient.values()];
@@ -460,14 +493,16 @@ export async function computeSegmentFunnels(opts: LoadOpts = {}): Promise<Segmen
     keyFn: (r: RecipientState) => string,
     opts: { ordinalRank?: (segment: string) => number } = {},
   ): SegmentStats[] => {
-    const m = new Map<string, { delivered: number; clicked: number; wechat: number }>();
+    const m = new Map<string, { delivered: number; clicked: number; wechat: number; registered: number; submitted: number }>();
     for (const r of recipients) {
       const k = keyFn(r);
       if (!k) continue;
-      const cur = m.get(k) ?? { delivered: 0, clicked: 0, wechat: 0 };
+      const cur = m.get(k) ?? { delivered: 0, clicked: 0, wechat: 0, registered: 0, submitted: 0 };
       if (r.delivered) cur.delivered++;
       if (r.clicked) cur.clicked++;
       if (r.wechat) cur.wechat++;
+      if (r.registered) cur.registered++;
+      if (r.submitted) cur.submitted++;
       m.set(k, cur);
     }
     const rows = [...m.entries()].map(([segment, v]) => {
@@ -477,6 +512,7 @@ export async function computeSegmentFunnels(opts: LoadOpts = {}): Promise<Segmen
       return {
         segment,
         delivered: v.delivered, clicked: v.clicked, wechat: v.wechat,
+        registered: v.registered, submitted: v.submitted,
         ctr, postClickConv, endToEnd,
         lowN: v.delivered < MIN_DELIVERED_FOR_CTR || v.clicked < MIN_CLICKED_FOR_CONV,
       };
@@ -579,10 +615,12 @@ export async function computeSegmentFunnels(opts: LoadOpts = {}): Promise<Segmen
       const delivered = subset.filter((r) => r.delivered).length;
       const clicked = subset.filter((r) => r.clicked).length;
       const wechat = subset.filter((r) => r.wechat).length;
+      const registered = subset.filter((r) => r.registered).length;
+      const submitted = subset.filter((r) => r.submitted).length;
       if (delivered === 0 && clicked === 0 && wechat === 0) continue;
       crossSchoolGeo.push({
         segment: `${geo} × ${tier}`,
-        delivered, clicked, wechat,
+        delivered, clicked, wechat, registered, submitted,
         ctr: delivered > 0 ? clicked / delivered : 0,
         postClickConv: clicked > 0 ? wechat / clicked : 0,
         endToEnd: delivered > 0 ? wechat / delivered : 0,
@@ -602,6 +640,8 @@ export async function computeSegmentFunnels(opts: LoadOpts = {}): Promise<Segmen
   const totalDelivered = recipients.filter((r) => r.delivered).length;
   const totalClicked = recipients.filter((r) => r.clicked).length;
   const totalWechat = recipients.filter((r) => r.wechat).length;
+  const totalRegistered = recipients.filter((r) => r.registered).length;
+  const totalSubmitted = recipients.filter((r) => r.submitted).length;
 
   return {
     scope: { repId, lookbackDays },
@@ -609,6 +649,8 @@ export async function computeSegmentFunnels(opts: LoadOpts = {}): Promise<Segmen
       delivered: totalDelivered,
       clicked: totalClicked,
       wechat: totalWechat,
+      registered: totalRegistered,
+      submitted: totalSubmitted,
       overallCtr: totalDelivered > 0 ? totalClicked / totalDelivered : 0,
       overallPostClick: totalClicked > 0 ? totalWechat / totalClicked : 0,
     },

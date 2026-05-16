@@ -11,6 +11,7 @@ import Link from "next/link";
 import { Loader2, ArrowUpRight, ArrowDownRight, ArrowRight, MessageSquareMore } from "lucide-react";
 import { useLocale, t, type Locale } from "@/lib/i18n";
 import type { InsightsPayload, InsightCard, GeoSplit } from "@/app/api/insights/route";
+import { MpSignalCounts } from "@/components/MpSignalPills";
 
 export default function InsightsPage() {
   const router = useRouter();
@@ -87,7 +88,7 @@ export default function InsightsPage() {
 }
 
 function Hero({ data, locale }: { data: InsightsPayload; locale: Locale }) {
-  const { headline } = data;
+  const { headline, mp_signals } = data;
   const delta = headline.delta ?? 0;
   const deltaColor = delta > 0 ? "#16a34a" : delta < 0 ? "#dc2626" : "var(--text-tertiary)";
   const DeltaIcon = delta > 0 ? ArrowUpRight : delta < 0 ? ArrowDownRight : ArrowRight;
@@ -102,6 +103,21 @@ function Hero({ data, locale }: { data: InsightsPayload; locale: Locale }) {
             <DeltaIcon className="h-3 w-3" />
             {delta > 0 ? `+${delta}` : delta}
             <span style={{ fontWeight: 400, color: "var(--text-tertiary)", marginLeft: 2 }}>{t("insights.vsLastWeek", locale)}</span>
+          </div>
+        )}
+        {/* MP signal trio over the funnel lookback (90d) — registered /
+            submitted / wechat. User explicitly approved adding this UI on
+            /insights surfaces. Falls back gracefully when cached payload
+            predates the wire-in. */}
+        {mp_signals && (
+          <div style={{ marginTop: 10 }}>
+            <MpSignalCounts
+              registered={mp_signals.registered}
+              submittedApplication={mp_signals.submitted}
+              addedWechat={mp_signals.addedWechat}
+              totalEmailed={mp_signals.totalEmailed}
+              size="md"
+            />
           </div>
         )}
       </div>
@@ -213,6 +229,36 @@ function GeoSplitCard({ split, locale }: { split: GeoSplit; locale: Locale }) {
         </div>
         <Bar label={t("insights.domestic", locale)} value={dom.postClickConv} max={maxConv} color="#dc2626" n={dom.clicked} />
         <Bar label={t("insights.overseas", locale)} value={ovs.postClickConv} max={maxConv} color="#2563eb" n={ovs.clicked} />
+      </div>
+
+      {/* MP signal trio per geo bucket — registered / submitted / wechat.
+          Sits between the rate bars and the diagnostic blurb so the reader
+          sees both rates AND absolute MP-funnel counts side-by-side. */}
+      <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+        <div style={{ padding: "8px 10px", background: "var(--bg)", borderRadius: 6 }}>
+          <div style={{ fontSize: 10.5, fontWeight: 600, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>
+            {t("insights.domestic", locale)}
+          </div>
+          <MpSignalCounts
+            registered={dom.registered}
+            submittedApplication={dom.submitted}
+            addedWechat={dom.wechat}
+            totalEmailed={dom.delivered}
+            size="sm"
+          />
+        </div>
+        <div style={{ padding: "8px 10px", background: "var(--bg)", borderRadius: 6 }}>
+          <div style={{ fontSize: 10.5, fontWeight: 600, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>
+            {t("insights.overseas", locale)}
+          </div>
+          <MpSignalCounts
+            registered={ovs.registered}
+            submittedApplication={ovs.submitted}
+            addedWechat={ovs.wechat}
+            totalEmailed={ovs.delivered}
+            size="sm"
+          />
+        </div>
       </div>
 
       <div style={{

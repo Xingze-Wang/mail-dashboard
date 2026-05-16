@@ -14,6 +14,10 @@ interface Segment {
   delivered: number;
   clicked: number;
   wechat: number;
+  /** MP signal — recipients registered on MiraclePlus open API. */
+  registered?: number;
+  /** MP signal — recipients who filled the application (the actual conv). */
+  submitted?: number;
   ctr: number;
   postClickConv: number;
   endToEnd: number;
@@ -282,6 +286,8 @@ function Table({ segments }: { segments: Segment[] }) {
             <th>Segment</th>
             <th>Click rate</th>
             <th>Post-click conv</th>
+            <th style={{ textAlign: "right" }}>注册</th>
+            <th style={{ textAlign: "right" }}>开表</th>
             <th style={{ textAlign: "right" }}>Sample (delivered/clicked/wechat)</th>
           </tr>
         </thead>
@@ -307,6 +313,27 @@ function Row({ s, maxCtr, maxConv }: { s: Segment; maxCtr: number; maxConv: numb
       </td>
       <td><Bar value={s.ctr} max={maxCtr} fmt={fmt} color="var(--coral)" /></td>
       <td><Bar value={s.postClickConv} max={maxConv} fmt={fmt} color="var(--green)" /></td>
+      {/* MP signal cells — registered / submitted (the application).
+          Optional on the type so cached snapshots from before the
+          segment-funnels wire-in still render. Treat missing as 0. */}
+      <td style={{
+        textAlign: "right",
+        fontVariantNumeric: "tabular-nums",
+        fontSize: 12,
+        fontWeight: 600,
+        color: (s.registered ?? 0) > 0 ? "#3b82f6" : "var(--text-tertiary)",
+      }}>
+        {s.registered ?? 0}
+      </td>
+      <td style={{
+        textAlign: "right",
+        fontVariantNumeric: "tabular-nums",
+        fontSize: 12,
+        fontWeight: 600,
+        color: (s.submitted ?? 0) > 0 ? "#10b981" : "var(--text-tertiary)",
+      }}>
+        {s.submitted ?? 0}
+      </td>
       <td style={{
         textAlign: "right",
         fontVariantNumeric: "tabular-nums",
