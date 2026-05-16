@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { requireSession } from "@/lib/auth-helpers";
 import { paginateAll } from "@/lib/supabase-paginate";
+import { getMpSignalsForEmails } from "@/lib/canonical-counts";
 
 export const dynamic = "force-dynamic";
 
@@ -51,7 +52,8 @@ export async function GET(req: NextRequest) {
     if (e.to) set.add(String(e.to).toLowerCase());
     emailsByWeek.set(wk, set);
   }
-  // Bucket brief_lookups by week (the conversion event's week)
+  // Bucket brief_lookups by week (the conversion event's week) — kept for
+  // back-compat conversion_rate (WeChat = brief_lookups distinct / emails distinct).
   const briefsByWeek = new Map<number, Set<string>>();
   for (const b of briefs) {
     const wk = isoWeek(new Date(b.marked_at));
@@ -60,15 +62,61 @@ export async function GET(req: NextRequest) {
     briefsByWeek.set(wk, set);
   }
 
+  // Pull per-recipient MP signals once for every email we sent in the window.
+  // Then for each week we intersect the week's recipient-set with the
+  // signal map to derive registered / submitted / wechat distinct counts.
+  // This uses the canonical signal lookup so "registered" / "submitted" /
+  // "wechat" share the SAME emails denominator as conversion_rate.
+  const allRecipients = new Set<string>();
+  for (const set of emailsByWeek.values()) {
+    for (const r of set) allRecipients.add(r);
+  }
+  const signalMap = allRecipients.size > 0
+    ? await getMpSignalsForEmails(Array.from(allRecipients))
+    : new Map();
+
   // Build the metrics array — every week in the window
   const startWeek = isoWeek(new Date(sinceISO));
   const endWeek = isoWeek(new Date());
-  const metrics: { week: number; conversion_rate: number }[] = [];
+  const metrics: {
+    week: number;
+    conversion_rate: number;
+    registered_rate: number;
+    submitted_rate: number;
+    wechat_rate: number;
+  }[] = [];
   for (let w = startWeek; w <= endWeek; w++) {
     const sent = emailsByWeek.get(w)?.size ?? 0;
-    const converted = briefsByWeek.get(w)?.size ?? 0;
-    const rate = sent > 0 ? (converted / sent) * 100 : 0;
-    metrics.push({ week: w, conversion_rate: Math.round(rate * 10) / 10 });
+    // Back-compat: WeChat distinct from brief_lookups week-of-event (lossy
+    // but matches old metric). New wechat_rate below uses the signal map
+    // (event-week may differ from email-week, but same denominator).
+    const convertedLegacy = briefsByWeek.get(w)?.size ?? 0;
+    const conversionRate = sent > 0 ? (convertedLegacy / sent) * 100 : 0;
+
+    let registered = 0;
+    let submitted = 0;
+    let wechat = 0;
+    const wkEmails = emailsByWeek.get(w);
+    if (wkEmails && sent > 0) {
+      for (const email of wkEmails) {
+        const s = signalMap.get(email);
+        if (!s) continue;
+        // `registered` here means "got past MP front door" — that includes
+        // anyone whose bucket is registered OR submitted (submitted is a
+        // strict superset of registered).
+        if (s.registered || s.submittedApplication) registered++;
+        if (s.submittedApplication) submitted++;
+        if (s.addedWechat) wechat++;
+      }
+    }
+
+    metrics.push({
+      week: w,
+      conversion_rate: Math.round(conversionRate * 10) / 10,
+      registered_rate: sent > 0 ? Math.round((registered / sent) * 1000) / 10 : 0,
+      submitted_rate: sent > 0 ? Math.round((submitted / sent) * 1000) / 10 : 0,
+      wechat_rate: sent > 0 ? Math.round((wechat / sent) * 1000) / 10 : 0,
+    });
   }
 
   // Decision markers

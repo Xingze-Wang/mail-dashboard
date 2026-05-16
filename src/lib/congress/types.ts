@@ -74,7 +74,17 @@ export type Proposal = {
   outcome_status?: string;
 };
 
-export type WeeklyMetric = { week: number; conversion_rate: number };
+export type WeeklyMetric = {
+  week: number;
+  /** Legacy alias of wechat_rate. Distinct brief_lookups / distinct emails sent, in %. Kept for back-compat. */
+  conversion_rate: number;
+  /** % of distinct recipients in the week MP marked as registered (or stronger). */
+  registered_rate: number;
+  /** % of distinct recipients in the week with a submittedApplication signal. */
+  submitted_rate: number;
+  /** % of distinct recipients in the week we marked added_wechat=true. */
+  wechat_rate: number;
+};
 export type DecisionMarker = {
   week: number;
   proposal_id: string;

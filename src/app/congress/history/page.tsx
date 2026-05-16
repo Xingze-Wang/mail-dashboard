@@ -4,6 +4,7 @@ import Link from "next/link";
 import { headers, cookies } from "next/headers";
 import type { WeeklyMetric, DecisionMarker } from "@/lib/congress/types";
 import { HistoryChart } from "@/components/congress/HistoryChart";
+import { MpSignalCounts } from "@/components/MpSignalPills";
 import { StatusPill, STATUS_DOT_BG } from "@/components/congress/StatusPill";
 
 export const dynamic = "force-dynamic";
@@ -34,11 +35,15 @@ export default async function CongressHistoryPage() {
     );
   }
 
-  const first = data.metrics[0]?.conversion_rate ?? 0;
-  const last = data.metrics[data.metrics.length - 1]?.conversion_rate ?? 0;
+  const latest = data.metrics[data.metrics.length - 1];
+  const first = data.metrics[0]?.wechat_rate ?? data.metrics[0]?.conversion_rate ?? 0;
+  const last = latest?.wechat_rate ?? latest?.conversion_rate ?? 0;
   const delta = (last - first).toFixed(1);
   const shipped = data.markers.filter((d) => d.status === "approved" || d.status === "measuring").length;
   const reverted = data.markers.filter((d) => d.status === "reverted").length;
+  const registeredLast = latest?.registered_rate ?? 0;
+  const submittedLast = latest?.submitted_rate ?? 0;
+  const wechatLast = latest?.wechat_rate ?? 0;
 
   return (
     <div style={{ maxWidth: 880, margin: "0 auto" }}>
@@ -55,9 +60,19 @@ export default async function CongressHistoryPage() {
       </header>
 
       <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Metric label="Current rate" value={`${last.toFixed(1)}%`} />
+        <div className="rounded-md bg-zinc-50 p-3.5 dark:bg-zinc-900">
+          <div className="mb-1 text-xs text-zinc-500 dark:text-zinc-400">Current rates (%)</div>
+          <div className="text-[15px]">
+            <MpSignalCounts
+              registered={Math.round(registeredLast * 10) / 10}
+              submittedApplication={Math.round(submittedLast * 10) / 10}
+              addedWechat={Math.round(wechatLast * 10) / 10}
+              size="md"
+            />
+          </div>
+        </div>
         <Metric
-          label={`Vs week ${data.metrics[0]?.week ?? 1}`}
+          label={`Vs week ${data.metrics[0]?.week ?? 1} (微信)`}
           value={`${last >= first ? "+" : ""}${delta} pp`}
           tone={last >= first ? "positive" : "negative"}
         />

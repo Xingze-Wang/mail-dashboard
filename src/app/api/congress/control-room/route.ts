@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { requireAdmin } from "@/lib/auth-helpers";
+import { getMpConversionMatrix } from "@/lib/canonical-counts";
 
 export const dynamic = "force-dynamic";
 
@@ -74,6 +75,11 @@ export async function GET(req: NextRequest) {
   const now = Date.now();
   const weekAgo = new Date(now - 7 * 86_400_000).toISOString();
   const twoWeeksAgo = new Date(now - 14 * 86_400_000).toISOString();
+
+  // MP conversion matrix for the trailing 7d. Used to prepend three
+  // vitals (注册 / 开表 / 微信) so the control-room reflects the canonical
+  // golden-standard signals our work is supposed to drive.
+  const mp7dPromise = getMpConversionMatrix({ since: weekAgo }).catch(() => null);
 
   const [
     { data: pendingProposals },
@@ -180,7 +186,42 @@ export async function GET(req: NextRequest) {
     .filter((r) => !r.lark_open_id && r.name !== "Xingze Wang")
     .map((r) => r.name as string);
 
+  // Resolve MP signals last — kick off in parallel above, await here.
+  const mp7d = await mp7dPromise;
+  const mpVitals: VitalSign[] = mp7d
+    ? [
+        {
+          label: "注册 7d",
+          value: mp7d.registered + mp7d.submittedApplication, // any signal past the front door
+          delta: mp7d.totalEmailed > 0
+            ? `${(((mp7d.registered + mp7d.submittedApplication) / mp7d.totalEmailed) * 100).toFixed(1)}% of ${mp7d.totalEmailed}`
+            : "no sends",
+          tone: mp7d.registered + mp7d.submittedApplication > 0 ? "good" : "neutral",
+          href: "/congress/history",
+        },
+        {
+          label: "开表 7d",
+          value: mp7d.submittedApplication,
+          delta: mp7d.totalEmailed > 0
+            ? `${((mp7d.submittedApplication / mp7d.totalEmailed) * 100).toFixed(1)}% of ${mp7d.totalEmailed}`
+            : "no sends",
+          tone: mp7d.submittedApplication > 0 ? "good" : "neutral",
+          href: "/congress/history",
+        },
+        {
+          label: "微信 7d",
+          value: mp7d.wechatAdded,
+          delta: mp7d.totalEmailed > 0
+            ? `${((mp7d.wechatAdded / mp7d.totalEmailed) * 100).toFixed(1)}% of ${mp7d.totalEmailed}`
+            : "no sends",
+          tone: mp7d.wechatAdded > 0 ? "good" : "neutral",
+          href: "/congress/history",
+        },
+      ]
+    : [];
+
   const vitals: VitalSign[] = [
+    ...mpVitals,
     {
       label: "Proposals pending",
       value: pp.filter((p) => p.state === "admin_review").length,
