@@ -15,6 +15,12 @@ import {
   getRep,
 } from "@/lib/assignment";
 import { requireSession } from "@/lib/auth-helpers";
+import {
+  enrichLeadOnImport,
+  updateLeadWithDelta,
+  assembleDraftAtImport,
+} from "@/lib/lead-enrichment";
+import { enrichPerson } from "@/lib/person-enrichment";
 
 /**
  * POST /api/pipeline/import
@@ -290,44 +296,48 @@ export async function POST(req: NextRequest) {
       // Python scraper (which signs everything as Leo). Any draft supplied
       // is discarded in favor of the queue-generated one.
 
-      const { error } = await supabase.from("pipeline_leads").insert({
-        arxiv_id: arxivId,
-        title,
-        abstract: (lead.abstract as string) || null,
-        authors: authorsField,
-        pdf_url: (lead.pdfUrl as string) || null,
-        published_at: (lead.publishedAt as string) || null,
-        author_name: authorName,
-        author_email: email,
-        first_name: (lead.firstName as string) || null,
-        school_name: (lead.schoolName as string) || null,
-        school_tier: schoolTier,
-        compute_level: (lead.computeLevel as string) || null,
-        compute_confidence: (lead.computeConfidence as number) || null,
-        compute_reason: (lead.computeReason as string) || null,
-        matched_directions: (lead.matchedDirections as string) || null,
-        draft_subject: finalSubject,
-        draft_html: finalHtml,
-        // Snapshot of the AI's original output so sales-edit diffs can be
-        // mined. Identical to draft_* at insert time, but draft_* will be
-        // overwritten by sales editing while these stay frozen.
-        draft_original_subject: finalSubject,
-        draft_original_html: finalHtml,
-        draft_model: (lead.draftModel as string) || "python",
-        status: finalStatus,
-        local_score: finalScore,
-        source,
-        s2_author_id: pyS2AuthorId,
-        h_index: pyHIndex,
-        citation_count: pyCitation,
-        paper_count: pyPaperCount,
-        lead_tier: leadTier,
-        assigned_rep_id: assignedRepId,
-        // industry_orgs may be a no-op insert if the column doesn't exist
-        // (older DB) — Supabase will silently ignore unknown keys.
-        industry_orgs: industryOrgs.length > 0 ? industryOrgs : null,
-        industry_source: industrySource,
-      });
+      const { data: insertedRow, error } = await supabase
+        .from("pipeline_leads")
+        .insert({
+          arxiv_id: arxivId,
+          title,
+          abstract: (lead.abstract as string) || null,
+          authors: authorsField,
+          pdf_url: (lead.pdfUrl as string) || null,
+          published_at: (lead.publishedAt as string) || null,
+          author_name: authorName,
+          author_email: email,
+          first_name: (lead.firstName as string) || null,
+          school_name: (lead.schoolName as string) || null,
+          school_tier: schoolTier,
+          compute_level: (lead.computeLevel as string) || null,
+          compute_confidence: (lead.computeConfidence as number) || null,
+          compute_reason: (lead.computeReason as string) || null,
+          matched_directions: (lead.matchedDirections as string) || null,
+          draft_subject: finalSubject,
+          draft_html: finalHtml,
+          // Snapshot of the AI's original output so sales-edit diffs can be
+          // mined. Identical to draft_* at insert time, but draft_* will be
+          // overwritten by sales editing while these stay frozen.
+          draft_original_subject: finalSubject,
+          draft_original_html: finalHtml,
+          draft_model: (lead.draftModel as string) || "python",
+          status: finalStatus,
+          local_score: finalScore,
+          source,
+          s2_author_id: pyS2AuthorId,
+          h_index: pyHIndex,
+          citation_count: pyCitation,
+          paper_count: pyPaperCount,
+          lead_tier: leadTier,
+          assigned_rep_id: assignedRepId,
+          // industry_orgs may be a no-op insert if the column doesn't exist
+          // (older DB) — Supabase will silently ignore unknown keys.
+          industry_orgs: industryOrgs.length > 0 ? industryOrgs : null,
+          industry_source: industrySource,
+        })
+        .select("id")
+        .single();
 
       if (error) {
         if (error.message.includes("duplicate")) {
@@ -338,6 +348,125 @@ export async function POST(req: NextRequest) {
         }
       } else {
         imported++;
+        const leadId = insertedRow?.id as string | undefined;
+
+        // ── Post-insert enrichment + import-time templating ────────
+        // Per user ask: "for every single lead there needs to be
+        // enrichment + templating + assignment. assignment happens
+        // after but the first two happens kind of first."
+        //
+        // Bounded ~15s — each sub-step has its own timeout in the
+        // helper. Best-effort: a failure here does NOT roll back the
+        // insert. The enrich-backfill cron picks up stragglers.
+        if (leadId) {
+          try {
+            const mdRaw = lead.matchedDirections;
+            const matchedDirsArr =
+              typeof mdRaw === "string"
+                ? (mdRaw as string).split(",").map((s) => s.trim()).filter(Boolean)
+                : Array.isArray(mdRaw)
+                ? (mdRaw as string[]).filter((s) => typeof s === "string")
+                : [];
+
+            const summary = await enrichLeadOnImport({
+              lead_id: leadId,
+              title,
+              abstract: (lead.abstract as string) || null,
+              author_name: authorName,
+              author_email: email,
+              first_name: (lead.firstName as string) || null,
+              school_name: (lead.schoolName as string) || null,
+              school_tier: schoolTier,
+              matched_directions: matchedDirsArr,
+              arxiv_id: arxivIdCanonical,
+              existing: {
+                // We already wrote whatever Python (or the inline S2
+                // call above) produced. Tell the enricher so it
+                // skips work it doesn't need to redo.
+                s2_author_id: pyS2AuthorId,
+                h_index: pyHIndex,
+                citation_count: pyCitation,
+                paper_count: pyPaperCount,
+                industry_orgs: industryOrgs.length > 0 ? industryOrgs : null,
+              },
+            });
+            await updateLeadWithDelta(leadId, summary.delta);
+
+            // Person-side enrichment: now that the lead has a
+            // person_id (just written by updateLeadWithDelta OR set
+            // pre-existing), populate {homepage, twitter, hf, github}
+            // signals for that person. Best-effort, bounded ~15s, can
+            // safely fail without rolling back the import.
+            //
+            // First check the freshly-written delta. If person_id was
+            // already set on the row before this call, the delta won't
+            // contain it — do a cheap re-read in that case so we still
+            // enrich. New imports always go through the delta path.
+            let enrichablePersonId =
+              (summary.delta as Record<string, unknown>).person_id as string | null | undefined;
+            if (!enrichablePersonId) {
+              const { data: pIdRow } = await supabase
+                .from("pipeline_leads")
+                .select("person_id")
+                .eq("id", leadId)
+                .maybeSingle();
+              enrichablePersonId = (pIdRow?.person_id as string | null | undefined) ?? null;
+            }
+            if (enrichablePersonId) {
+              try {
+                await Promise.race([
+                  enrichPerson({
+                    person_id: enrichablePersonId,
+                    hint: {
+                      title,
+                      abstract: (lead.abstract as string) || undefined,
+                      author_name: authorName || undefined,
+                    },
+                  }),
+                  new Promise((_, rej) => setTimeout(() => rej(new Error("person-enrich timeout")), 15_000)),
+                ]);
+              } catch (pe) {
+                console.error(
+                  `[import] enrichPerson failed for lead=${leadId} person=${enrichablePersonId}: ${String(pe).slice(0, 200)}`,
+                );
+              }
+            }
+
+            // Baseline draft using the org-wide global template.
+            // Rep-specific placeholders ({{REP_NAME}} etc.) stay as
+            // sentinels — the allocator + send-time path swap them in.
+            const draft = await assembleDraftAtImport({
+              lead_id: leadId,
+              title,
+              abstract: (lead.abstract as string) || null,
+              author_email: email,
+              first_name: (lead.firstName as string) || null,
+              school_name: (lead.schoolName as string) || null,
+              school_tier: schoolTier,
+              matched_directions: matchedDirsArr,
+            });
+            if (draft) {
+              await supabase
+                .from("pipeline_leads")
+                .update({
+                  draft_subject: draft.subject,
+                  draft_html: draft.html,
+                  draft_original_subject: draft.subject,
+                  draft_original_html: draft.html,
+                  draft_intro_prompt_resolved: draft.intro_prompt_resolved,
+                  draft_intro_output: draft.intro_output,
+                  draft_model: "server-import",
+                })
+                .eq("id", leadId);
+            }
+          } catch (enrichErr) {
+            // Enrichment failure must NOT roll back the import.
+            // Logged for triage; backfill cron will pick it up.
+            console.error(
+              `[import] enrichment failed for lead=${leadId}: ${String(enrichErr).slice(0, 200)}`,
+            );
+          }
+        }
       }
     }
 

@@ -43,6 +43,54 @@ async function fetchAuthorDetails(authorId: string): Promise<S2AuthorInfo | null
 }
 
 /**
+ * Fetch the homepage URL S2 has on file for an author. Returned as a
+ * single string (or null). S2's homepage field is sparsely populated
+ * (~10-20% in practice) but when present it's a high-value signal —
+ * usually the author's institutional page, personal site, or GitHub
+ * profile, all of which feed downstream enrichment (HF/twitter/github
+ * regex scrape).
+ *
+ * Separate from fetchAuthorDetails so a person-enrichment caller can
+ * pull just the homepage without re-fetching h-index data they already
+ * have.
+ */
+export async function fetchAuthorHomepage(authorId: string): Promise<string | null> {
+  try {
+    const res = await fetch(
+      `${S2_BASE}/author/${authorId}?fields=homepage,url`,
+      { signal: AbortSignal.timeout(10_000) },
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    // S2 exposes both `homepage` (the author's declared site) and `url`
+    // (the S2 profile URL). We only want the former — the S2 profile
+    // tells us nothing the regex scrapers can use.
+    const hp = typeof data.homepage === "string" ? data.homepage.trim() : "";
+    return hp.length > 0 ? hp : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Two-strategy author lookup that ALSO returns the homepage when found.
+ * Equivalent to lookupAuthor() but issues a second request to fetch
+ * homepage. Use this from person-enrichment.ts where the homepage is
+ * the load-bearing signal (lookupAuthor's caller in import/route.ts
+ * doesn't care about homepage and shouldn't pay the extra request).
+ */
+export async function lookupAuthorWithHomepage(
+  paperTitle: string,
+  authorName: string,
+): Promise<(S2AuthorInfo & { homepage: string | null }) | null> {
+  const base = await lookupAuthor(paperTitle, authorName);
+  if (!base) return null;
+  await sleep(S2_DELAY_MS);
+  const homepage = await fetchAuthorHomepage(base.authorId);
+  return { ...base, homepage };
+}
+
+/**
  * Strategy 1: Search for the paper by title, then find the matching author.
  * Works well for papers already indexed on S2.
  */
