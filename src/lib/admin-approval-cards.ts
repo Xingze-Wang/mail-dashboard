@@ -77,6 +77,20 @@ export async function sendTemplateProposalCard(args: {
   proposed_by: string | null;
   proposed_reason: string | null;
 }): Promise<string | null> {
+  // Guard: for rep-targeted proposals, the admin card MUST NOT fire
+  // until the rep has approved. Org-wide proposals (rep_id = NULL)
+  // skip this gate — admin is the only approver for those.
+  const { data: tpl } = await supabase
+    .from("email_templates")
+    .select("rep_id, rep_approved_at")
+    .eq("id", args.template_id)
+    .maybeSingle();
+  if (tpl && tpl.rep_id != null && !tpl.rep_approved_at) {
+    console.log(
+      `[admin-approval-cards] template ${args.template_id} is rep-targeted (rep=${tpl.rep_id}) and rep hasn't approved yet — deferring admin card`,
+    );
+    return null;
+  }
   const adminOpenId = await getAdminOpenId();
   if (!adminOpenId) return null;
 

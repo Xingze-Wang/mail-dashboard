@@ -180,6 +180,27 @@ export async function processRepTemplateCardAction(rawEvent: unknown): Promise<{
       .from("email_templates")
       .update({ rep_approved_at: new Date().toISOString() })
       .eq("id", tid);
+    // Now that rep_approved_at is set, the guard inside
+    // sendTemplateProposalCard will pass — fire the admin card so admin
+    // can take the final call.
+    try {
+      const { sendTemplateProposalCard } = await import("@/lib/admin-approval-cards");
+      const { data: full } = await supabase
+        .from("email_templates")
+        .select("name, proposed_by, proposed_reason")
+        .eq("id", tid)
+        .maybeSingle();
+      if (full) {
+        await sendTemplateProposalCard({
+          template_id: tid,
+          template_name: full.name as string,
+          proposed_by: (full.proposed_by as string | null) ?? null,
+          proposed_reason: `(Rep ${rep!.id} ✓ approved) ${(full.proposed_reason as string | null) ?? ""}`,
+        });
+      }
+    } catch (err) {
+      console.error("[rep-template-card] admin escalation failed:", String(err).slice(0, 200));
+    }
     return { ok: true, reason: "rep_approved", toast: "✓ 已转给 admin" };
   }
 
