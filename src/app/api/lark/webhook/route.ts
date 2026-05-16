@@ -122,6 +122,9 @@ export async function POST(req: Request) {
         } else if ("template_action" in value) {
           const card = await import("@/lib/admin-approval-cards");
           await card.processTemplateCardAction(parsed);
+        } else if ("template_rep_action" in value) {
+          const card = await import("@/lib/rep-template-card");
+          await card.processRepTemplateCardAction(parsed);
         } else if ("quota_action" in value) {
           const card = await import("@/lib/admin-approval-cards");
           await card.processQuotaCardAction(parsed);
@@ -162,6 +165,7 @@ export async function POST(req: Request) {
     const oAction = (value.onboarding_action as string | undefined) ?? "";
     const aInbox = (value.admin_inbox_action as string | undefined) ?? "";
     const tplAction = (value.template_action as string | undefined) ?? "";
+    const tplRepAction = (value.template_rep_action as string | undefined) ?? "";
     const quotaAction = (value.quota_action as string | undefined) ?? "";
     const congressAction = (value.congress_action as string | undefined) ?? "";
     const jitrAction = (value.jitr_action as string | undefined) ?? "";
@@ -179,6 +183,9 @@ export async function POST(req: Request) {
     else if (tplAction === "approve_draft") toastContent = "✓ Approved as draft";
     else if (tplAction === "activate") toastContent = "🚀 Activating template…";
     else if (tplAction === "reject") toastContent = "❌ Rejected — reply with reason";
+    else if (tplRepAction === "approve") toastContent = "✓ 已转给 admin";
+    else if (tplRepAction === "reject") toastContent = "❌ 已归档";
+    else if (tplRepAction === "revise") toastContent = "✏️ DM 我聊聊";
     else if (quotaAction === "apply") toastContent = "✓ Applying quota…";
     else if (quotaAction === "dismiss") toastContent = "🗑 Dismissed";
     else if (congressAction === "accept") toastContent = "✓ Accepted proposal";

@@ -204,6 +204,10 @@ const dispatcher = new Lark.EventDispatcher({}).register({
           const card = await import("../src/lib/admin-approval-cards.ts");
           const result = await card.processTemplateCardAction({ event: innerEvent });
           console.log(`[worker] template card action in ${Date.now() - t0}ms ok=${result.ok} reason=${result.reason ?? ""}`);
+        } else if ("template_rep_action" in value) {
+          const card = await import("../src/lib/rep-template-card.ts");
+          const result = await card.processRepTemplateCardAction({ event: innerEvent });
+          console.log(`[worker] template_rep card action in ${Date.now() - t0}ms ok=${result.ok} reason=${result.reason ?? ""}`);
         } else if ("quota_action" in value) {
           const card = await import("../src/lib/admin-approval-cards.ts");
           const result = await card.processQuotaCardAction({ event: innerEvent });
@@ -231,6 +235,7 @@ const dispatcher = new Lark.EventDispatcher({}).register({
     const oAction = (v2.onboarding_action as string | undefined) ?? "";
     const aInbox = (v2.admin_inbox_action as string | undefined) ?? "";
     const tplAction = (v2.template_action as string | undefined) ?? "";
+    const tplRepAction = (v2.template_rep_action as string | undefined) ?? "";
     const quotaAction = (v2.quota_action as string | undefined) ?? "";
     const congressAction = (v2.congress_action as string | undefined) ?? "";
     const jitrAction = (v2.jitr_action as string | undefined) ?? "";
@@ -248,6 +253,9 @@ const dispatcher = new Lark.EventDispatcher({}).register({
     else if (tplAction === "approve_draft") toastContent = "✓ Approved as draft";
     else if (tplAction === "activate") toastContent = "🚀 Activating template…";
     else if (tplAction === "reject") toastContent = "❌ Rejected — reply with reason";
+    else if (tplRepAction === "approve") toastContent = "✓ 已转给 admin";
+    else if (tplRepAction === "reject") toastContent = "❌ 已归档";
+    else if (tplRepAction === "revise") toastContent = "✏️ DM 我聊聊";
     else if (quotaAction === "apply") toastContent = "✓ Applying quota…";
     else if (quotaAction === "dismiss") toastContent = "🗑 Dismissed";
     else if (congressAction === "accept") toastContent = "✓ Accepted proposal";
