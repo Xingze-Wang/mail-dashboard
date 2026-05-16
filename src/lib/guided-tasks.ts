@@ -261,13 +261,27 @@ export async function ackGuidedStep(args: {
     })
     .eq("id", t.id);
 
-  // Kick the executor so the next step actually runs. Fire-and-forget —
-  // ack must return fast to the caller (web button click or Lark
-  // tool-result handler). Without this kick, status sits at 'running'
-  // forever after admin clicks Approve.
-  void executeNextGuidedStep({ task_id: t.id }).catch((err) => {
-    console.error("[guided-tasks] post-ack kick failed:", err);
-  });
+  // Kick the executor so the next step actually runs. ack must return
+  // fast to the caller (web button click or Lark tool-result handler).
+  //
+  // Wrap in next/server `after()` so on Vercel serverless the platform
+  // keeps the function alive until the executor finishes — without this
+  // wrap, `void ...` lets the serverless function terminate as soon as
+  // ack returns and the agent loop is killed mid-step (we saw status
+  // stuck at 'running' for 60s+ in prod, step_results empty). The
+  // worker / smoke path falls back to plain fire-and-forget since
+  // those hosts are long-lived.
+  const taskId = t.id;
+  const kick = () =>
+    executeNextGuidedStep({ task_id: taskId }).catch((err) => {
+      console.error("[guided-tasks] post-ack kick failed:", err);
+    });
+  try {
+    const { after } = await import("next/server");
+    after(kick);
+  } catch {
+    void kick();
+  }
 
   return { ok: true, new_status: "running" };
 }

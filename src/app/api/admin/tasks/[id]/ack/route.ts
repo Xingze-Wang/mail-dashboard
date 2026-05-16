@@ -4,6 +4,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { requireSession } from "@/lib/auth-helpers";
 
+// ackGuidedStep schedules executeNextGuidedStep via next/server after();
+// the agent loop for a single step needs 10-30s, multi-step chains up to
+// 90s. Keep the function alive long enough or after() gets killed.
+export const maxDuration = 300;
+
 async function getAdminRepId(req: NextRequest): Promise<number | null> {
   const session = await requireSession(req);
   if (!session) return null;

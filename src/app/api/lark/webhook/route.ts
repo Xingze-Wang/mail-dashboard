@@ -15,7 +15,11 @@
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+// 300s because a guided_task admin-approval click kicks an executor that
+// runs the multi-step agent loop via after(); each step is a full LLM
+// tool round (5-15s), and a 5-step plan can take 60-90s. 60s was too
+// tight — task got stuck at status=running with empty step_results in prod.
+export const maxDuration = 300;
 // Pin to Hong Kong region so Lark traffic doesn't cross the Pacific.
 export const preferredRegion = ["hkg1"];
 

@@ -463,12 +463,33 @@ export async function processAdminInboxCardAction(rawEvent: unknown): Promise<{
       if (r.ok) {
         const stepCount = r.task?.steps.length ?? 0;
         sideEffectToast = `🚀 多步任务开始执行 (${stepCount} 步)`;
-        // Fire-and-forget — the click ack must stay fast. Errors are
-        // logged inside executeNextGuidedStep and surface as
-        // task.status='failed' which the /admin/intent page will show.
-        void executeNextGuidedStep({ task_id: evidence.guided_task_id }).catch((err) => {
-          console.error("[admin-inbox-card] executeNextGuidedStep kick failed:", err);
-        });
+        // The click ack itself must stay fast (Lark 3s budget), but the
+        // multi-step executor takes 30-60s. On the HTTP webhook this
+        // handler already runs inside the route-level after(), but the
+        // PREVIOUS bug was that `void executeNextGuidedStep(...)` is
+        // detached from the awaited path — so once this function returns
+        // the outer after() resolves and Vercel kills the function
+        // before the agent loop completes. We saw this in prod: task
+        // stuck at status='running', step_results empty for 60s.
+        //
+        // Fix: register the executor as its OWN after() task. Next 16's
+        // after() keeps the function alive until the registered promise
+        // resolves, up to maxDuration. The worker (scripts/lark-bot-worker.ts)
+        // is long-lived so the after() import there is a no-op fallback —
+        // we degrade to plain `void` which works fine in a node process.
+        const taskId = evidence.guided_task_id;
+        const kick = () =>
+          executeNextGuidedStep({ task_id: taskId }).catch((err) => {
+            console.error("[admin-inbox-card] executeNextGuidedStep kick failed:", err);
+          });
+        try {
+          const { after } = await import("next/server");
+          after(kick);
+        } catch {
+          // Not running inside Next.js request context (worker / smoke);
+          // fire-and-forget is fine because the host process is long-lived.
+          void kick();
+        }
       } else {
         sideEffectToast = `⚠️ 启动失败: ${r.error?.slice(0, 80) ?? ""}`;
       }
