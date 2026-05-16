@@ -111,3 +111,92 @@ export async function sendRepTemplateProposalCard(args: SendArgs): Promise<strin
     return null;
   }
 }
+
+// ── Card-action handler ─────────────────────────────────────────────
+
+interface CardActionEvent {
+  event?: {
+    operator?: { open_id?: string };
+    action?: {
+      value?: {
+        template_rep_action?: "approve" | "revise" | "reject";
+        template_id?: string;
+      };
+    };
+  };
+}
+
+/**
+ * Called from the Lark webhook + worker when a rep clicks a button on
+ * their proposal card.
+ *
+ * - approve: set rep_approved_at = NOW(). The propose-to-reps cron's
+ *   next tick (or admin-approval-cards' periodic poll) will see the
+ *   timestamp and fire the admin-side card.
+ * - revise: don't change status, just record that rep wants changes.
+ *   The /api/templates/[id]/rep-revise endpoint handles the multi-turn
+ *   conversation; this card click just opens that channel.
+ * - reject: set rep_rejection_reason='Rejected by rep on card' + flip
+ *   status='archived'. Cron stops following up.
+ *
+ * Auth: the click's operator.open_id MUST match the template's rep_id's
+ * lark_open_id. Defense-in-depth — Lark webhook signature verification
+ * already happens upstream, but this guards against a rep clicking
+ * another rep's card (shouldn't happen, but cards are leak-via-screenshot).
+ */
+export async function processRepTemplateCardAction(rawEvent: unknown): Promise<{
+  ok: boolean;
+  reason?: string;
+  toast?: string;
+}> {
+  const event = (rawEvent as CardActionEvent).event;
+  const op = event?.operator?.open_id;
+  const action = event?.action?.value?.template_rep_action;
+  const tid = event?.action?.value?.template_id;
+  if (!op || !action || !tid) return { ok: false, reason: "incomplete payload" };
+
+  // Find the template and verify the clicker IS the proposed-to rep.
+  const { data: tpl } = await supabase
+    .from("email_templates")
+    .select("id, rep_id, status")
+    .eq("id", tid)
+    .maybeSingle();
+  if (!tpl) return { ok: false, reason: "template gone", toast: "Template not found" };
+  if (tpl.status !== "proposal") {
+    return { ok: true, reason: "already resolved", toast: "Already handled" };
+  }
+
+  const { data: rep } = await supabase
+    .from("sales_reps")
+    .select("id, lark_open_id")
+    .eq("id", tpl.rep_id)
+    .maybeSingle();
+  if (rep?.lark_open_id !== op) {
+    return { ok: false, reason: "wrong rep", toast: "Not your card" };
+  }
+
+  if (action === "approve") {
+    await supabase
+      .from("email_templates")
+      .update({ rep_approved_at: new Date().toISOString() })
+      .eq("id", tid);
+    return { ok: true, reason: "rep_approved", toast: "✓ 已转给 admin" };
+  }
+
+  if (action === "reject") {
+    await supabase
+      .from("email_templates")
+      .update({
+        status: "archived",
+        rep_rejection_reason: "Rejected by rep on Lark card (no reason given)",
+      })
+      .eq("id", tid);
+    return { ok: true, reason: "rep_rejected", toast: "❌ 已归档" };
+  }
+
+  if (action === "revise") {
+    return { ok: true, reason: "revise_requested", toast: "✏️ DM me what to change" };
+  }
+
+  return { ok: false, reason: "unknown action" };
+}
