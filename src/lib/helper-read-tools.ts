@@ -16,7 +16,7 @@
 
 import { supabase } from "@/lib/db";
 import { DAILY_OVERRIDE_CAP, countOverridesTodayByRep } from "@/lib/override-quota";
-import { countLeadsByStatus, fetchAllLeads, getMpConversionMatrix } from "@/lib/canonical-counts";
+import { countLeadsByStatus, fetchAllLeads, getMpConversionMatrix, getMpSignalsForEmails } from "@/lib/canonical-counts";
 import { computeGrowth } from "@/lib/rep-growth";
 import { loadActiveLearnings } from "@/lib/helper-learnings";
 import { getAdminAlerts } from "@/lib/admin-alerts";
@@ -98,18 +98,41 @@ async function listLeads(session: Session, args: Record<string, unknown>) {
 
   const { data, error } = await q;
   if (error) return { error: error.message };
+
+  // MP signal attachment — per-recipient bulk lookup keyed by lowercased
+  // email. Absence in the map ⇒ no signal (we expose all three as false
+  // rather than null so the LLM has a stable shape to read).
+  const emails = (data ?? [])
+    .map((l) => (l.author_email ?? "").trim().toLowerCase())
+    .filter((e) => e.includes("@"));
+  let signals = new Map<string, Awaited<ReturnType<typeof getMpSignalsForEmails>> extends Map<string, infer V> ? V : never>();
+  try {
+    signals = await getMpSignalsForEmails(emails);
+  } catch (e) {
+    // Non-fatal: list works, signals just absent.
+    console.error("[listLeads] getMpSignalsForEmails failed:", e);
+  }
+
   return {
-    leads: (data ?? []).map((l) => ({
-      id: l.id,
-      title: l.title,
-      author_name: l.author_name,
-      author_email: l.author_email,
-      lead_tier: l.lead_tier,
-      status: l.status,
-      created_at: l.created_at,
-      published_at: l.published_at,
-      assigned_rep_id: l.assigned_rep_id,
-    })),
+    leads: (data ?? []).map((l) => {
+      const key = (l.author_email ?? "").trim().toLowerCase();
+      const sig = key ? signals.get(key) : undefined;
+      return {
+        id: l.id,
+        title: l.title,
+        author_name: l.author_name,
+        author_email: l.author_email,
+        lead_tier: l.lead_tier,
+        status: l.status,
+        created_at: l.created_at,
+        published_at: l.published_at,
+        assigned_rep_id: l.assigned_rep_id,
+        // MP CRM ground-truth signals (booleans). Absent = false.
+        mp_registered: sig?.registered ?? false,
+        mp_submitted: sig?.submittedApplication ?? false,
+        wechat_added: sig?.addedWechat ?? false,
+      };
+    }),
   };
 }
 
@@ -127,7 +150,37 @@ async function getLead(session: Session, args: Record<string, unknown>) {
     return { error: "Lead not found" };
   }
   const { draft_html: _html, ...rest } = data;
-  return { lead: rest };
+
+  // Attach MP CRM signals so the LLM can answer "did X register? did Y
+  // submit? did Z add wechat?" without a separate lookup round-trip.
+  let mp_signals: {
+    registered: boolean;
+    submittedApplication: boolean;
+    addedWechat: boolean;
+    bucket: "unregistered" | "registered" | "submitted" | null;
+    applicationProgress: string | null;
+    submittedAt: string | null;
+  } | null = null;
+  const email = (data.author_email ?? "").trim().toLowerCase();
+  if (email && email.includes("@")) {
+    try {
+      const signals = await getMpSignalsForEmails([email]);
+      const sig = signals.get(email);
+      if (sig) {
+        mp_signals = {
+          registered: sig.registered,
+          submittedApplication: sig.submittedApplication,
+          addedWechat: sig.addedWechat,
+          bucket: sig.bucket,
+          applicationProgress: sig.applicationProgress,
+          submittedAt: sig.submittedAt,
+        };
+      }
+    } catch (e) {
+      console.error("[getLead] getMpSignalsForEmails failed:", e);
+    }
+  }
+  return { lead: rest, mp_signals };
 }
 
 async function getMyStats(session: Session) {
@@ -158,6 +211,20 @@ async function getMyStats(session: Session) {
   }
   const wechat = wechatDistinct.size;
   const overrideUsed = (await countOverridesTodayByRep(repId)) ?? 0;
+
+  // MP CRM ground-truth conversion counts (last 90d default — matches
+  // getMpConversionMatrix). Extends the wechat-only signal so Leon can
+  // answer "我的转化怎么样" without a separate lookup.
+  let registered_90d = 0;
+  let submitted_application_90d = 0;
+  try {
+    const matrix = await getMpConversionMatrix({ actorRepId: repId });
+    registered_90d = matrix.registered;
+    submitted_application_90d = matrix.submittedApplication;
+  } catch (e) {
+    console.error("[getMyStats] getMpConversionMatrix failed:", e);
+  }
+
   return {
     stats: {
       assigned,
@@ -165,6 +232,9 @@ async function getMyStats(session: Session) {
       sent: sentCount,
       replied,
       wechat,
+      // MP CRM signals (90-day window — matches getMpConversionMatrix default)
+      registered_90d,
+      submitted_application_90d,
       override_used_today: overrideUsed,
       override_cap: DAILY_OVERRIDE_CAP,
       override_remaining: Math.max(0, DAILY_OVERRIDE_CAP - overrideUsed),
@@ -266,11 +336,27 @@ async function getMyWeeklyRecap(session: Session) {
     }
   }
 
+  // MP CRM 7-day conversion delta — answers "did anyone I reached out
+  // to this week actually register / submit?" Scoped to this rep's
+  // actor_rep_id and the same 7-day window.
+  let registered_7d = 0;
+  let submitted_7d = 0;
+  try {
+    const matrix = await getMpConversionMatrix({ actorRepId: repId, since });
+    registered_7d = matrix.registered;
+    submitted_7d = matrix.submittedApplication;
+  } catch (e) {
+    console.error("[getMyWeeklyRecap] getMpConversionMatrix failed:", e);
+  }
+
   return {
     windowDays: 7,
     sent: sent ?? 0,
     clicked: clicked ?? 0,
     wechat,
+    // MP CRM signals over the same 7-day window
+    registered_7d,
+    submitted_7d,
     clickRate: (sent ?? 0) > 0 ? Number(((clicked ?? 0) / (sent ?? 1)).toFixed(3)) : 0,
     wechatRate: (clicked ?? 0) > 0 ? Number((wechat / (clicked ?? 1)).toFixed(3)) : 0,
     topPerformer,
@@ -388,6 +474,32 @@ export async function runReadTool(
             .in("mission_id", ids);
           for (const row of p.data || []) progress.set(row.mission_id as string, (row.count as number) ?? 0);
         }
+
+        // Today's MP CRM conversion delta — answers "我今天有没有人报名"
+        // without forcing Leon to call get_mp_conversions separately.
+        // Scoped to today (Beijing start-of-day → now) and this rep's
+        // actor_rep_id.
+        const todayStart = new Date();
+        todayStart.setUTCHours(0, 0, 0, 0);
+        let today_conversions: {
+          registered: number;
+          submitted_application: number;
+          wechat_added: number;
+        } = { registered: 0, submitted_application: 0, wechat_added: 0 };
+        try {
+          const matrix = await getMpConversionMatrix({
+            actorRepId: session.repId,
+            since: todayStart.toISOString(),
+          });
+          today_conversions = {
+            registered: matrix.registered,
+            submitted_application: matrix.submittedApplication,
+            wechat_added: matrix.wechatAdded,
+          };
+        } catch (e) {
+          console.error("[get_my_missions_today] getMpConversionMatrix failed:", e);
+        }
+
         return {
           tool: call.tool,
           result: {
@@ -400,6 +512,7 @@ export async function runReadTool(
               status: m.status,
               scope: m.scope,
             })),
+            today_conversions,
           },
         };
       }
@@ -744,8 +857,37 @@ export async function runReadTool(
           : { data: [] as { id: number; name: string }[] };
         const repName = Object.fromEntries((reps ?? []).map((r) => [r.id, r.name]));
 
+        // Per-rep MP CRM totals merged in — same window. We pull the
+        // org-wide matrix once (perRep populated when actorRepId is
+        // omitted) and index by rep_id for the join below.
+        const mpPerRep = new Map<number, { registered: number; submittedApplication: number; wechatAdded: number }>();
+        try {
+          const matrix = await getMpConversionMatrix({ since: cutoff });
+          for (const r of matrix.perRep ?? []) {
+            mpPerRep.set(r.rep_id, {
+              registered: r.registered,
+              submittedApplication: r.submittedApplication,
+              wechatAdded: r.wechatAdded,
+            });
+          }
+        } catch (e) {
+          console.error("[getLeadCounts] getMpConversionMatrix failed:", e);
+        }
+
         const perRepArr = Object.entries(perRep)
-          .map(([id, c]) => ({ rep_id: Number(id), name: repName[Number(id)] ?? `rep_${id}`, owned_count: c }))
+          .map(([id, c]) => {
+            const rid = Number(id);
+            const mp = mpPerRep.get(rid);
+            return {
+              rep_id: rid,
+              name: repName[rid] ?? `rep_${id}`,
+              owned_count: c,
+              // MP CRM ground-truth signals over the same window
+              mp_registered: mp?.registered ?? 0,
+              mp_submitted: mp?.submittedApplication ?? 0,
+              wechat_added: mp?.wechatAdded ?? 0,
+            };
+          })
           .sort((a, b) => b.owned_count - a.owned_count);
 
         return {

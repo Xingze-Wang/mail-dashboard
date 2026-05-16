@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { sendMessage } from "@/lib/lark";
-import { countLeads, countReplies, countWechatConversions } from "@/lib/canonical-counts";
+import { countLeads, countReplies, countWechatConversions, getMpConversionMatrix } from "@/lib/canonical-counts";
 
 export const maxDuration = 60;
 
@@ -73,14 +73,21 @@ export async function GET(req: NextRequest) {
       // 1. Ready leads in their queue
       // 2. Inbound replies in last 24h (rep_id stamped at write time)
       // 3. Wechat marks this week (for "you've been busy" framing)
-      const [readyResult, replyResult, wechatResult] = await Promise.all([
+      // 4. MP CRM conversions this week (注册 / 开表 — ground-truth funnel)
+      const [readyResult, replyResult, wechatResult, mpMatrix] = await Promise.all([
         countLeads({ repId: rep.id, status: "ready" }),
         countReplies({ repId: rep.id, since: since24h }),
         countWechatConversions({ markedByRepId: rep.id, since: sinceWeek }),
+        getMpConversionMatrix({ actorRepId: rep.id, since: sinceWeek }).catch((e) => {
+          console.error(`[standup] mp matrix failed for rep ${rep.id}:`, e);
+          return null;
+        }),
       ]);
       const readyCount = readyResult.count;
       const replyCount = replyResult.count;
       const weeklyWechat = wechatResult.count;
+      const weeklyRegistered = mpMatrix?.registered ?? 0;
+      const weeklySubmitted = mpMatrix?.submittedApplication ?? 0;
 
       // Skip silently if everything is zero — no nag-spam.
       if ((readyCount ?? 0) === 0 && (replyCount ?? 0) === 0) {
@@ -100,6 +107,11 @@ export async function GET(req: NextRequest) {
       }
       if ((weeklyWechat ?? 0) >= 3) {
         lines.push(`(过去一周加了 ${weeklyWechat} 个微信, 不错的节奏 👍)`);
+      }
+      // MP CRM conversion line — only show when any signal > 0.
+      // Format: "本周转化: 注册 X · 开表 Y · 微信 Z"
+      if (weeklyRegistered > 0 || weeklySubmitted > 0 || (weeklyWechat ?? 0) > 0) {
+        lines.push(`本周转化: 注册 ${weeklyRegistered} · 开表 ${weeklySubmitted} · 微信 ${weeklyWechat ?? 0}`);
       }
       lines.push(`有问题随时 DM 我.`);
 

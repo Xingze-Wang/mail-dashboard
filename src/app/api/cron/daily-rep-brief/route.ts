@@ -13,7 +13,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { llmChat } from "@/lib/llm-proxy";
-import { countSent } from "@/lib/canonical-counts";
+import { countSent, getMpConversionMatrix } from "@/lib/canonical-counts";
 import { REACHABLE_EMAIL_STATUSES } from "@/lib/status";
 
 export const preferredRegion = ["hkg1"];
@@ -70,6 +70,26 @@ async function briefForRep(repId: number, repName: string, today: string): Promi
   const last7d = last7dResult.count;
   const sentCount = sentResult.count;
 
+  // MP CRM ground-truth conversion delta for the same 7-day window —
+  // 注册 / 开表 / 微信. These are slow signals (most are 0 within 7
+  // days), but when non-zero they're the most actionable thing on the
+  // page — the LLM should explicitly weave them into reasoning.
+  let conversions_7d: { registered: number; submitted_application: number; wechat_added: number } = {
+    registered: 0,
+    submitted_application: 0,
+    wechat_added: 0,
+  };
+  try {
+    const matrix = await getMpConversionMatrix({ actorRepId: repId, since: sevenDaysAgo });
+    conversions_7d = {
+      registered: matrix.registered,
+      submitted_application: matrix.submittedApplication,
+      wechat_added: matrix.wechatAdded,
+    };
+  } catch (e) {
+    console.error(`[daily-rep-brief] mp matrix failed for rep ${repId}:`, e);
+  }
+
   const userPayload = {
     rep_name: repName,
     today,
@@ -77,6 +97,10 @@ async function briefForRep(repId: number, repName: string, today: string): Promi
     insights_cards: (cardsR.data?.payload as { cards?: unknown[] } | null)?.cards?.slice(0, 3) ?? [],
     last_7d_email_count: last7d,
     last_7d_sent: sentCount,
+    // MP CRM conversion delta over the last 7 days (ground truth from
+    // miracleplus_contacts mirror + brief_lookups). LLM uses this to
+    // ground the "goal" in real outcomes, not just send counts.
+    conversions_7d,
     rep_memory: (memoryR.data ?? []).map((m) => ({ kind: m.kind, body: m.body.slice(0, 200) })),
   };
 
@@ -92,7 +116,7 @@ async function briefForRep(repId: number, repName: string, today: string): Promi
 写作规则:
 - 用 rep_name, 第二人称
 - goal 要**具体到可执行**, 不要 "做好你的工作"; 要 "今天清完 cn-tier1 的 12 条 ready" 这种
-- reasoning 引用 missions + insights_cards 里的具体数字 / 短语
+- reasoning 引用 missions + insights_cards 里的具体数字 / 短语. **如果 conversions_7d 里有非零信号** (注册/开表/微信), 必须在 reasoning 里点出来 — 例如 "本周已经有 3 个注册 + 1 个开表, 说明你的 outreach 在落地, 今天继续盯 cn-strong"; 反之全 0 时也可以说 "本周还没有注册转化, 重点检查 subject + opener".
 - bullets 是战术 (e.g. "subject 用 6 词以内", "周三 8 点发效果最好"), 不是目标
 - 如果数据不够 / 这个 rep 今天没什么特别要做的 — 老实写 "今天数据正常, 按常规节奏跑就行" 之类, 不要硬编 insights
 

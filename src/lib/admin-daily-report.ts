@@ -15,6 +15,7 @@
  */
 
 import { supabase } from "@/lib/db";
+import { getMpConversionMatrix } from "@/lib/canonical-counts";
 
 const VERBATIM_THRESHOLD = 5; // edit_distance ≤ 5 ≈ verbatim accept
 
@@ -50,6 +51,10 @@ interface OrgMetrics {
   clicked: number;
   replied: number;
   wechat: number;
+  // MP CRM ground-truth conversion signals (from miracleplus_contacts +
+  // brief_lookups), scoped to emails sent in this window.
+  registered: number;
+  submittedApplication: number;
 }
 
 async function fetchOrgMetrics(sinceIso: string, untilIso?: string): Promise<OrgMetrics> {
@@ -103,7 +108,18 @@ async function fetchOrgMetrics(sinceIso: string, untilIso?: string): Promise<Org
     const r = await q;
     wechat = r.count ?? 0;
   }
-  return { sent, opened, clicked, replied, wechat };
+  // MP CRM ground-truth conversions — registered + submittedApplication
+  // across emails actually sent in the window. Non-fatal if it errors.
+  let registered = 0;
+  let submittedApplication = 0;
+  try {
+    const matrix = await getMpConversionMatrix({ since: sinceIso });
+    registered = matrix.registered;
+    submittedApplication = matrix.submittedApplication;
+  } catch (e) {
+    console.error("[admin-daily-report] fetchOrgMetrics/mp matrix failed:", e);
+  }
+  return { sent, opened, clicked, replied, wechat, registered, submittedApplication };
 }
 
 interface PerRepRow {
@@ -114,6 +130,9 @@ interface PerRepRow {
   clicked: number;
   replied: number;
   wechat: number;
+  // MP CRM conversions attributed to this rep's actor_rep_id, same window
+  registered: number;
+  submittedApplication: number;
 }
 
 async function fetchPerRepMetrics(sinceIso: string, untilIso: string): Promise<PerRepRow[]> {
@@ -124,8 +143,25 @@ async function fetchPerRepMetrics(sinceIso: string, untilIso: string): Promise<P
     .neq("role", "admin")  // admins don't send; skip from per-rep table
     .order("id");
   if (!reps.data) return [];
+
+  // Pull MP conversion matrix once for the whole window (perRep populated
+  // because actorRepId is omitted). Cheaper than calling per-rep N times.
+  const mpByRep = new Map<number, { registered: number; submittedApplication: number }>();
+  try {
+    const matrix = await getMpConversionMatrix({ since: sinceIso });
+    for (const r of matrix.perRep ?? []) {
+      mpByRep.set(r.rep_id, {
+        registered: r.registered,
+        submittedApplication: r.submittedApplication,
+      });
+    }
+  } catch (e) {
+    console.error("[admin-daily-report] fetchPerRepMetrics/mp matrix failed:", e);
+  }
+
   const out: PerRepRow[] = [];
   for (const rep of reps.data) {
+    const mp = mpByRep.get(rep.id as number);
     const emails = await supabase
       .from("emails")
       .select("id, thread_id")
@@ -136,7 +172,17 @@ async function fetchPerRepMetrics(sinceIso: string, untilIso: string): Promise<P
     const ids = (emails.data ?? []).map((e) => e.id as string);
     const threadIds = (emails.data ?? []).map((e) => e.thread_id as string).filter(Boolean);
     if (ids.length === 0) {
-      out.push({ rep_id: rep.id as number, name: rep.name as string, sent: 0, opened: 0, clicked: 0, replied: 0, wechat: 0 });
+      out.push({
+        rep_id: rep.id as number,
+        name: rep.name as string,
+        sent: 0,
+        opened: 0,
+        clicked: 0,
+        replied: 0,
+        wechat: 0,
+        registered: mp?.registered ?? 0,
+        submittedApplication: mp?.submittedApplication ?? 0,
+      });
       continue;
     }
     const [o, c, w] = await Promise.all([
@@ -163,6 +209,8 @@ async function fetchPerRepMetrics(sinceIso: string, untilIso: string): Promise<P
       clicked: new Set((c.data ?? []).map((e) => e.email_id as string)).size,
       replied,
       wechat: w.count ?? 0,
+      registered: mp?.registered ?? 0,
+      submittedApplication: mp?.submittedApplication ?? 0,
     });
   }
   return out;
@@ -280,21 +328,26 @@ function renderMessage(input: {
   lines.push(`**昨天 (org-wide)**`);
   lines.push(`  发送: ${y.sent} 封 · 打开: ${y.opened} (${pct(y.opened, y.sent)}) · 点击: ${y.clicked} (${pct(y.clicked, y.sent)}) · 回复: ${y.replied} (${pct(y.replied, y.sent)})`);
   lines.push(`  微信新加: ${y.wechat}`);
+  lines.push(`  注册: ${y.registered} · 开表: ${y.submittedApplication}`);
   lines.push(``);
   const w = input.orgWeek;
   lines.push(`**本周累计 (周一 → 今天)**`);
   lines.push(`  发送: ${w.sent} 封 · 打开: ${w.opened} (${pct(w.opened, w.sent)}) · 点击: ${w.clicked} (${pct(w.clicked, w.sent)}) · 回复: ${w.replied} (${pct(w.replied, w.sent)})`);
   lines.push(`  微信新加: ${w.wechat}`);
+  lines.push(`  注册: ${w.registered} · 开表: ${w.submittedApplication}`);
   lines.push(``);
   if (input.perRepYesterday.length > 0) {
     lines.push(`**按 rep 看 (昨天)**`);
     for (const r of input.perRepYesterday) {
-      if (r.sent === 0) {
+      if (r.sent === 0 && r.registered === 0 && r.submittedApplication === 0) {
         lines.push(`  ${r.name.padEnd(8)} 0 发`);
         continue;
       }
       const wxMark = r.wechat > 0 ? ` · ${r.wechat} wx ✓` : "";
-      lines.push(`  ${r.name.padEnd(8)} ${r.sent} 发, ${r.opened} 开 (${pct(r.opened, r.sent)}), ${r.clicked} 点 (${pct(r.clicked, r.sent)}), ${r.replied} 回${wxMark}`);
+      const mpMark = (r.registered > 0 || r.submittedApplication > 0)
+        ? ` · 注册: ${r.registered} · 开表: ${r.submittedApplication}`
+        : "";
+      lines.push(`  ${r.name.padEnd(8)} ${r.sent} 发, ${r.opened} 开 (${pct(r.opened, r.sent)}), ${r.clicked} 点 (${pct(r.clicked, r.sent)}), ${r.replied} 回${wxMark}${mpMark}`);
     }
     lines.push(``);
   }
@@ -331,8 +384,8 @@ export async function buildAdminDailyReport(): Promise<string> {
   const nowIso = new Date().toISOString();
   // Each section caught — failure renders empty/placeholder, doesn't blank the whole report
   const [orgYesterday, orgWeek, perRepYesterday, aiUsageWeek, alerts] = await Promise.all([
-    fetchOrgMetrics(yStart, yEnd).catch((e) => { console.error("[admin-daily-report] org/yesterday:", e); return { sent: 0, opened: 0, clicked: 0, replied: 0, wechat: 0 }; }),
-    fetchOrgMetrics(wStart, nowIso).catch((e) => { console.error("[admin-daily-report] org/week:", e); return { sent: 0, opened: 0, clicked: 0, replied: 0, wechat: 0 }; }),
+    fetchOrgMetrics(yStart, yEnd).catch((e) => { console.error("[admin-daily-report] org/yesterday:", e); return { sent: 0, opened: 0, clicked: 0, replied: 0, wechat: 0, registered: 0, submittedApplication: 0 }; }),
+    fetchOrgMetrics(wStart, nowIso).catch((e) => { console.error("[admin-daily-report] org/week:", e); return { sent: 0, opened: 0, clicked: 0, replied: 0, wechat: 0, registered: 0, submittedApplication: 0 }; }),
     fetchPerRepMetrics(yStart, yEnd).catch((e) => { console.error("[admin-daily-report] per-rep:", e); return []; }),
     fetchAiUsage(wStart).catch((e) => { console.error("[admin-daily-report] ai-usage:", e); return []; }),
     fetchAlerts().catch((e) => { console.error("[admin-daily-report] alerts:", e); return []; }),
