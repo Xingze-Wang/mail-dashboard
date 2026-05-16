@@ -472,7 +472,7 @@ export interface MpConversionMatrix {
  * progressed but didn't submit yet" (registered). These tell two
  * different stories about our outreach quality.
  */
-function bucketMpProgress(row: {
+export function bucketMpProgress(row: {
   application_progress: string | null;
   applications_number: number | null;
   submitted_at: string | null;
@@ -696,5 +696,115 @@ export async function getMpConversionMatrix(
       perRep,
       predicate: { actorRepId: filter.actorRepId, since },
     };
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Per-lead MP signal lookup
+// ─────────────────────────────────────────────────────────────────
+//
+// Where the matrix above is per-rep aggregate, this is per-recipient
+// (point lookup, bulk). Used by row-level UIs: /pipeline LeadRow,
+// /brief detail, /emails inbox, /discovery cards, helper get_lead tool.
+//
+// Returns a Map keyed by lowercased email so callers can do
+// `signals.get(lead.email.toLowerCase())?.submittedApplication` cheap.
+// Missing emails (not in MP, not added on wechat) are absent from
+// the map — caller treats absence as "no signal".
+
+export interface MpLeadSignals {
+  registered: boolean;
+  submittedApplication: boolean;
+  addedWechat: boolean;
+  bucket: "unregistered" | "registered" | "submitted" | null;
+  applicationProgress: string | null;
+  submittedAt: string | null;
+}
+
+export async function getMpSignalsForEmails(
+  emails: string[],
+  opts?: Opts,
+): Promise<Map<string, MpLeadSignals>> {
+  return memoize("getMpSignalsForEmails", { emails: emails.slice().sort() }, opts, async () => {
+    const canonical = Array.from(
+      new Set(
+        emails
+          .map((e) => (e ?? "").trim().toLowerCase())
+          .filter((e) => e.includes("@")),
+      ),
+    );
+    const out = new Map<string, MpLeadSignals>();
+    if (canonical.length === 0) return out;
+
+    const STRENGTH: Record<"unregistered" | "registered" | "submitted", number> = {
+      unregistered: 0,
+      registered: 1,
+      submitted: 2,
+    };
+    const mpRows = new Map<
+      string,
+      {
+        bucket: "unregistered" | "registered" | "submitted";
+        progress: string | null;
+        submittedAt: string | null;
+      }
+    >();
+
+    const BATCH = 500;
+    for (let i = 0; i < canonical.length; i += BATCH) {
+      const slice = canonical.slice(i, i + BATCH);
+      const { data, error } = await supabase
+        .from("miracleplus_contacts")
+        .select("email_canonical, application_progress, applications_number, submitted_at")
+        .in("email_canonical", slice);
+      if (error) throw new Error(`getMpSignalsForEmails(mp) failed: ${error.message}`);
+      for (const r of (data ?? []) as {
+        email_canonical: string | null;
+        application_progress: string | null;
+        applications_number: number | null;
+        submitted_at: string | null;
+      }[]) {
+        if (!r.email_canonical) continue;
+        const b = bucketMpProgress(r);
+        const prev = mpRows.get(r.email_canonical);
+        if (!prev || STRENGTH[b] > STRENGTH[prev.bucket]) {
+          mpRows.set(r.email_canonical, {
+            bucket: b,
+            progress: r.application_progress,
+            submittedAt: r.submitted_at,
+          });
+        }
+      }
+    }
+
+    const wechatEmails = new Set<string>();
+    for (let i = 0; i < canonical.length; i += BATCH) {
+      const slice = canonical.slice(i, i + BATCH);
+      const { data, error } = await supabase
+        .from("brief_lookups")
+        .select("query")
+        .eq("added_wechat", true)
+        .in("query", slice);
+      if (error) throw new Error(`getMpSignalsForEmails(wechat) failed: ${error.message}`);
+      for (const r of (data ?? []) as { query: string | null }[]) {
+        const e = (r.query ?? "").trim().toLowerCase();
+        if (e.includes("@")) wechatEmails.add(e);
+      }
+    }
+
+    for (const e of canonical) {
+      const mp = mpRows.get(e);
+      const w = wechatEmails.has(e);
+      if (!mp && !w) continue;
+      out.set(e, {
+        registered: mp?.bucket === "registered" || mp?.bucket === "submitted",
+        submittedApplication: mp?.bucket === "submitted",
+        addedWechat: w,
+        bucket: mp?.bucket ?? null,
+        applicationProgress: mp?.progress ?? null,
+        submittedAt: mp?.submittedAt ?? null,
+      });
+    }
+    return out;
   });
 }
