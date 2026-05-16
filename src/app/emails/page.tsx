@@ -20,6 +20,7 @@ import {
 import { formatDate, getStatusColor, getStatusDot } from "@/lib/utils";
 import { ComposeModal } from "@/components/compose-modal";
 import { sanitizeHtml } from "@/lib/sanitize";
+import { MpSignalPills, type MpSignals } from "@/components/MpSignalPills";
 
 interface Email {
   id: string;
@@ -61,6 +62,9 @@ interface BriefData {
   };
   authorMismatch: { note: string } | null;
   source?: "pipeline_lead" | "paper_author" | "email-only";
+  // From /api/brief — registered/submittedApplication/addedWechat trio.
+  // Null when we have no email to join on. See getMpSignalsForEmails().
+  mpSignals?: (MpSignals & { applicationProgress?: string | null }) | null;
 }
 
 function computeBadgeClass(level: string | null) {
@@ -434,14 +438,19 @@ function BriefPanel({ email }: { email: Email }) {
           </div>
         ) : (
           <div style={{
-            display: "inline-flex", alignItems: "center", gap: 6,
+            display: "inline-flex", alignItems: "center", gap: 8,
             alignSelf: "flex-start",
             fontSize: 11.5, fontWeight: 500, color: "#059669",
             padding: "4px 10px", borderRadius: 999,
             background: "#ECFDF5", border: "1px solid #A7F3D0",
           }}>
-            <CheckCircle2 className="h-3 w-3" />
-            Added on WeChat
+            <MpSignalPills
+              signals={brief.mpSignals ?? null}
+              size="md"
+              showLabels
+              applicationProgress={brief.mpSignals?.applicationProgress ?? null}
+            />
+            <span>注册 · 开表 · 微信</span>
           </div>
         )}
         <div className="section-card" style={{ padding: 16 }}>
@@ -460,9 +469,31 @@ function BriefPanel({ email }: { email: Email }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {/* Confirmed badge */}
-      <div style={{ borderRadius: 8, background: "var(--green-bg)", border: "1px solid #BBF7D0", padding: "8px 14px" }}>
-        <p style={{ fontSize: 11, color: "var(--green)", fontWeight: 600 }}>Added on WeChat — recorded</p>
+      {/* MP signal trio — 注 / 开 / 微. Swapped in for the legacy
+          "Added on WeChat — recorded" single-state badge so the rep
+          sees registered + submitted-application + wechat at a glance.
+          (The "Mark added on WeChat" CTA stays the activate button
+          above; this block is the post-activate confirmation row.) */}
+      <div
+        style={{
+          borderRadius: 8,
+          background: "var(--green-bg)",
+          border: "1px solid #BBF7D0",
+          padding: "8px 14px",
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+        }}
+      >
+        <MpSignalPills
+          signals={brief.mpSignals ?? null}
+          size="md"
+          showLabels
+          applicationProgress={brief.mpSignals?.applicationProgress ?? null}
+        />
+        <span style={{ fontSize: 11, color: "var(--green)", fontWeight: 600 }}>
+          注册 · 开表 · 微信
+        </span>
       </div>
 
       {/* AI Summary */}

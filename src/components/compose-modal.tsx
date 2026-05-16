@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { X, Send, Loader2 } from "lucide-react";
+import { MpSignalPills, type MpSignals } from "@/components/MpSignalPills";
 
 interface ReplyTo {
   inboundEmailId: string;
@@ -34,6 +35,13 @@ export function ComposeModal({ open, onClose, replyTo }: ComposeModalProps) {
   const [body, setBody] = useState("");
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState<string | null>(null);
+  // MP signal trio for the current recipient (注 / 开 / 微). Fetched via
+  // /api/person/mp-signals which wraps getMpSignalsForEmails([email]).
+  // Hidden when empty (hideIfEmpty on the pill component) so we don't
+  // add visual noise for recipients with no MP record.
+  const [recipientSignals, setRecipientSignals] = useState<
+    (MpSignals & { applicationProgress: string | null }) | null
+  >(null);
 
   // Reset fields when replyTo changes
   useEffect(() => {
@@ -63,6 +71,41 @@ export function ComposeModal({ open, onClose, replyTo }: ComposeModalProps) {
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
   }, [open, handleKey]);
+
+  // Resolve MP signals for the current recipient. For replies the
+  // address is fixed (replyTo.from); for new compose it changes as the
+  // user types, so we debounce by 300ms and only query for syntactically
+  // valid emails.
+  const recipientEmail = (replyTo?.from ?? to ?? "").trim().toLowerCase();
+  useEffect(() => {
+    if (!open) return;
+    if (!recipientEmail || !recipientEmail.includes("@")) {
+      setRecipientSignals(null);
+      return;
+    }
+    let cancelled = false;
+    const handle = setTimeout(async () => {
+      try {
+        const res = await fetch(
+          `/api/person/mp-signals?email=${encodeURIComponent(recipientEmail)}`,
+        );
+        if (!res.ok) {
+          if (!cancelled) setRecipientSignals(null);
+          return;
+        }
+        const data = (await res.json()) as {
+          signals: (MpSignals & { applicationProgress: string | null }) | null;
+        };
+        if (!cancelled) setRecipientSignals(data.signals);
+      } catch {
+        if (!cancelled) setRecipientSignals(null);
+      }
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [open, recipientEmail]);
 
   if (!open) return null;
 
@@ -162,6 +205,10 @@ export function ComposeModal({ open, onClose, replyTo }: ComposeModalProps) {
                   onChange={(e) => setTo(e.target.value)}
                   placeholder="recipient@example.com"
                 />
+                {/* MP signal trio (注/开/微) for the typed-in recipient.
+                    hideIfEmpty: silent for unknown addresses; lights up
+                    once MP has a record. */}
+                <MpSignalPills signals={recipientSignals} size="sm" hideIfEmpty />
               </div>
               <div className="form-section" style={{ marginBottom: 0 }}>
                 <label>Subject</label>
@@ -187,6 +234,9 @@ export function ComposeModal({ open, onClose, replyTo }: ComposeModalProps) {
               <p style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
                 To: <span style={{ color: "var(--text)", fontWeight: 500 }}>{replyTo.from}</span>
               </p>
+              {/* MP signal trio (注/开/微). hideIfEmpty: don't render when
+                  recipient has no MP/wechat record — avoids noise. */}
+              <MpSignalPills signals={recipientSignals} size="sm" hideIfEmpty />
               <p style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>{subject}</p>
             </div>
           )}
