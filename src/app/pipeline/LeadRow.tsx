@@ -124,10 +124,18 @@ function LeadRowInner({
   const status = statusFor(lead);
   const tierClass = lead.leadTier === "strong" ? "strong" : "normal";
 
+  // Full draft body as plaintext. We used to slice at 200 chars which cut
+  // mid-clause ("...特征级对抗学习解决属性纠缠的方案" with no CTA), alarming
+  // sales who thought the actual outbound email was truncated (it isn't —
+  // draft_html in DB is intact). The .dx-draft-body CSS already applies
+  // `-webkit-line-clamp: 2` for visual height, so the full string lives
+  // in the DOM but only ~2 lines are shown until the card is expanded.
+  // Verification:
+  //   document.querySelector('.dx-draft-body')?.textContent?.length
+  // should now be the full plaintext length (~500+ chars for a real draft).
   const draftSnippet = useMemo(() => {
     if (!lead.draftHtml) return "";
-    const text = htmlToText(lead.draftHtml);
-    return text.length > 200 ? text.slice(0, 200) + "…" : text;
+    return htmlToText(lead.draftHtml);
   }, [lead.draftHtml]);
 
   // sanitizedDraft is fed to dangerouslySetInnerHTML for the expanded
