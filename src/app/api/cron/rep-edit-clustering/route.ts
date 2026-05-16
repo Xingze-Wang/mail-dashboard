@@ -176,23 +176,12 @@ async function run(dry: boolean): Promise<RunResult> {
     } else {
       entry.template_action = existing.data ? "replaced" : "created";
       entry.new_template_id = ins.data?.id as string;
-      // Push the approval card to admin's Lark DM. Buttons let admin
-      // click ✓ Approve draft / 🚀 Activate now / ❌ Reject without
-      // leaving Lark. Until admin clicks Activate, the existing template
-      // stays live — no silent swaps.
-      if (entry.new_template_id) {
-        try {
-          const { sendTemplateProposalCard } = await import("@/lib/admin-approval-cards");
-          await sendTemplateProposalCard({
-            template_id: entry.new_template_id,
-            template_name: proposalName,
-            proposed_by: "rep_edit_cluster",
-            proposed_reason: `${rep.name}'s edit pattern detected from ${winner.members.length} similar sales-edits in the last ${LOOKBACK_DAYS}d (tightness ${evidence.centroid_tightness.toFixed(3)}). Click Activate to make it ${rep.name}'s active template, replacing the current one.`,
-          });
-        } catch (err) {
-          console.error("[rep-edit-clustering] approval card failed:", String(err).slice(0, 200));
-        }
-      }
+      // Old behavior fired sendTemplateProposalCard here directly. That's now
+      // wrong: the new flow goes rep-side first. The
+      // /api/cron/propose-templates-to-reps cron picks up
+      // status='proposal' AND rep_id IS NOT NULL within 24h and DMs the rep.
+      // Admin card fires AFTER rep ✓ (see Task 6 in
+      // docs/superpowers/plans/2026-05-16-auto-template-propose-to-rep.md).
     }
     result.per_rep.push(entry);
   }
