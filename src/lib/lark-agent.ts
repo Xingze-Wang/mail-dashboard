@@ -263,8 +263,40 @@ async function callLLM(system: string, user: string): Promise<{ text: string; mo
     });
     return { text: r.text ?? "(empty)", model: r.meta?.model ?? "claude-opus-4.7" };
   } catch (err) {
-    console.error("[lark-agent] llm error", err);
-    return { text: "(LLM error — try again)", model: "error" };
+    // Differentiate the failure class so Leon's reply tells the user
+    // (and admin reading logs) what actually broke. The old generic
+    // "LLM error — try again" left admin guessing whether it was a
+    // proxy outage, a timeout, a config gap, or a safety-filter
+    // empty-response.
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.error("[lark-agent] llm error:", errMsg);
+
+    // Best-effort: drop a breadcrumb so the next admin/Leon dashboard
+    // tile can graph "how often did LLM calls fail today, by class".
+    // Failure here is non-fatal — we still need to reply to the user.
+    void supabase
+      .from("helper_chime_in_log")
+      .insert({
+        kind: "llm_error",
+        payload: { source: "lark-agent.callLLM", err: errMsg.slice(0, 500) },
+      })
+      .then(() => {/* no-op */}, () => {/* swallow */});
+
+    let userMsg = "(LLM 调用失败 — 再试一次)";
+    if (/MIRACLEPLUS_PROXY_KEY not set/i.test(errMsg)) {
+      userMsg = "(我没配好 LLM key, admin 要补一下 env)";
+    } else if (/proxy HTTP 429/i.test(errMsg)) {
+      userMsg = "(LLM 被限流了, 1 分钟后再试)";
+    } else if (/proxy HTTP 5\d\d/i.test(errMsg)) {
+      userMsg = "(LLM 上游 5xx — 是 Gemini/Claude 那边的事, 再试或换换问法)";
+    } else if (/proxy HTTP 4\d\d/i.test(errMsg)) {
+      userMsg = `(LLM 请求被拒了: ${errMsg.slice(0, 80)})`;
+    } else if (/proxy returned empty/i.test(errMsg)) {
+      userMsg = "(LLM 返回空, 通常是 safety filter 拦了 — 换个说法或拆分一下问题)";
+    } else if (/aborted|timeout/i.test(errMsg)) {
+      userMsg = "(LLM 60s 内没回, 我问的太复杂了 — 简化一下问题再试)";
+    }
+    return { text: userMsg, model: "error" };
   }
 }
 
