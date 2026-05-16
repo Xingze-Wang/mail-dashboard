@@ -300,13 +300,40 @@ function DiscoveryCardInner({ lead, onAction, onPromoted }: Props) {
     }
   }, [promoteEmail, lead, onPromoted, toast]);
 
+  // Build a click-through URL for the source pill. We prefer the
+  // explicit profileUrl from the scraper; fall back to a constructed
+  // huggingface.co / github.com URL when the source is well-known.
+  // null = render as a non-clickable span (matches old behavior).
+  const sourceHref = (() => {
+    if (lead.profileUrl) return lead.profileUrl;
+    const ext = lead.externalId;
+    if (variant === "hf") return `https://huggingface.co/${encodeURIComponent(ext)}`;
+    if (variant === "gh") return `https://github.com/${ext}`; // owner or owner/repo
+    return null;
+  })();
+
   return (
     <div className="dx-card discovered">
       <div className="dx-card-head">
-        <span className={`dx-src-badge ${variant}`}>
-          <span className="dx-src-dot" />
-          {label}
-        </span>
+        {sourceHref ? (
+          <a
+            href={sourceHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className={`dx-src-badge ${variant}`}
+            style={{ textDecoration: "none" }}
+            title={`Open ${label} profile`}
+          >
+            <span className="dx-src-dot" />
+            {label}
+          </a>
+        ) : (
+          <span className={`dx-src-badge ${variant}`}>
+            <span className="dx-src-dot" />
+            {label}
+          </span>
+        )}
         <span className="dx-status-badge discovered">
           <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6" /></svg>
           Discovered

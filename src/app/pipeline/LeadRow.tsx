@@ -191,6 +191,25 @@ function LeadRowInner({
           <span className="dx-src-dot" />
           arXiv
         </span>
+        {lead.hfUser && (
+          // Clickable HF pill — opens the author's HF profile in a new
+          // tab. Data comes from persons.hf_users[0] joined via
+          // pipeline_leads.person_id in /api/pipeline (attachHfUser).
+          // stopPropagation so clicking the pill doesn't toggle the
+          // card's expand-editor.
+          <a
+            href={`https://huggingface.co/${encodeURIComponent(lead.hfUser)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="dx-src-badge hf"
+            style={{ textDecoration: "none" }}
+            title={`Open ${lead.hfUser} on Hugging Face`}
+          >
+            <span className="dx-src-dot" />
+            Hugging Face
+          </a>
+        )}
         {showStatusBadge && (
           <span className={`dx-status-badge ${status}`}>
             <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6" /></svg>

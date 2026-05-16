@@ -69,7 +69,48 @@ function mapLead(l: Record<string, unknown>) {
     industryOrgs: Array.isArray(l.industry_orgs) ? (l.industry_orgs as string[]) : null,
     clickCount: (l.click_count as number | null) ?? null,
     lastClickAt: (l.last_click_at as string | null) ?? null,
+    // person_id is needed for the HF-pill join below; not exposed to the
+    // client (stripped in attachHfUser before response).
+    personId: (l.person_id as string | null) ?? null,
+    hfUser: null as string | null,
   };
+}
+
+/**
+ * Batched lookup of persons.hf_users[0] for every lead that has a
+ * person_id, then attach it to the lead as hfUser. The DB coverage is
+ * sparse today (7 of 4380 persons have hf_users populated as of
+ * 2026-05-16) but the join is cheap when most rows return nothing, and
+ * the client renders the pill only when hfUser is set. Broader HF
+ * extraction (S2 homepage + GitHub commit-author lookup) is tracked as
+ * a separate plan; this just surfaces what's already in persons.
+ */
+async function attachHfUser<T extends { personId: string | null; hfUser: string | null }>(
+  leads: T[],
+): Promise<T[]> {
+  const ids = Array.from(
+    new Set(leads.map((l) => l.personId).filter((v): v is string => typeof v === "string" && v.length > 0)),
+  );
+  if (ids.length === 0) return leads;
+
+  const { data: persons } = await supabase
+    .from("persons")
+    .select("id, hf_users")
+    .in("id", ids);
+
+  const hfById = new Map<string, string>();
+  for (const p of persons ?? []) {
+    const arr = (p as { hf_users?: string[] | null }).hf_users ?? [];
+    const handle = Array.isArray(arr) ? arr.find((s) => typeof s === "string" && s.trim().length > 0) : null;
+    if (handle) hfById.set((p as { id: string }).id, handle.trim());
+  }
+
+  return leads.map((l) => {
+    const pid = l.personId;
+    if (!pid) return l;
+    const hf = hfById.get(pid);
+    return hf ? { ...l, hfUser: hf } : l;
+  });
 }
 
 // ─── GET: list leads with filters ───────────────────────────────────────────
@@ -169,6 +210,11 @@ export async function GET(req: NextRequest) {
   ]);
 
   let mapped = (leads || []).map(mapLead);
+
+  // Attach hf_user (from persons table via person_id) for the clickable
+  // HF pill on LeadRow. Coverage is sparse today but the join is cheap;
+  // see attachHfUser() above for the data-coverage note.
+  mapped = await attachHfUser(mapped);
 
   // Resolve {{REP_*}} late-binding placeholders in draftHtml/draftSubject
   // for the preview shown on /pipeline. This mirrors what the send route

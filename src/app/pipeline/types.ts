@@ -33,6 +33,12 @@ export interface Lead {
   // email.clicked webhook. > 1 = recipient came back to the email.
   clickCount?: number | null;
   lastClickAt?: string | null;
+  // Hugging Face handle (first entry of persons.hf_users for the lead's
+  // linked person). Surfaced as a clickable pill on LeadRow when set.
+  // Coverage is sparse today (only 7 of 4380 persons populated as of
+  // 2026-05-16) — broader person-side HF extraction is tracked as a
+  // separate plan (S2 homepage + GitHub commit-author lookup).
+  hfUser?: string | null;
 }
 
 export interface Rep {
