@@ -281,6 +281,13 @@ export async function GET(req: NextRequest) {
     // match emails we sent recently. Populates miracleplus_contacts;
     // read by getMpConversionMatrix + the get_mp_conversions Leon tool.
     ["sync_mp_contacts",        () => callInternalCron("/api/cron/sync-miracleplus-contacts", secret)],
+    // MP CRM weekly self-heal — the daily sync above only looks at the
+    // last 7 days. This one walks the full outbound history one
+    // chunk/week at a time so we eventually catch every recipient our
+    // reps emailed. Cursor lives in cron_state; route is also scheduled
+    // standalone (vercel.json: 0 4 * * 0) for Sunday-only execution
+    // since the master cron is weekdays-only.
+    ["sync_mp_backfill",        () => callInternalCron("/api/cron/sync-miracleplus-backfill", secret)],
   ];
   const fanOut: Record<string, unknown> = {};
   for (const [name, fn] of fanOutSteps) {
