@@ -304,6 +304,30 @@ async function autoExecuteSafeProposal(
   return r.executed ? r.suffix : null;
 }
 
+/** Short summary line for proposal cards. Different shapes per action. */
+function describeProposalHeadline(p: ToolProposal): string {
+  const a = p.action as string;
+  const pr = p as Record<string, unknown>;
+  if (a === "reassign_lead") {
+    return `[Lark] Reassign lead ${String(pr.lead_id ?? "?").slice(0, 8)} → rep ${pr.to_rep_id ?? "?"}`;
+  }
+  if (a === "reassign_leads_bulk") {
+    const rules = Array.isArray(pr.rules) ? (pr.rules as unknown[]).length : 0;
+    return `[Lark] Bulk reassign — ${rules} rule${rules === 1 ? "" : "s"}`;
+  }
+  if (a === "batch_send") {
+    const n = Array.isArray(pr.lead_ids) ? (pr.lead_ids as unknown[]).length : (pr.count ?? "?");
+    return `[Lark] Batch send ${n} leads`;
+  }
+  if (a === "propose_db_write") {
+    return `[Lark] DB write: ${String(pr.description ?? "(no description)").slice(0, 120)}`;
+  }
+  if (a === "skip_lead" || a === "flag_lead") {
+    return `[Lark] ${a} ${String(pr.lead_id ?? "?").slice(0, 8)}`;
+  }
+  return `[Lark] Leon proposed: ${a}`;
+}
+
 
 function userMentionsPriorContext(text: string): boolean {
   const cues = ["之前", "上次", "刚才", "earlier", "you said", "前面", "刚刚", "你之前"];
@@ -932,17 +956,38 @@ export async function processInboundLarkMessage(
     if (memorySuffix) {
       suffix = memorySuffix;
     } else {
-      // NEVER tell the user to go to the web to confirm. North star
-      // ([[project_leon_parity_with_app]]): everything in the app is
-      // doable in Lark. For destructive proposals that need a confirm
-      // step, the right home is admin-approval-cards.ts — same Yes/No
-      // pattern as the existing template/quota/congress cards.
+      // Destructive proposal that auto-execute-safe doesn't cover
+      // (reassign_lead, reassign_leads_bulk, batch_send, propose_db_write,
+      // etc.). We don't punt to the web — north star says everything is
+      // doable in Lark. Solution: synthesize a record_admin_request
+      // proposal carrying the destructive intent and execute it through
+      // the same auto-exec path. That path (auto-execute-safe.ts:83 →
+      // helper-read-tools.ts:runReadTool → admin-inbox-card.ts:sendAdminInboxCard)
+      // already pushes a Lark interactive card to admin's DM with
+      // ✓/❌ buttons. Admin clicking ✓ runs the existing
+      // processAdminInboxCardAction handler (already in webhook
+      // dispatcher). One real card-push path, used by everything.
       //
-      // TODO: extend admin-approval-cards.ts with sendProposalConfirmCard
-      // covering reassign_leads / batch_send / propose_db_write. Until
-      // then, fall back to recording the proposal to admin_inbox so
-      // there's a paper trail — but never send the user back to the web.
-      suffix = `\n\n— 收到. 这个操作 (${proposal.action}) 我会记到 admin inbox 让 admin 一键 approve. 不需要回网页.`;
+      // This mirrors the Intent page pattern: a user goal becomes an
+      // action via a tool the harness already knows how to execute.
+      const headline = describeProposalHeadline(proposal);
+      const body = JSON.stringify(proposal, null, 2);
+      const cardSuffix = await autoExecuteSafeProposal(session, {
+        action: "record_admin_request",
+        kind: "request",
+        headline,
+        body: `Leon proposed a destructive action in Lark. Click ✓ to approve, ❌ to reject. Raw proposal payload:\n\n\`\`\`json\n${body.slice(0, 1500)}\n\`\`\``,
+        source_rep_id: session.repId,
+        evidence: { proposal_action: proposal.action, original_proposal: proposal },
+      });
+      if (cardSuffix) {
+        suffix = cardSuffix;
+      } else {
+        // record_admin_request itself failed — log loudly and surface
+        // the failure to the user instead of pretending it worked.
+        console.error("[lark-agent] failed to push admin card for proposal:", proposal.action);
+        suffix = `\n\n— ⚠️ 我想给 admin 推一张 confirm 卡片, 但卡片推送失败了 (proposal: ${proposal.action}). 这是 bug, 不是设计 — admin 会从日志里看到.`;
+      }
     }
   }
   const trimmed = (cleaned + suffix).trim();
