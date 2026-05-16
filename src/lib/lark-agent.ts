@@ -208,6 +208,41 @@ admin "不用/dismiss/算了" → 别强求, 礼貌结束.
 
 这条规则的目的: escalation 不应该是一次性消耗. 每次 admin 答了一个 rep 都可能问的问题, 应该让 Leon 自己以后能答, 否则 admin 会被同样的 question 烦三遍.
 
+## ⛔ 你遇到"我没工具做 X"时, **禁止**用 propose_tool / record_admin_request / propose_self_skill 当作"已经在解决" (硬规则)
+
+历史 bug (2026-05-16): admin 让你给 3 份 doc 设权限, 你没有 share API. 你的反应是:
+1. record_admin_request: "加 share_lark_doc 工具" ← 把球踢给"未来的 admin"
+2. propose_self_skill: "工具上线前每次提醒 admin 开权限" ← 把规则塞给"未来的我"
+3. 然后告诉 admin "请你自己去 Share"
+
+这是**假动作 (performative work)**. 你做了两个看起来在干活的 tool 调用, 但 admin 的实际问题 (3 份 doc 现在没权限) 一个字没解决, 责任全踢回给 admin. admin 当场看穿: "你这个破玩意在躲避."
+
+**正确流程 (按顺序, 不要跳)**:
+
+1. **承认 block** — 一句话: "我没有 X tool, 现在做不了 Y." 不要绕.
+
+2. **找当前可行的 workaround** — 用你**现有**的 tool / 能力组合出一个**近似解**, 给 admin 一个"现在能用"的产出. 关键 self-question: **"我现在最近似的产出是什么? 哪怕只是一半的解, 也比 propose 未来工具强."**
+   例子:
+   - 没有 share_lark_doc → **把 doc 内容直接贴在 reply 里**, admin 自己 paste 进新 doc, owner 就是 admin
+   - 没有 bulk_email_send → **列出 lead_ids + 草稿全文**, admin 自己 copy 进 /pipeline 一条一条 send
+   - 没有 set_quota → **写好 SQL** 推 propose_db_write 卡, admin 一键 approve
+
+3. **propose_tool / record_admin_request 只能跟着 workaround 一起出现, 不能替代它**. 顺序是: workaround → 然后顺手提一句 "顺便提了一个 record_admin_request 让 admin 后续考虑加工具".
+
+4. **如果连 workaround 都不存在** → 直接告诉 admin: "我现在做不了 Y, 因为 Z. 你愿意自己手动做的话步骤是 [...]". 不要 propose 未来工具当借口.
+
+**判断你是不是在做假动作**:
+- 这次 tool 调用之后, admin 的原问题**当下**(不是"未来工具上线后")有没有变得更近一步? 没有 → 假动作.
+- admin 是不是还要做和我 tool 调用之前一样多的工作? 是 → 假动作.
+- 我是不是给了一个"未来某天 X 工具上线就好了"的承诺? 是 → 99% 是假动作.
+
+**禁止的话术** (出现就是 red flag):
+- "我提了个 record_admin_request 让你后续加工具" + 不做其他事
+- "我 propose 了一条 skill 规则, 以后就好了" + 不解决当下
+- "工具上线后这就自动了" + 现在的事不管
+
+记住: admin 找你是因为**现在**有事要解决, 不是为了让你给他写未来的 roadmap. roadmap 是 admin 的工作.
+
 ## 遇到搞不定的事 → 找 admin (Xingze)
 
 这条最重要. 你不是 oracle, 你只是搭档. 下面这些情况, **不要硬扛, 直接 record_admin_request**:
@@ -311,6 +346,99 @@ function extractAnyProposal(text: string): { cleaned: string; proposal: ToolProp
     }
   } catch { /* fall through */ }
   return { cleaned, proposal: null };
+}
+
+// Additive memory-claim triggers Leon emits without a tool block. Each
+// regex is split out so we can (a) pick the trigger that fired, (b)
+// strip just that trigger off the front of the body, (c) decide whether
+// it's "additive" (safe to auto-recover) vs "correction-like" (NOT
+// safe — body extraction unreliable, would corrupt training memory).
+// "我" is OPTIONAL — Leon often drops it ("好, 记下来了" / "记住了").
+// Order: longer/more-specific first so the chop-point is correct.
+const ADDITIVE_CLAIM_TRIGGERS: RegExp[] = [
+  /(?:我)?记下来了/, /(?:我)?记下了/, /(?:我)?记住了/,
+  /(?:我)?存进去了/, /(?:我)?存进了/,
+  /已记录/,
+  /save\s+(?:进|到)\s*memory/i,
+];
+// "consolidate 一下" / "learn from admin correction" — leave detector-only.
+const CORRECTION_LIKE_TRIGGERS: RegExp[] = [
+  /consolidate\s*一下/i,
+  /consolidate\s+from\s+admin/i,
+];
+
+/**
+ * Pure (no DB, no I/O) — given Leon's plain-text cleaned reply, decide
+ * whether it contains a claim-without-tool, and if so, whether we can
+ * safely synthesize a `remember_about_rep` proposal.
+ *
+ * Exported so the smoke can test in isolation without having to mock
+ * the LLM. The DB-writing path (recordLearning + tryAutoExecuteSafe)
+ * lives in the caller (processInboundLarkMessage) so it stays
+ * testable separately.
+ *
+ * Returns:
+ *   { detectorFired: false }            — no claim phrase at all
+ *   { detectorFired: true, recoverable: false, reason }
+ *                                       — claim phrase present but
+ *                                         either correction-like (unsafe)
+ *                                         or body too short (vague)
+ *   { detectorFired: true, recoverable: true, kind, body }
+ *                                       — safe to feed into
+ *                                         tryAutoExecuteSafe as a
+ *                                         synthesized remember_about_rep
+ */
+export function analyzeClaimWithoutTool(cleaned: string): (
+  | { detectorFired: false }
+  | { detectorFired: true; recoverable: false; reason: string }
+  | { detectorFired: true; recoverable: true; kind: "rep_pref" | "tactic" | "self_critique" | "other"; body: string }
+) {
+  const correctionHit = CORRECTION_LIKE_TRIGGERS.find((re) => re.test(cleaned));
+  if (correctionHit) {
+    return { detectorFired: true, recoverable: false, reason: "correction-like trigger (unsafe to auto-recover)" };
+  }
+  // Find the earliest additive trigger so the body extraction starts at
+  // the right place. (If multiple triggers exist, we want to chop at
+  // the first one's start AND drop that exact match.)
+  let earliest: { re: RegExp; index: number; match: string } | null = null;
+  for (const re of ADDITIVE_CLAIM_TRIGGERS) {
+    const m = cleaned.match(re);
+    if (!m || m.index === undefined) continue;
+    if (!earliest || m.index < earliest.index) {
+      earliest = { re, index: m.index, match: m[0] };
+    }
+  }
+  if (!earliest) return { detectorFired: false };
+
+  // Body = text AFTER the trigger. Strip leading punctuation/whitespace.
+  let body = cleaned.slice(earliest.index + earliest.match.length);
+  body = body.replace(/^[\s:：,，\-—。.;；·—–]+/, "").trim();
+  // Cut at 600 chars (recordLearning's per-call ceiling, enforced in
+  // auto-execute-safe.ts).
+  if (body.length > 600) body = body.slice(0, 600);
+  if (body.length < 20) {
+    return { detectorFired: true, recoverable: false, reason: `body too short (${body.length} chars; need ≥20)` };
+  }
+
+  // Kind detection: look for literal "tactic:" / "rep_pref:" / "skill:"
+  // prefix in the BODY (not the claim). "skill" is intentionally NOT
+  // in the auto-exec allowlist (see auto-execute-safe.ts:54) — if the
+  // model hints "skill:" we still auto-record but the kind will fall
+  // through to "other" inside auto-execute-safe.
+  let kind: "rep_pref" | "tactic" | "self_critique" | "other" = "other";
+  const prefixMatch = body.match(/^(rep_pref|tactic|self_critique|skill)\s*[:：]\s*/i);
+  if (prefixMatch) {
+    const found = prefixMatch[1].toLowerCase();
+    if (found === "rep_pref" || found === "tactic" || found === "self_critique") {
+      kind = found as typeof kind;
+    }
+    // "skill:" → keep kind="other" (auto-exec won't accept "skill")
+    body = body.slice(prefixMatch[0].length).trim();
+    if (body.length < 20) {
+      return { detectorFired: true, recoverable: false, reason: `body too short after kind-prefix strip (${body.length} chars)` };
+    }
+  }
+  return { detectorFired: true, recoverable: true, kind, body };
 }
 
 /**
@@ -957,29 +1085,72 @@ export async function processInboundLarkMessage(
   // Detector: Leon sometimes claims "我记下了 / 记住了 / save 进去了"
   // in plain text without emitting a tool block, leaving the memory
   // unwritten. Admin sees the promise, DB doesn't. The detector
-  // catches this and either (a) auto-converts to a tool call if we
-  // can synthesize one safely, or (b) escalates the prompt failure
-  // to admin_inbox so we know to tighten the prompt further.
-  const claimsMemoryWrite = /我记下来?了|我记住了|存进(去)?了|已记录|save\s+(进|到)\s*memory|consolidate 一下/.test(cleaned);
+  // catches this and either (a) auto-converts to a remember_about_rep
+  // call to actually persist the claim, or (b) records a self_critique
+  // so next session's prompt sees the gap.
+  //
+  // User got bitten 2026-05-16 — Leon admitted "我没真的存进 memory —
+  // 这是骗你, 道歉." This recovery path makes the lie self-healing.
+  let recoverySuffix = "";
   const memoryToolCalled = proposal && (
     proposal.action === "learn_from_admin_correction" ||
     proposal.action === "remember_about_rep" ||
     proposal.action === "record_admin_request"
   );
-  if (claimsMemoryWrite && !memoryToolCalled) {
-    // Log a self_critique into helper_learnings so next session's
-    // prompt is reminded. Cheap, idempotent (recordLearning dedups
-    // by exact body in practice for prompts).
+  const analysis = memoryToolCalled ? { detectorFired: false } as const : analyzeClaimWithoutTool(cleaned);
+  if (analysis.detectorFired) {
+    // (1) Try recovery FIRST — only for additive claims with a usable body.
+    if (analysis.recoverable) {
+      try {
+        const { tryAutoExecuteSafe } = await import("@/lib/auto-execute-safe");
+        const r = await tryAutoExecuteSafe(
+          {
+            repId: session.repId,
+            role: session.role,
+            repName: session.repName ?? null,
+            email: session.email ?? null,
+          },
+          {
+            action: "remember_about_rep",
+            kind: analysis.kind,
+            body: analysis.body,
+            scope: session.role === "admin" ? "org" : "rep",
+          },
+        );
+        if (r.executed) {
+          recoverySuffix = `${r.suffix} (auto-recovered: missed tool call)`;
+          console.warn(`[lark-agent/${transport}] CLAIMS_WITHOUT_TOOL_RECOVERED`, {
+            rep: rep.id,
+            kind: analysis.kind,
+            body_preview: analysis.body.slice(0, 80),
+          });
+        } else {
+          console.warn(`[lark-agent/${transport}] CLAIMS_WITHOUT_TOOL_RECOVERY_REFUSED`, {
+            rep: rep.id,
+            kind: analysis.kind,
+          });
+        }
+      } catch (err) {
+        console.error(`[lark-agent/${transport}] CLAIMS_WITHOUT_TOOL_RECOVERY_THREW`, err);
+      }
+    }
+    // (2) Always still record the self_critique so we can audit how
+    // often the model lies. Cheap, append-only.
     try {
       const { recordLearning } = await import("@/lib/helper-learnings");
       await recordLearning({
         scope_rep_id: null,
         kind: "self_critique",
-        body: `[guard caught it] Leon said '记下来了' or similar in a reply but did not emit a learn_from_admin_correction / remember_about_rep / record_admin_request tool block. Reply: "${cleaned.slice(0, 200)}". Source message: "${text.slice(0, 200)}". Rule: any claim-to-record requires a matching tool call in the SAME reply.`,
+        body: `[guard caught it] Leon said '记下来了' or similar in a reply but did not emit a learn_from_admin_correction / remember_about_rep / record_admin_request tool block. Reply: "${cleaned.slice(0, 200)}". Source message: "${text.slice(0, 200)}". Recovered: ${recoverySuffix ? "yes" : ("reason" in analysis ? analysis.reason : "no")}. Rule: any claim-to-record requires a matching tool call in the SAME reply.`,
         confidence: 0.6,
       });
     } catch {/* best-effort */}
-    console.warn(`[lark-agent/${transport}] CLAIMS_WITHOUT_TOOL`, { rep: rep.id, text: text.slice(0, 80), reply: cleaned.slice(0, 80) });
+    console.warn(`[lark-agent/${transport}] CLAIMS_WITHOUT_TOOL`, {
+      rep: rep.id,
+      text: text.slice(0, 80),
+      reply: cleaned.slice(0, 80),
+      recovered: Boolean(recoverySuffix),
+    });
   }
 
   let suffix = "";
@@ -1022,7 +1193,7 @@ export async function processInboundLarkMessage(
       }
     }
   }
-  const trimmed = (cleaned + suffix).trim();
+  const trimmed = (cleaned + suffix + recoverySuffix).trim();
   // Empty reply is intentional when Leon used react_to_message — the
   // emoji reaction IS the response, sending text on top would be noise.
   // We still log the empty turn for audit but skip the outbound Lark
