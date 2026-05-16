@@ -117,6 +117,128 @@ async function checkRepsHaveSenderEmail(): Promise<IntegrityCheck> {
   };
 }
 
+/**
+ * MP sync recency — max(last_seen_at) across miracleplus_contacts.
+ * Thresholds: green if <=36h old, yellow if <=72h, red beyond. This is
+ * the canary for the daily /api/cron/sync-miracleplus-contacts cron.
+ * If the staging API token rotates or the cron silently fails, the
+ * mirror freezes and our funnel numbers drift without warning. This
+ * check makes the freeze visible on the admin dashboard within hours.
+ */
+async function checkMpSyncRecency(): Promise<IntegrityCheck> {
+  const name = "miracleplus sync recency";
+  try {
+    const { data, error } = await supabase
+      .from("miracleplus_contacts")
+      .select("last_seen_at")
+      .order("last_seen_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) return { name, status: "yellow", detail: `query failed: ${error.message}` };
+    const ts = (data?.last_seen_at as string | null) ?? null;
+    if (!ts) {
+      return { name, status: "yellow", detail: "no miracleplus_contacts rows yet" };
+    }
+    const ageMs = Date.now() - new Date(ts).getTime();
+    const ageH = Math.round(ageMs / (60 * 60 * 1000));
+    if (ageMs <= 36 * 60 * 60 * 1000) {
+      return { name, status: "green", detail: `last sync ${ageH}h ago (<=36h)` };
+    }
+    if (ageMs <= 72 * 60 * 60 * 1000) {
+      return { name, status: "yellow", detail: `last sync ${ageH}h ago (36-72h)` };
+    }
+    return { name, status: "red", detail: `last sync ${ageH}h ago (>72h — cron likely broken)` };
+  } catch (err) {
+    return {
+      name,
+      status: "yellow",
+      detail: `check threw: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
+
+/**
+ * MP sync coverage — of the distinct recipients we actually emailed in
+ * the last 7 days, how many have a miracleplus_contacts row mirrored?
+ * This catches a different failure mode than recency: the cron CAN
+ * run successfully but match 0% of recipients (API quota exhausted,
+ * permission error swallowed, all calls returning empty). Without this
+ * coverage check, the conversion matrix silently undercounts.
+ *
+ * Thresholds: we expect SOME match rate on emailed contacts. If
+ * coverage drops below 5% with N>=20 emails sent, that's red — the
+ * mirror is effectively dead even if rows look fresh. Green if >=15%,
+ * yellow in between. Numbers are deliberately conservative: most
+ * recipients are NOT in MP (they're cold prospects), so a 15% match
+ * is actually healthy.
+ */
+async function checkMpSyncCoverage(): Promise<IntegrityCheck> {
+  const name = "miracleplus sync coverage (7d emailed)";
+  try {
+    const sinceIso = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+    // Distinct emailed recipients in last 7d. Paginated to bound cost.
+    const recipients = new Set<string>();
+    const PAGE = 1000;
+    let cursor = 0;
+    const MAX_PAGES = 5; // ~5000 distinct recipients ceiling — plenty
+    for (let i = 0; i < MAX_PAGES; i++) {
+      const { data, error } = await supabase
+        .from("emails")
+        .select("to")
+        .gte("created_at", sinceIso)
+        .range(cursor, cursor + PAGE - 1);
+      if (error) return { name, status: "yellow", detail: `emails query failed: ${error.message}` };
+      if (!data || data.length === 0) break;
+      for (const r of data) {
+        const e = ((r as { to: string | null }).to ?? "").trim().toLowerCase();
+        if (e && e.includes("@")) recipients.add(e);
+      }
+      if (data.length < PAGE) break;
+      cursor += PAGE;
+    }
+    const N = recipients.size;
+    if (N === 0) {
+      return { name, status: "yellow", detail: "no emails sent in last 7d" };
+    }
+
+    // How many of those have a mirrored MP row at all?
+    let matched = 0;
+    const emails = Array.from(recipients);
+    const BATCH = 500;
+    for (let i = 0; i < emails.length; i += BATCH) {
+      const slice = emails.slice(i, i + BATCH);
+      const { data, error } = await supabase
+        .from("miracleplus_contacts")
+        .select("email_canonical")
+        .in("email_canonical", slice);
+      if (error) {
+        return { name, status: "yellow", detail: `mp query failed: ${error.message}` };
+      }
+      const seen = new Set<string>();
+      for (const r of (data ?? []) as { email_canonical: string | null }[]) {
+        if (r.email_canonical) seen.add(r.email_canonical);
+      }
+      matched += seen.size;
+    }
+    const pct = (matched / N) * 100;
+    const detail = `${matched}/${N} (${pct.toFixed(1)}%) mirrored`;
+    if (N < 20) {
+      // Sample too small to be definitive — treat as informational.
+      return { name, status: "yellow", detail: `${detail} (sample <20)` };
+    }
+    if (pct >= 15) return { name, status: "green", detail };
+    if (pct >= 5) return { name, status: "yellow", detail };
+    return { name, status: "red", detail: `${detail} — mirror likely broken` };
+  } catch (err) {
+    return {
+      name,
+      status: "yellow",
+      detail: `check threw: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
+
 export async function runIntegrity(): Promise<IntegrityReport> {
   const checks = await Promise.all([
     checkWebhookFreshness(),
@@ -125,6 +247,8 @@ export async function runIntegrity(): Promise<IntegrityReport> {
     checkWechatActorCoverage(),
     checkCronSyncRecency(),
     checkRepsHaveSenderEmail(),
+    checkMpSyncRecency(),
+    checkMpSyncCoverage(),
   ]);
   const summary = {
     green: checks.filter((c) => c.status === "green").length,

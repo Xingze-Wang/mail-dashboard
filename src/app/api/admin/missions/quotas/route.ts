@@ -7,6 +7,7 @@ import {
   setOverride,
 } from "@/lib/quota-store";
 import { normalizePerPool } from "@/lib/pool-types";
+import { getMpConversionMatrix } from "@/lib/canonical-counts";
 
 export const dynamic = "force-dynamic";
 
@@ -31,6 +32,34 @@ export async function GET(req: NextRequest) {
   const quotas = await getAllEffectiveQuotas(today);
   const quotaByRep = new Map(quotas.map((q) => [q.rep_id, q]));
 
+  // Attach per-rep MP conversion slice (last 30d) so the admin quota UI
+  // has the same registered/submitted/wechat trio the home page shows
+  // — admin can pick quotas with conversion context inline, no extra
+  // round trip. Soft-fail keeps the quota editor usable even when MP
+  // sync is degraded.
+  const mp30dByRep = new Map<
+    number,
+    { registered: number; submitted: number; wechat: number; total_emailed: number; matched: number }
+  >();
+  try {
+    const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const matrix = await getMpConversionMatrix({ since });
+    for (const r of matrix.perRep ?? []) {
+      mp30dByRep.set(r.rep_id, {
+        registered: r.registered + r.submittedApplication,
+        submitted: r.submittedApplication,
+        wechat: r.wechatAdded,
+        total_emailed: r.totalEmailed,
+        matched: r.matched,
+      });
+    }
+  } catch (err) {
+    console.warn(
+      "[admin/missions/quotas] mp matrix failed",
+      err instanceof Error ? err.message : err,
+    );
+  }
+
   return NextResponse.json({
     today,
     reps: (reps.data || []).map((r) => ({
@@ -40,6 +69,7 @@ export async function GET(req: NextRequest) {
       role: r.role,
       created_at: r.created_at,
       quota: quotaByRep.get(r.id) ?? null,
+      mp_30d: mp30dByRep.get(r.id) ?? null,
     })),
   });
 }

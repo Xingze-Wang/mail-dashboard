@@ -3,6 +3,7 @@ import { supabase } from "@/lib/db";
 import { requireAdmin } from "@/lib/auth-helpers";
 import { REACHABLE_EMAIL_STATUSES } from "@/lib/status";
 import { beijingDaysAgoStartUtc } from "@/lib/override-quota";
+import { getMpConversionMatrix } from "@/lib/canonical-counts";
 
 export const dynamic = "force-dynamic";
 
@@ -80,6 +81,33 @@ export async function GET(req: NextRequest) {
     // table missing — leave empty
   }
 
+  // MP conversion slice per rep (30d window — matches the activity30d
+  // block above so the admin sees a coherent picture). Soft-fail so a
+  // broken / slow MP join can't take down /admin/reps; downstream UI
+  // tolerates null mp_30d.
+  const mp30dByRep = new Map<
+    number,
+    { registered: number; submitted: number; wechat: number; total_emailed: number; matched: number }
+  >();
+  try {
+    const matrix = await getMpConversionMatrix({ since });
+    for (const r of matrix.perRep ?? []) {
+      mp30dByRep.set(r.rep_id, {
+        // Monotone "registered" includes submitted, matching home page.
+        registered: r.registered + r.submittedApplication,
+        submitted: r.submittedApplication,
+        wechat: r.wechatAdded,
+        total_emailed: r.totalEmailed,
+        matched: r.matched,
+      });
+    }
+  } catch (err) {
+    console.warn(
+      "[admin/reps] mp matrix failed",
+      err instanceof Error ? err.message : err,
+    );
+  }
+
   const out = repsArr.map((r) => {
     const senderEm = (r.sender_email ?? "").toLowerCase().trim();
     const loginEm = (r.login_email ?? r.username ?? "").toLowerCase().trim();
@@ -100,6 +128,7 @@ export async function GET(req: NextRequest) {
         flagsSoft: corrFromSender.soft + corrFromLogin.soft,
         flagsHard: corrFromSender.hard + corrFromLogin.hard,
       },
+      mp_30d: mp30dByRep.get(r.id) ?? null,
     };
   });
 

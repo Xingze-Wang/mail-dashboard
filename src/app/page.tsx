@@ -20,6 +20,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
+import { MpSignalCounts } from "@/components/MpSignalPills";
 
 interface Metrics {
   overview: {
@@ -67,6 +68,13 @@ interface MyMetrics {
   replied: number;
   wechat: number;
   leadRate: string;
+  // MP conversion signals (90d window, actor=this rep). Server-derived in
+  // /api/metrics/me via getMpConversionMatrix. Optional because old
+  // clients hitting cached responses might not have them yet.
+  mp_registered?: number;
+  mp_submitted?: number;
+  mp_matched?: number;
+  mp_total_emailed?: number;
 }
 
 export default function OverviewPage() {
@@ -242,19 +250,36 @@ export default function OverviewPage() {
           </a>
         </div>
 
-        {/* Pipeline counters (from /api/metrics/me) */}
+        {/* Pipeline counters (from /api/metrics/me). The 4th tile used to
+            be a single WeChat number; now it surfaces the full MP
+            conversion trio (注册 / 开表 / 微信) via MpSignalCounts. The
+            shape matches the rest of the app's signal display so reps
+            see the same conversion model everywhere. */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 16 }}>
-          {[
-            { label: t("stat.assignedToMe", locale), value: m?.assigned ?? 0, color: "var(--text)" },
-            { label: t("stat.readyToSend",  locale), value: m?.ready ?? 0,    color: "var(--blue)" },
-            { label: t("stat.sent",         locale), value: m?.sent ?? 0,     color: "var(--green)" },
-            { label: t("stat.wechatAdded",  locale), value: m?.wechat ?? 0,   color: "var(--green)" },
-          ].map((c) => (
-            <div key={c.label} className="stat-card">
-              <div className="stat-label">{c.label}</div>
-              <div className="stat-value" style={{ color: c.color }}>{c.value}</div>
+          <div className="stat-card">
+            <div className="stat-label">{t("stat.assignedToMe", locale)}</div>
+            <div className="stat-value" style={{ color: "var(--text)" }}>{m?.assigned ?? 0}</div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-label">{t("stat.readyToSend", locale)}</div>
+            <div className="stat-value" style={{ color: "var(--blue)" }}>{m?.ready ?? 0}</div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-label">{t("stat.sent", locale)}</div>
+            <div className="stat-value" style={{ color: "var(--green)" }}>{m?.sent ?? 0}</div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-label">{t("stat.wechatAdded", locale)}</div>
+            <div style={{ marginTop: 4 }}>
+              <MpSignalCounts
+                registered={m?.mp_registered ?? 0}
+                submittedApplication={m?.mp_submitted ?? 0}
+                addedWechat={m?.wechat ?? 0}
+                totalEmailed={m?.mp_total_emailed}
+                size="md"
+              />
             </div>
-          ))}
+          </div>
         </div>
 
         {/* Funnel rates (from /api/metrics, scoped by server) */}

@@ -3,7 +3,11 @@ import { supabase } from "@/lib/db";
 import { requireSession } from "@/lib/auth-helpers";
 import { getRep } from "@/lib/assignment";
 import { getDbFunnel } from "@/lib/db-funnel";
-import { countLeadsByStatus, countWechatConversions } from "@/lib/canonical-counts";
+import {
+  countLeadsByStatus,
+  countWechatConversions,
+  getMpConversionMatrix,
+} from "@/lib/canonical-counts";
 
 // Live data every request — never cache.
 export const dynamic = "force-dynamic";
@@ -87,6 +91,53 @@ export async function GET(req: NextRequest) {
   const pipelineTotal = pipelineStatus.total;
   const wechatTotal = wechatResult.count;
 
+  // MP funnel + freshness — admin sees org-wide matrix; rep sees own
+  // slice (via actorRepId). Soft-fail: a slow / broken MP join must
+  // never take down /api/metrics, this powers /admin landing.
+  let mpBlock: {
+    totalEmailed: number;
+    matched: number;
+    registered: number;
+    submittedApplication: number;
+    wechatAdded: number;
+    bothWechatAndSubmitted: number;
+  } | null = null;
+  try {
+    const matrix = await getMpConversionMatrix(
+      isPrivileged ? {} : { actorRepId: session.repId },
+    );
+    mpBlock = {
+      totalEmailed: matrix.totalEmailed,
+      matched: matrix.matched,
+      // Same monotone convention as /api/metrics/me — "registered" is
+      // anyone past 未注册, including submitted (submission implies
+      // registration).
+      registered: matrix.registered + matrix.submittedApplication,
+      submittedApplication: matrix.submittedApplication,
+      wechatAdded: matrix.wechatAdded,
+      bothWechatAndSubmitted: matrix.bothWechatAndSubmitted,
+    };
+  } catch (err) {
+    console.warn("[metrics] mp matrix failed", err instanceof Error ? err.message : err);
+  }
+
+  // Freshness — MAX(last_seen_at) on miracleplus_contacts tells us how
+  // stale the mirror is. Integrity tile separately raises alarms; this
+  // exposes the timestamp so admin tooling can render "synced 14h ago"
+  // alongside the funnel.
+  let mpLastSyncedAt: string | null = null;
+  try {
+    const { data: lastRow } = await supabase
+      .from("miracleplus_contacts")
+      .select("last_seen_at")
+      .order("last_seen_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    mpLastSyncedAt = (lastRow?.last_seen_at as string | null) ?? null;
+  } catch {
+    // Table missing in some envs — leave null.
+  }
+
   return NextResponse.json({
     overview: {
       totalSent: funnel.totalSent,
@@ -113,11 +164,14 @@ export async function GET(req: NextRequest) {
         createdAt: r.created_at,
       })),
     },
+    mp: mpBlock,
     dailyStats: funnel.daily,
     recentEvents,
     _source: {
       funnel: "db",
       wechat: "db",
+      mp: mpBlock ? "miracleplus_contacts" : "unavailable",
+      mp_last_synced_at: mpLastSyncedAt,
       scannedEmails: funnel.scannedEmails,
       truncated: funnel.truncated,
     },
@@ -134,9 +188,10 @@ function emptyResponse() {
     },
     pipeline: { ready: 0, sent: 0, total: 0 },
     wechat: { total: 0, recent: [] },
+    mp: null,
     dailyStats: [],
     recentEvents: [],
-    _source: { funnel: "empty", wechat: "empty" },
+    _source: { funnel: "empty", wechat: "empty", mp: "empty", mp_last_synced_at: null },
   };
 }
 

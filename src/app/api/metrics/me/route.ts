@@ -3,7 +3,11 @@ import { supabase } from "@/lib/db";
 import { verifySession, AUTH_COOKIE } from "@/lib/auth";
 import { getResendFunnel } from "@/lib/resend-funnel";
 import { getRep } from "@/lib/assignment";
-import { countLeads, countLeadsByStatus } from "@/lib/canonical-counts";
+import {
+  countLeads,
+  countLeadsByStatus,
+  getMpConversionMatrix,
+} from "@/lib/canonical-counts";
 
 /**
  * GET /api/metrics/me
@@ -97,6 +101,29 @@ export async function GET(req: NextRequest) {
   // people and 30 added WeChat, that's 3%, not (wechat / pipeline_sent).
   const rateDenominator = resendSent > 0 ? resendSent : sentCount;
 
+  // MP conversion signals scoped to THIS rep (actor attribution — same
+  // model the trio uses on home page rep cards). 90-day window matches
+  // getMpConversionMatrix default. Soft-fail: never let a slow / broken
+  // MP join take the rep's overview down.
+  let mp_registered = 0;
+  let mp_submitted = 0;
+  let mp_matched = 0;
+  let mp_total_emailed = 0;
+  try {
+    const matrix = await getMpConversionMatrix({ actorRepId: repId });
+    // `registered` here is "registered-only" (past 未注册, pre-submit).
+    // For the home-page rep card we want to show "anyone known to MP"
+    // as the registered count, so we add submitted into it — submission
+    // implies registration. That way the trio reads monotonically:
+    // registered >= submitted (intuitive for sales).
+    mp_registered = matrix.registered + matrix.submittedApplication;
+    mp_submitted = matrix.submittedApplication;
+    mp_matched = matrix.matched;
+    mp_total_emailed = matrix.totalEmailed;
+  } catch (err) {
+    console.warn("[metrics/me] mp matrix failed", err instanceof Error ? err.message : err);
+  }
+
   return NextResponse.json({
     repId,
     repName: session.repName,
@@ -107,5 +134,12 @@ export async function GET(req: NextRequest) {
     replied: replied ?? 0,
     wechat,
     leadRate: rateDenominator > 0 ? ((wechat / rateDenominator) * 100).toFixed(1) : "0.0",
+    // MP funnel signals (actor=this rep, 90d window). The home page rep
+    // card grid renders these as the MpSignalCounts trio in place of
+    // the old standalone wechat number.
+    mp_registered,
+    mp_submitted,
+    mp_matched,
+    mp_total_emailed,
   });
 }

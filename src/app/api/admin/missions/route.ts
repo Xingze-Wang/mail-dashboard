@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { requireSession } from "@/lib/auth-helpers";
+import { getMpConversionMatrix } from "@/lib/canonical-counts";
 
 export const dynamic = "force-dynamic";
 
@@ -57,11 +58,41 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // Per-rep MP conversion slice (last 30d). Mirrors the home-page rep
+  // card trio model so any downstream consumer (Leon, admin dashboards
+  // pulling /api/admin/missions) can show "rep N: registered/submitted/
+  // wechat" without re-querying. Soft-fail to keep the page resilient
+  // when MP sync is degraded — admin can still approve / reject focuses.
+  const mp30dByRep = new Map<
+    number,
+    { registered: number; submitted: number; wechat: number; total_emailed: number; matched: number }
+  >();
+  try {
+    const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const matrix = await getMpConversionMatrix({ since });
+    for (const r of matrix.perRep ?? []) {
+      mp30dByRep.set(r.rep_id, {
+        // Monotone "registered" includes submitted, matching the home page.
+        registered: r.registered + r.submittedApplication,
+        submitted: r.submittedApplication,
+        wechat: r.wechatAdded,
+        total_emailed: r.totalEmailed,
+        matched: r.matched,
+      });
+    }
+  } catch (err) {
+    console.warn(
+      "[admin/missions] mp matrix failed",
+      err instanceof Error ? err.message : err,
+    );
+  }
+
   return NextResponse.json({
     focuses: focuses ?? [],
     missions: (missions ?? []).map((m) => ({
       ...m,
       rep_name: repName.get(m.rep_id as number) ?? `rep#${m.rep_id}`,
+      mp_30d: mp30dByRep.get(m.rep_id as number) ?? null,
     })),
   });
 }
