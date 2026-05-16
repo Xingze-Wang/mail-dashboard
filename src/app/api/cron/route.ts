@@ -277,6 +277,10 @@ export async function GET(req: NextRequest) {
     ["congress_jitr_tick",      () => callInternalCron("/api/congress/jitr-tick", secret)],
     ["congress_weekly",         () => callInternalCron("/api/congress/weekly", secret)],
     ["congress_postmortem",     () => callInternalCron("/api/congress/postmortem-detect", secret)],
+    // MP CRM conversion sync — pulls contacts MP knows about that
+    // match emails we sent recently. Populates miracleplus_contacts;
+    // read by getMpConversionMatrix + the get_mp_conversions Leon tool.
+    ["sync_mp_contacts",        () => callInternalCron("/api/cron/sync-miracleplus-contacts", secret)],
   ];
   const fanOut: Record<string, unknown> = {};
   for (const [name, fn] of fanOutSteps) {

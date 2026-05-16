@@ -16,7 +16,7 @@
 
 import { supabase } from "@/lib/db";
 import { DAILY_OVERRIDE_CAP, countOverridesTodayByRep } from "@/lib/override-quota";
-import { countLeadsByStatus, fetchAllLeads } from "@/lib/canonical-counts";
+import { countLeadsByStatus, fetchAllLeads, getMpConversionMatrix } from "@/lib/canonical-counts";
 import { computeGrowth } from "@/lib/rep-growth";
 import { loadActiveLearnings } from "@/lib/helper-learnings";
 import { getAdminAlerts } from "@/lib/admin-alerts";
@@ -758,6 +758,52 @@ export async function runReadTool(
             per_rep: perRepArr,
           },
         };
+      }
+      case "get_mp_conversions": {
+        // MP CRM ground-truth conversion matrix. Scopes:
+        //   - admin can pass `rep_id` (or omit for org-wide).
+        //   - non-admin always scoped to themselves (their actor_rep_id).
+        // The since_days arg defaults to 90 because conversion is slow.
+        const sinceDays = Number(args.since_days);
+        const sinceWindow = Number.isFinite(sinceDays) && sinceDays > 0
+          ? Math.min(365, Math.max(1, Math.floor(sinceDays)))
+          : 90;
+        const since = new Date(Date.now() - sinceWindow * 86_400_000).toISOString();
+
+        let actorRepId: number | undefined;
+        if (session.role === "admin") {
+          const explicit = Number(args.rep_id);
+          actorRepId = Number.isFinite(explicit) ? explicit : undefined;
+        } else {
+          // Non-admin: force-scope to caller. Ignore any rep_id arg.
+          actorRepId = session.repId;
+        }
+
+        try {
+          const matrix = await getMpConversionMatrix({ actorRepId, since });
+          return {
+            tool: call.tool,
+            result: {
+              ok: true,
+              window_days: sinceWindow,
+              scope: actorRepId === undefined ? "org" : `rep:${actorRepId}`,
+              totalEmailed: matrix.totalEmailed,
+              matched: matrix.matched,
+              unregistered: matrix.unregistered,
+              registered: matrix.registered,
+              submittedApplication: matrix.submittedApplication,
+              wechatAdded: matrix.wechatAdded,
+              bothWechatAndSubmitted: matrix.bothWechatAndSubmitted,
+              perRep: matrix.perRep,
+              predicate: matrix.predicate,
+            },
+          };
+        } catch (e) {
+          return {
+            tool: call.tool,
+            result: { ok: false, error: e instanceof Error ? e.message : String(e) },
+          };
+        }
       }
       case "get_helper_conversation": {
         // Admin-only: pull BOTH user + assistant turns for a rep's

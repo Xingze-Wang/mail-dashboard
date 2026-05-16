@@ -393,3 +393,308 @@ export async function countReadyQueue(
     predicate: filter,
   };
 }
+
+// ── MP conversion matrix (ground-truth from MiraclePlus CRM) ───────────
+//
+// Cross-system join between three independent tables to produce the
+// 2x2 outcomes matrix that's the canonical "did our outreach work?"
+// question:
+//
+//                  WeChat added (yes)   WeChat added (no)
+//   Submitted MP   bothWechatAndSubmitted   submittedApplication − both
+//   Did not        wechatAdded − both        unconverted
+//
+// Plus two single-axis totals: `registered` (anyone MP knows about,
+// even no application) and `totalEmailed` (denominator).
+//
+// Three tables joined client-side because:
+//   1. emails.to ↔ miracleplus_contacts.email_canonical: cross-system,
+//      not a real FK. JS-side set intersection is simpler than SQL.
+//   2. emails.to ↔ brief_lookups.query: also a cross-table denormalized
+//      join (brief_lookups stores the queried email in `query`).
+//   3. We deliberately count DISTINCT EMAILS not distinct emails-rows,
+//      because a rep might have emailed the same person twice and we
+//      shouldn't double-count the conversion.
+
+export interface MpConversionMatrix {
+  /** Distinct emails our reps actually reached in the window. Denominator. */
+  totalEmailed: number;
+  /**
+   * Of `totalEmailed`, how many MP has ANY contact record for (including
+   * "未注册"). Strict superset of `unregistered + registered + submittedApplication`.
+   */
+  matched: number;
+  /**
+   * Of `matched`, MP rows whose `application_progress = "未注册"` (literally
+   * "not registered" — MP has them as a contact but they never created
+   * an account). Mutually exclusive with `registered` and `submittedApplication`.
+   */
+  unregistered: number;
+  /**
+   * Of `matched`, MP rows that have progressed past "未注册" but have NOT
+   * submitted an application yet. I.e. `application_progress != "未注册"`
+   * AND no "Submitted" / `submitted_at` / `applications_number > 0` signal.
+   */
+  registered: number;
+  /**
+   * Of `matched`, MP rows that have submitted at least one application.
+   * Signal: `application_progress` contains "Submitted" (case-insensitive)
+   * OR `applications_number > 0` OR `submitted_at IS NOT NULL`. These are
+   * the conversions we actually care about — someone we emailed went into
+   * the funnel.
+   */
+  submittedApplication: number;
+  /** Of `totalEmailed`, how many we marked added_wechat=true in brief_lookups. */
+  wechatAdded: number;
+  /** Intersection: wechatAdded AND submittedApplication. */
+  bothWechatAndSubmitted: number;
+  /** Per-rep breakdown when no actorRepId filter is applied. */
+  perRep?: Array<{
+    rep_id: number;
+    totalEmailed: number;
+    matched: number;
+    unregistered: number;
+    registered: number;
+    submittedApplication: number;
+    wechatAdded: number;
+    bothWechatAndSubmitted: number;
+  }>;
+  predicate: { actorRepId?: number; since?: string };
+}
+
+/**
+ * Bucket an MP contact row by its application state. Three mutually
+ * exclusive states: "unregistered" (literally "未注册"), "submitted" (any
+ * application-of-record signal), or "registered" (in-between).
+ *
+ * Why three buckets, not just "submitted vs not": we want to know
+ * "MP has them but they're stuck pre-funnel" (unregistered) vs "they
+ * progressed but didn't submit yet" (registered). These tell two
+ * different stories about our outreach quality.
+ */
+function bucketMpProgress(row: {
+  application_progress: string | null;
+  applications_number: number | null;
+  submitted_at: string | null;
+}): "unregistered" | "registered" | "submitted" {
+  const progress = (row.application_progress ?? "").trim();
+  const hasSubmittedSignal =
+    /submitted/i.test(progress) ||
+    (typeof row.applications_number === "number" && row.applications_number > 0) ||
+    !!row.submitted_at;
+  if (hasSubmittedSignal) return "submitted";
+  if (progress === "未注册" || progress === "" /* NULL */) return "unregistered";
+  return "registered";
+}
+
+export async function getMpConversionMatrix(
+  filter: { actorRepId?: number; since?: string } = {},
+  opts?: Opts,
+): Promise<MpConversionMatrix> {
+  return memoize("getMpConversionMatrix", filter, opts, async () => {
+    // Default to a 90-day window if nothing specified — conversion is
+    // a slow signal, the last week alone is misleadingly empty.
+    const since =
+      filter.since ?? new Date(Date.now() - 90 * 24 * 3600 * 1000).toISOString();
+
+    // 1. Pull every (rep, recipient) pair we sent in the window.
+    const allSends: Array<{ to: string | null; actor_rep_id: number | null }> = [];
+    const PAGE = 1000;
+    {
+      let cursor = 0;
+      const MAX = 100_000;
+      while (cursor < MAX) {
+        let q = supabase
+          .from("emails")
+          .select("to, actor_rep_id")
+          .in("status", REACHABLE_EMAIL_STATUSES as readonly string[])
+          .gte("created_at", since);
+        if (filter.actorRepId !== undefined) q = q.eq("actor_rep_id", filter.actorRepId);
+        const { data, error } = await q.range(cursor, cursor + PAGE - 1);
+        if (error) throw new Error(`getMpConversionMatrix(emails) failed: ${error.message}`);
+        if (!data || data.length === 0) break;
+        allSends.push(...(data as { to: string | null; actor_rep_id: number | null }[]));
+        if (data.length < PAGE) break;
+        cursor += PAGE;
+      }
+    }
+
+    // Canonicalize once. Distinct emails per rep (and overall).
+    const emailToReps = new Map<string, Set<number>>();
+    const allEmails = new Set<string>();
+    for (const row of allSends) {
+      const e = (row.to ?? "").trim().toLowerCase();
+      if (!e || !e.includes("@")) continue;
+      allEmails.add(e);
+      if (row.actor_rep_id !== null) {
+        let s = emailToReps.get(e);
+        if (!s) {
+          s = new Set();
+          emailToReps.set(e, s);
+        }
+        s.add(row.actor_rep_id);
+      }
+    }
+    const totalEmailed = allEmails.size;
+
+    // 2. Pull miracleplus_contacts rows whose email_canonical matches.
+    // PostgREST .in() is fine here — we batch since there's no PG limit
+    // on IN list size we need to worry about at our scale.
+    //
+    // We bucket each MP row into exactly one of three states. The same
+    // email might map to multiple MP contact rows (in practice rare);
+    // we keep the strongest bucket per email (submitted > registered >
+    // unregistered) so a person who has both an unregistered shell and
+    // a submitted application counts as submitted.
+    const STRENGTH: Record<"unregistered" | "registered" | "submitted", number> = {
+      unregistered: 0,
+      registered: 1,
+      submitted: 2,
+    };
+    const emailBucket = new Map<string, "unregistered" | "registered" | "submitted">();
+    if (allEmails.size > 0) {
+      const emailArr = Array.from(allEmails);
+      const BATCH = 500;
+      for (let i = 0; i < emailArr.length; i += BATCH) {
+        const slice = emailArr.slice(i, i + BATCH);
+        const { data, error } = await supabase
+          .from("miracleplus_contacts")
+          .select("email_canonical, application_progress, applications_number, submitted_at")
+          .in("email_canonical", slice);
+        if (error) throw new Error(`getMpConversionMatrix(mp_contacts) failed: ${error.message}`);
+        for (const r of (data ?? []) as {
+          email_canonical: string | null;
+          application_progress: string | null;
+          applications_number: number | null;
+          submitted_at: string | null;
+        }[]) {
+          if (!r.email_canonical) continue;
+          const bucket = bucketMpProgress(r);
+          const prev = emailBucket.get(r.email_canonical);
+          if (!prev || STRENGTH[bucket] > STRENGTH[prev]) {
+            emailBucket.set(r.email_canonical, bucket);
+          }
+        }
+      }
+    }
+    const matchedEmails = new Set(emailBucket.keys());
+    const submittedEmails = new Set(
+      [...emailBucket.entries()].filter(([, b]) => b === "submitted").map(([e]) => e),
+    );
+    const registeredOnlyEmails = new Set(
+      [...emailBucket.entries()].filter(([, b]) => b === "registered").map(([e]) => e),
+    );
+    const unregisteredEmails = new Set(
+      [...emailBucket.entries()].filter(([, b]) => b === "unregistered").map(([e]) => e),
+    );
+
+    // 3. Pull brief_lookups rows where added_wechat=true and the queried
+    // email is one of ours. brief_lookups stores the recipient email in
+    // `query` (a free-form lookup field that historically also holds
+    // arxiv ids; we filter to email-shaped values via `like '%@%'`).
+    const wechatEmails = new Set<string>();
+    if (allEmails.size > 0) {
+      const emailArr = Array.from(allEmails);
+      const BATCH = 500;
+      for (let i = 0; i < emailArr.length; i += BATCH) {
+        const slice = emailArr.slice(i, i + BATCH);
+        let q = supabase
+          .from("brief_lookups")
+          .select("query, marked_by_rep_id")
+          .eq("added_wechat", true)
+          .in("query", slice);
+        if (filter.actorRepId !== undefined) q = q.eq("marked_by_rep_id", filter.actorRepId);
+        const { data, error } = await q;
+        if (error) throw new Error(`getMpConversionMatrix(brief_lookups) failed: ${error.message}`);
+        for (const r of (data ?? []) as { query: string | null; marked_by_rep_id: number | null }[]) {
+          const e = (r.query ?? "").trim().toLowerCase();
+          if (!e || !e.includes("@")) continue;
+          wechatEmails.add(e);
+        }
+      }
+    }
+
+    // Overall counts (intersect with emails we sent in this scope).
+    const inScope = (e: string) => allEmails.has(e);
+    const matched = [...matchedEmails].filter(inScope).length;
+    const unregistered = [...unregisteredEmails].filter(inScope).length;
+    const registered = [...registeredOnlyEmails].filter(inScope).length;
+    const submittedApplication = [...submittedEmails].filter(inScope).length;
+    const wechatAdded = [...wechatEmails].filter(inScope).length;
+    let bothWechatAndSubmitted = 0;
+    for (const e of submittedEmails) {
+      if (allEmails.has(e) && wechatEmails.has(e)) bothWechatAndSubmitted++;
+    }
+
+    // Per-rep breakdown — only when caller didn't already filter to a
+    // single rep (because then the overall numbers ARE the per-rep).
+    let perRep: MpConversionMatrix["perRep"];
+    if (filter.actorRepId === undefined) {
+      const byRep = new Map<
+        number,
+        {
+          totalEmailed: number;
+          matched: number;
+          unregistered: number;
+          registered: number;
+          submittedApplication: number;
+          wechatAdded: number;
+          bothWechatAndSubmitted: number;
+        }
+      >();
+      const ensure = (repId: number) => {
+        let r = byRep.get(repId);
+        if (!r) {
+          r = {
+            totalEmailed: 0,
+            matched: 0,
+            unregistered: 0,
+            registered: 0,
+            submittedApplication: 0,
+            wechatAdded: 0,
+            bothWechatAndSubmitted: 0,
+          };
+          byRep.set(repId, r);
+        }
+        return r;
+      };
+      // Walk emails by rep — an email shared between reps gets counted
+      // for both (asymmetric attribution: each rep "tried"). This is
+      // intentional per CLAUDE.md attribution rules.
+      for (const [email, reps] of emailToReps.entries()) {
+        for (const repId of reps) {
+          const r = ensure(repId);
+          r.totalEmailed++;
+          if (matchedEmails.has(email)) r.matched++;
+          if (unregisteredEmails.has(email)) r.unregistered++;
+          if (registeredOnlyEmails.has(email)) r.registered++;
+          if (submittedEmails.has(email)) r.submittedApplication++;
+          if (wechatEmails.has(email)) r.wechatAdded++;
+          if (submittedEmails.has(email) && wechatEmails.has(email)) {
+            r.bothWechatAndSubmitted++;
+          }
+        }
+      }
+      perRep = Array.from(byRep.entries())
+        .map(([rep_id, v]) => ({ rep_id, ...v }))
+        .sort(
+          (a, b) =>
+            b.submittedApplication - a.submittedApplication ||
+            b.matched - a.matched ||
+            b.totalEmailed - a.totalEmailed,
+        );
+    }
+
+    return {
+      totalEmailed,
+      matched,
+      unregistered,
+      registered,
+      submittedApplication,
+      wechatAdded,
+      bothWechatAndSubmitted,
+      perRep,
+      predicate: { actorRepId: filter.actorRepId, since },
+    };
+  });
+}
