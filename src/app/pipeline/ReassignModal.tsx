@@ -208,10 +208,21 @@ function BulkMovePanel({
     }
   };
 
+  // Why the Apply button might be disabled — surfaced as a tooltip
+  // and inline hint so "I clicked and nothing happened" never
+  // happens again. Order matches the disabled= predicate so the
+  // first true reason wins.
+  const applyHint =
+    toRepId == null ? "Pick a target rep first."
+      : !preview ? "Click Preview before Apply."
+      : preview.wouldReassign === 0 ? "No leads match this filter — nothing to apply."
+      : "";
+  const previewHint = toRepId == null ? "Pick a target rep first." : "";
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <p style={{ fontSize: 13, color: "var(--text-secondary, #4b5563)", margin: 0 }}>
-        Move all leads matching a filter to one rep. Preview first.
+        Move all leads matching a filter to one rep. <strong>Pick a rep, hit Preview, then Apply.</strong>
       </p>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
         <Field label="Target rep">
@@ -257,8 +268,15 @@ function BulkMovePanel({
       {preview && (
         <div style={{ padding: 12, border: "1px solid var(--border, #e5e7eb)", borderRadius: 8, background: "var(--bg-subtle, #fafafa)" }}>
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
-            Will re-assign {preview.wouldReassign} lead{preview.wouldReassign === 1 ? "" : "s"}.
+            {preview.wouldReassign === 0
+              ? "No leads match this filter."
+              : `Will re-assign ${preview.wouldReassign} lead${preview.wouldReassign === 1 ? "" : "s"}.`}
           </div>
+          {preview.wouldReassign === 0 && (
+            <div style={{ fontSize: 12, color: "var(--text-secondary, #4b5563)" }}>
+              Loosen the filter (e.g. set Status to <em>any</em>) or pick a different target rep.
+            </div>
+          )}
           {preview.sample.length > 0 && (
             <div style={{ fontSize: 12, color: "var(--text-secondary, #4b5563)" }}>
               Sample:
@@ -272,13 +290,29 @@ function BulkMovePanel({
         </div>
       )}
 
+      {(applyHint || previewHint) && !busy && (
+        <div style={{ fontSize: 12, color: "var(--text-tertiary, #9ca3af)", textAlign: "right" }}>
+          {applyHint || previewHint}
+        </div>
+      )}
+
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
         <button onClick={onClose} className="dx-secondary" disabled={busy}>Cancel</button>
-        <button onClick={doPreview} disabled={busy || toRepId == null} className="dx-secondary">
+        <button
+          onClick={doPreview}
+          disabled={busy || toRepId == null}
+          title={previewHint || "Preview which leads will be re-assigned"}
+          className="dx-secondary"
+        >
           {busy && !preview ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
           Preview
         </button>
-        <button onClick={doApply} disabled={busy || toRepId == null || !preview || preview.wouldReassign === 0} className="dx-primary">
+        <button
+          onClick={doApply}
+          disabled={busy || toRepId == null || !preview || preview.wouldReassign === 0}
+          title={applyHint || "Apply this re-assignment"}
+          className="dx-primary"
+        >
           {busy && preview ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
           Apply
         </button>
@@ -401,10 +435,19 @@ function RulesPanel({
     }
   };
 
+  // Why the Apply-rules button is disabled — same idea as bulk move:
+  // surface the reason so disabled buttons never feel like dead UI.
+  const rulesApplyHint = !preview
+    ? "Click Preview before Apply rules."
+    : preview.perRule.reduce((s, r) => s + r.matchCount, 0) === 0
+      ? "No leads match any rule — nothing to apply."
+      : "";
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <p style={{ fontSize: 13, color: "var(--text-secondary, #4b5563)", margin: 0 }}>
-        Ordered rules. First match wins per lead. Conditions are AND-ed. Preview always before apply.
+        Ordered rules. First match wins per lead. Conditions are AND-ed.
+        <strong> Build rules, hit Preview, then Apply rules.</strong>
       </p>
       {drafts.map((r, i) => (
         <RuleRow key={i} idx={i} draft={r} reps={reps} onChange={(p) => update(i, p)} onRemove={drafts.length > 1 ? () => remove(i) : null} />
@@ -431,13 +474,29 @@ function RulesPanel({
         </div>
       )}
 
+      {rulesApplyHint && !busy && (
+        <div style={{ fontSize: 12, color: "var(--text-tertiary, #9ca3af)", textAlign: "right" }}>
+          {rulesApplyHint}
+        </div>
+      )}
+
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
         <button onClick={onClose} className="dx-secondary" disabled={busy}>Cancel</button>
-        <button onClick={doPreview} disabled={busy} className="dx-secondary">
+        <button
+          onClick={doPreview}
+          disabled={busy}
+          title="Preview how many leads each rule will match"
+          className="dx-secondary"
+        >
           {busy && !preview ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
           Preview
         </button>
-        <button onClick={doApply} disabled={busy || !preview} className="dx-primary">
+        <button
+          onClick={doApply}
+          disabled={busy || !preview || preview.perRule.reduce((s, r) => s + r.matchCount, 0) === 0}
+          title={rulesApplyHint || "Apply all rules"}
+          className="dx-primary"
+        >
           {busy && preview ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
           Apply rules
         </button>
