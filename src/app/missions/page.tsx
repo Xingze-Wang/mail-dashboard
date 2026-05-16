@@ -91,6 +91,8 @@ interface MissionsResponse {
   team_focus: TeamFocus | null;
   my_today: MyMission[];
   team_today: TeamMission[];
+  role?: string;
+  is_admin?: boolean;
 }
 
 const KIND_META: Record<string, { label: string; Icon: typeof Send }> = {
@@ -146,7 +148,12 @@ export default function MissionsPage() {
     );
   }
 
-  const isAdminView = !!data.team_briefs && data.team_briefs.length > 0;
+  // Admin sees the team-overview cards regardless of whether
+  // daily_rep_brief has rows for today — the cron may not have run yet,
+  // and TeamOverviewSection fetches its own data. Falling back to
+  // team_briefs.length > 0 hid the entire admin section on days when
+  // briefs hadn't materialized. Trust the server's role flag instead.
+  const isAdminView = !!data.is_admin || (!!data.team_briefs && data.team_briefs.length > 0);
 
   const allDone = data.my_today.length > 0 && data.my_today.every((m) => (m.progress_count ?? 0) >= m.target);
   const totalProgress = data.my_today.reduce((s, m) => s + (m.progress_count ?? 0), 0);
@@ -202,8 +209,10 @@ export default function MissionsPage() {
       </div>
 
       {/* Admin view: management-game team grid. Rich cards w/ health
-          badges. Click any card to drill in. */}
-      {data.team_briefs && data.team_briefs.length > 0 && <TeamOverviewSection />}
+          badges. Click any card to drill in. Renders whenever the
+          session role is admin — TeamOverviewSection fetches its own
+          data and tolerates an empty daily_rep_brief table. */}
+      {isAdminView && <TeamOverviewSection />}
 
       {/* Today's narrative brief — LLM-written nightly, surfaces what
           matters today + 2-3 tactical bullets. Hidden gracefully if
@@ -491,7 +500,7 @@ export default function MissionsPage() {
       {/* Team visibility — peer view of what teammates are doing.
           Hidden for admins (they get the richer Team Overview grid
           at the top of the page, with drill-in). */}
-      {data.team_today.length > 0 && (!data.team_briefs || data.team_briefs.length === 0) && (
+      {data.team_today.length > 0 && !isAdminView && (
         <div>
           <h3 style={{ fontSize: 13, fontWeight: 600, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12 }}>
             Team today
@@ -601,7 +610,25 @@ function TeamOverviewSection() {
       </div>
     );
   }
-  if (reps.length === 0) return null;
+  if (reps.length === 0) {
+    // Was: return null. That hid the entire admin view when
+    // /api/admin/team-overview returned an empty list, which happens
+    // when the daily-rep-brief cron hasn't run yet OR every rep has
+    // no missions today. Now we render an honest empty-state so the
+    // admin sees "the system is alive, just nothing to show yet."
+    return (
+      <div style={{
+        marginBottom: 20, padding: 16, borderRadius: 10,
+        border: "1px dashed var(--border)",
+        color: "var(--text-secondary)", fontSize: 13, lineHeight: 1.55,
+      }}>
+        No team data yet for today. The team-overview rolls up
+        <code style={{ margin: "0 4px" }}>daily_rep_brief</code> + active missions,
+        which materialize after the morning cron (~09:00 Beijing). Check back later,
+        or trigger <code>/api/cron/daily-rep-brief</code> manually if needed.
+      </div>
+    );
+  }
 
   // Health-sorted: stuck → watch → healthy (so the attention items are
   // on top of the page, where admin's eye lands first).

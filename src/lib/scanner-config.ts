@@ -146,7 +146,12 @@ export const SUPPORTED_DIRECTIONS: Record<string, string[]> = {
 export const ALL_DIRECTIONS: string[] = Object.values(SUPPORTED_DIRECTIONS).flat();
 
 // ============ URL constants ============
+// Must stay in sync with resend07.py's APPLY_URL_CTA. The TS path is
+// the one that actually ships (template-assembler.ts resolves the
+// {{apply_url}} placeholder from this constant; Python's draft_html is
+// overwritten at allocator-time assembly). Updating Python alone has
+// no user-visible effect.
 export const APPLY_URL_CTA =
-  "https://apply.miracleplus.com/?p=gpu&c=ib&r=4Xq0R&utm_source=em";
+  "https://www.miracleplus.com/compute/?p=gpu&c=ib&r=4Xq0R&utm_source=em&utm_campaign=V1";
 export const WECHAT_ARTICLE_URL =
   "https://mp.weixin.qq.com/s/Ad7rKWbEc87Tq92DTfcI-g";

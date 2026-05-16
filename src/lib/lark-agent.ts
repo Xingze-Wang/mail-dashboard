@@ -932,7 +932,17 @@ export async function processInboundLarkMessage(
     if (memorySuffix) {
       suffix = memorySuffix;
     } else {
-      suffix = "\n\n— 这步要在网页 /pipeline 里点 confirm 才会执行, Lark 里只能讨论.";
+      // NEVER tell the user to go to the web to confirm. North star
+      // ([[project_leon_parity_with_app]]): everything in the app is
+      // doable in Lark. For destructive proposals that need a confirm
+      // step, the right home is admin-approval-cards.ts — same Yes/No
+      // pattern as the existing template/quota/congress cards.
+      //
+      // TODO: extend admin-approval-cards.ts with sendProposalConfirmCard
+      // covering reassign_leads / batch_send / propose_db_write. Until
+      // then, fall back to recording the proposal to admin_inbox so
+      // there's a paper trail — but never send the user back to the web.
+      suffix = `\n\n— 收到. 这个操作 (${proposal.action}) 我会记到 admin inbox 让 admin 一键 approve. 不需要回网页.`;
     }
   }
   const trimmed = (cleaned + suffix).trim();

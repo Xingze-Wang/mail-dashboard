@@ -166,6 +166,12 @@ export async function GET(req: NextRequest) {
     team_briefs: teamBriefs,
     quarterly: goals ?? [],
     team_focus: focusThisWeek,
+    // Surface role + admin flag so the page can render the admin
+    // team-overview cards even when team_briefs is empty (daily-rep-brief
+    // cron hasn't fired yet, or briefs failed for all reps). Before this,
+    // an empty team_briefs hid the entire admin section.
+    role: session.role,
+    is_admin: session.role === "admin",
     my_today: (myToday ?? []) as MissionRow[],
     team_today: (teamToday ?? []).map((m) => ({
       ...m,

@@ -379,6 +379,14 @@ export default function PipelinePage() {
   const [reps, setReps] = useState<Rep[]>([]);
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  // Sticky copy of the last successful analytics fetch — prevents the
+  // stat strip from flashing back to 0 ("no new leads") while a refetch
+  // is in flight. setAnalytics(null) is used as a refresh signal, which
+  // would otherwise make value=0 and trend="no new leads" simultaneously
+  // appear next to a still-valid "Total leads 3,162" card. The stat
+  // strip reads from `effectiveAnalytics` below, which is `analytics` or
+  // the last-known-good copy.
+  const [stickyAnalytics, setStickyAnalytics] = useState<Analytics | null>(null);
 
   const hasInitialised = useRef(false);
 
@@ -501,7 +509,16 @@ export default function PipelinePage() {
     // other time-windowed counters reflect the live DB, not yesterday.
     fetch("/api/pipeline/analytics", { signal: ctrl.signal, cache: "no-store" })
       .then((r) => r.json())
-      .then((a: Analytics) => setAnalytics(a))
+      .then((a: Analytics) => {
+        setAnalytics(a);
+        // Sticky update only when the new value has the fields we care
+        // about — guards against intermediate empty responses (which
+        // happen during deploys / cron-induced latency spikes) flipping
+        // the stat strip back to 0.
+        if (a && typeof a.channels?.leadsThisWeek === "number") {
+          setStickyAnalytics(a);
+        }
+      })
       .catch((err) => { if (err.name !== "AbortError") console.error(err); })
       .finally(() => setAnalyticsLoading(false));
     return () => ctrl.abort();
@@ -858,8 +875,13 @@ export default function PipelinePage() {
   /* ── Stat strip data ────────────────────────────────────────────── */
 
   const statDefs: StatDef[] = useMemo(() => {
-    const ch = analytics?.channels;
-    const totalLeads = (ch?.totalLeads ?? leads.length) + (discoveryBySource.hf + discoveryBySource.github + discoveryBySource.ph);
+    // Use stickyAnalytics so a transient refetch (analytics=null) doesn't
+    // flash the strip back to 0. stickyAnalytics is the last response
+    // that had real numbers; falls back to current analytics if no good
+    // response yet.
+    const eff = stickyAnalytics ?? analytics;
+    const ch = eff?.channels;
+    const totalLeads = (ch?.totalLeads ?? arxivTotalAll) + (discoveryBySource.hf + discoveryBySource.github + discoveryBySource.ph);
     const thisWeek = ch?.leadsThisWeek ?? 0;
     const sent = ch?.sentLeads ?? 0;
     // Two distinct counts: ready+sendable (passed cooldown) vs total ready
@@ -919,7 +941,7 @@ export default function PipelinePage() {
         spark: { color: "#6D28D9", points: sparkPoints },
       },
     ];
-  }, [analytics, leads, discoveryBySource, readyCounts]);
+  }, [analytics, stickyAnalytics, arxivTotalAll, leads, discoveryBySource, readyCounts]);
 
   /* ── Render ──────────────────────────────────────────────────────── */
 
