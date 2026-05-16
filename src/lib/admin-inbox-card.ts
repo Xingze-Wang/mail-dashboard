@@ -446,15 +446,29 @@ export async function processAdminInboxCardAction(rawEvent: unknown): Promise<{
         : "🏛 已批准 — 周一 Congress 会讨论";
     }
 
-    // Side effect: guided_task plan approved → flip to running
+    // Side effect: guided_task plan approved → flip to running AND
+    // kick the executor. Previously this only flipped the status —
+    // the toast said "🚀 多步任务开始执行" but nothing actually executed
+    // because no cron / worker scanned for status=running tasks and the
+    // agent only runs on inbound Lark DMs. Now we drive execution
+    // through the existing Lark agent (runAgent) via executeNextGuidedStep,
+    // mirroring commit 08ee324's pattern: connect the planned work to
+    // an existing executor, don't write new infrastructure.
     if (typeof evidence.guided_task_id === "string") {
-      const { approveGuidedTaskPlan } = await import("@/lib/guided-tasks");
+      const { approveGuidedTaskPlan, executeNextGuidedStep } = await import("@/lib/guided-tasks");
       const r = await approveGuidedTaskPlan({
         task_id: evidence.guided_task_id,
         approved_by_rep_id: rep.id,
       });
       if (r.ok) {
-        sideEffectToast = `🚀 多步任务开始执行 (${r.task?.steps.length ?? "?"} 步)`;
+        const stepCount = r.task?.steps.length ?? 0;
+        sideEffectToast = `🚀 多步任务开始执行 (${stepCount} 步)`;
+        // Fire-and-forget — the click ack must stay fast. Errors are
+        // logged inside executeNextGuidedStep and surface as
+        // task.status='failed' which the /admin/intent page will show.
+        void executeNextGuidedStep({ task_id: evidence.guided_task_id }).catch((err) => {
+          console.error("[admin-inbox-card] executeNextGuidedStep kick failed:", err);
+        });
       } else {
         sideEffectToast = `⚠️ 启动失败: ${r.error?.slice(0, 80) ?? ""}`;
       }

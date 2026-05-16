@@ -260,6 +260,15 @@ export async function ackGuidedStep(args: {
       awaiting_step_ack: null,
     })
     .eq("id", t.id);
+
+  // Kick the executor so the next step actually runs. Fire-and-forget —
+  // ack must return fast to the caller (web button click or Lark
+  // tool-result handler). Without this kick, status sits at 'running'
+  // forever after admin clicks Approve.
+  void executeNextGuidedStep({ task_id: t.id }).catch((err) => {
+    console.error("[guided-tasks] post-ack kick failed:", err);
+  });
+
   return { ok: true, new_status: "running" };
 }
 
@@ -310,6 +319,149 @@ export async function getGuidedTask(taskId: string): Promise<GuidedTaskRow | nul
     .eq("id", taskId)
     .maybeSingle();
   return (data ?? null) as GuidedTaskRow | null;
+}
+
+/**
+ * Drive execution of the current step by invoking the Lark agent with a
+ * synthetic "run step N of task T" prompt. The agent decides which tools
+ * to call (lookup / write / dm / etc.) and is instructed to finish by
+ * calling record_step_result, which advances the FSM.
+ *
+ * Mirrors commit 08ee324: instead of inventing new infrastructure, route
+ * planned work through the existing tool dispatcher (runAgent →
+ * runReadTool). This is the missing executor — without it,
+ * approveGuidedTaskPlan flips status to "running" but nothing ever
+ * actually runs the steps.
+ *
+ * Recursion: handled by the auto-continue rule inside recordStepResult.
+ * If next step is risk_level=auto, status stays "running" and we kick
+ * ourselves again (bounded by step count and a hard cap to prevent runaway).
+ */
+export async function executeNextGuidedStep(args: {
+  task_id: string;
+  max_chain?: number;  // how many auto-continue steps to run in one kick (default 6)
+}): Promise<{ ok: boolean; error?: string; ran_steps?: number; final_status?: string }> {
+  const maxChain = Math.max(1, Math.min(20, args.max_chain ?? 6));
+  let ranSteps = 0;
+  let lastStatus: string | undefined;
+
+  for (let chain = 0; chain < maxChain; chain++) {
+    const { data: row, error } = await supabase
+      .from("guided_tasks")
+      .select("*")
+      .eq("id", args.task_id)
+      .maybeSingle();
+    if (error) return { ok: false, error: error.message, ran_steps: ranSteps };
+    if (!row) return { ok: false, error: "task not found", ran_steps: ranSteps };
+    const task = row as GuidedTaskRow;
+    lastStatus = task.status;
+
+    // Only execute when status=running AND we're not paused on a review step.
+    if (task.status !== "running") break;
+    if (task.awaiting_step_ack !== null) break;
+    if (task.current_step >= task.steps.length) break;
+
+    const step = task.steps[task.current_step];
+    if (!step) break;
+
+    // Pull the proposer to act as the agent's "session". Falls back to
+    // admin (rep_id=5) so the agent has admin-grade tool access — multi-step
+    // tasks come from /admin/intent or Leon's start_guided_task, both
+    // admin-gated paths.
+    const repId = task.proposed_by_rep_id ?? 5;
+    const { data: rep, error: repErr } = await supabase
+      .from("sales_reps")
+      .select("id, name, sender_email, role")
+      .eq("id", repId)
+      .maybeSingle();
+    if (repErr || !rep) {
+      return {
+        ok: false,
+        error: `proposer rep ${repId} not found${repErr ? `: ${repErr.message}` : ""}`,
+        ran_steps: ranSteps,
+      };
+    }
+
+    // Build a synthetic agent prompt that frames the current step as a
+    // direct instruction from admin. The agent's existing system prompt
+    // already covers record_step_result usage — we just hand it the
+    // step and remind it to close the loop.
+    const stepPrompt = [
+      `你正在执行 guided_task ${task.id.slice(0, 8)}, 这是第 ${task.current_step + 1}/${task.steps.length} 步.`,
+      `**整体目标**: ${task.goal}`,
+      task.constraints ? `**约束**: ${task.constraints}` : null,
+      "",
+      `**当前 step**: ${step.intent}`,
+      step.verification ? `**预期看到**: ${step.verification}` : null,
+      "",
+      task.step_results.length > 0
+        ? "**前面已完成的 step 结果**:\n" + task.step_results
+            .map((r, i) => `  ${i + 1}. ${r.ok ? "✅" : "⚠️"} ${r.summary.slice(0, 200)}`)
+            .join("\n")
+        : null,
+      "",
+      "现在: (1) 用 ```lookup``` 调对应工具完成这一步, (2) 拿到结果后**必须**再用一个 ```lookup``` 调 record_step_result " +
+        `({task_id: "${task.id}", step_index: ${task.current_step}, summary: "<这步做了啥+看到啥>", ok: true|false, evidence?: ...}). ` +
+        "summary 要具体 (写出关键数字 / id / 名字), 别写 '完成了'. 不调 record_step_result 这步就不算完, 后面卡死.",
+    ].filter(Boolean).join("\n");
+
+    try {
+      // Dynamic import to break circular dependency (lark-agent imports
+      // helper-read-tools which imports guided-tasks indirectly via the
+      // record_step_result branch).
+      const { runAgent } = await import("@/lib/lark-agent");
+      await runAgent(
+        {
+          repId: rep.id,
+          role: (rep.role ?? "admin") as "admin" | "senior" | "sales",
+          repName: rep.name ?? undefined,
+          email: (rep as { sender_email?: string }).sender_email ?? undefined,
+          messageId: null,
+        },
+        stepPrompt,
+        [],
+      );
+      ranSteps += 1;
+    } catch (err) {
+      console.error("[guided-tasks] executeNextGuidedStep agent failure:", err);
+      // Mark the task as failed so the UI surfaces the breakage.
+      await supabase
+        .from("guided_tasks")
+        .update({
+          status: "failed",
+          abort_reason: `executor failure: ${String(err).slice(0, 200)}`,
+        })
+        .eq("id", args.task_id);
+      return { ok: false, error: String(err).slice(0, 200), ran_steps: ranSteps };
+    }
+
+    // After runAgent returns, recordStepResult (called by the agent)
+    // should have advanced current_step. Loop and check the new state.
+    // If the agent didn't call record_step_result, the next iteration
+    // sees the same current_step and the same status — we break to
+    // avoid an infinite loop.
+    const { data: after } = await supabase
+      .from("guided_tasks")
+      .select("current_step, status, awaiting_step_ack")
+      .eq("id", args.task_id)
+      .maybeSingle();
+    if (!after) break;
+    if (
+      (after.current_step as number) === task.current_step &&
+      after.status === "running" &&
+      after.awaiting_step_ack === null
+    ) {
+      // Agent finished without advancing the step — treat as a soft fail
+      // and stop. Don't mark the whole task failed; admin can inspect
+      // and resume or abort.
+      console.warn(
+        `[guided-tasks] step ${task.current_step} of task ${task.id} did not advance — agent likely skipped record_step_result`,
+      );
+      break;
+    }
+  }
+
+  return { ok: true, ran_steps: ranSteps, final_status: lastStatus };
 }
 
 /** Send admin a DM after a step completes, asking for ack. */
