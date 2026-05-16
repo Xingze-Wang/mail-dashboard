@@ -112,6 +112,21 @@ Vercel serverless caps at 60s default (300s on Pro). Long ops:
 - Sub-pool partitioning lives in `v_lead_pool` view: `strong` (any geo), `normal_cn`, `normal_overseas`, `normal_edu`. Derived from `lead_tier` + `author_email` domain. See `migrations/082-shared-pool-allocation.sql`.
 - Spec: `docs/superpowers/specs/2026-05-13-shared-pool-and-mission-ux-design.md`. Plan: `docs/superpowers/plans/2026-05-13-shared-pool-and-mission-ux.md`.
 
+## Counts and metrics — read CANONICAL_COUNTS.md FIRST
+
+**Every numeric count displayed to a user flows through
+`src/lib/canonical-counts.ts`.** Do NOT add a new
+`.from("pipeline_leads").select(..., { count: "exact" })` (or the same
+on `emails` / `inbound_emails` / `brief_lookups`) — that's how the
+"1,000 active leads vs 3,081 total" bug shipped. The lint
+`npm run lint:counts` blocks any new raw count outside the canonical
+module. Path-prefix exceptions and per-call `// canonical-counts:ignore`
+markers are documented in `docs/CANONICAL_COUNTS.md`.
+
+When a count looks wrong: see the 3-step debug playbook in
+`docs/CANONICAL_COUNTS.md` (`predicate` field on every primitive lets
+you reproduce any number by hand).
+
 ## Where to look first
 
 | Task | Read this first |
@@ -119,6 +134,7 @@ Vercel serverless caps at 60s default (300s on Pro). Long ops:
 | Any sales/CRM logic | `docs/sales-expected-behavior.md` |
 | Drafting / templates | `docs/template-experiments-design.md`, `src/lib/template-assembler.ts` |
 | Adding a helper bot tool | `src/lib/helper-tools.ts` (catalog + system prompt) |
+| **Adding / changing a number on screen** | `docs/CANONICAL_COUNTS.md` + `src/lib/canonical-counts.ts` |
 | Any DB query bug or new metric | `docs/DATA_INTEGRITY_PLAN.md` (lessons from past silent-failure incidents) |
 | Lark bot changes | `src/lib/lark-agent.ts` (shared brain), then transport |
 | Sales rules (tier classification, rep assignment) | `SALES_RULES.md` (overrides anything older) |

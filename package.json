@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "prebuild": "node scripts/lint-counts.mjs",
     "build": "next build",
     "start": "next start",
     "worker:start": "tsx scripts/lark-bot-worker.ts",
