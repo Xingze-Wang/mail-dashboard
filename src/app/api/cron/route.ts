@@ -246,6 +246,15 @@ export async function GET(req: NextRequest) {
     ["insights_realign",    () => callInternalCron("/api/cron/insights-realign", secret)],
     ["insights_prewarm",    () => callInternalCron("/api/cron/insights-prewarm", secret)],
     ["enrich_h_index",      () => callInternalCron("/api/cron/enrich-h-index?limit=50", secret)],
+    // Backfill enrichment for leads that missed the import-time path.
+    // 5 calls × BATCH=20 = up to 100 leads/day. Bounded by S2 rate
+    // limits anyway (1 req/sec unauthenticated). See
+    // src/app/api/cron/enrich-backfill/route.ts.
+    ["enrich_backfill_1",   () => callInternalCron("/api/cron/enrich-backfill?limit=20", secret)],
+    ["enrich_backfill_2",   () => callInternalCron("/api/cron/enrich-backfill?limit=20", secret)],
+    ["enrich_backfill_3",   () => callInternalCron("/api/cron/enrich-backfill?limit=20", secret)],
+    ["enrich_backfill_4",   () => callInternalCron("/api/cron/enrich-backfill?limit=20", secret)],
+    ["enrich_backfill_5",   () => callInternalCron("/api/cron/enrich-backfill?limit=20", secret)],
     ["model_bench_eval",    () => callInternalCron("/api/cron/model-bench-eval", secret)],
     ["wechat_followup",     () => callInternalCron("/api/cron/wechat-followup", secret)],
     ["template_promote",    () => callInternalCron("/api/cron/template-auto-promote", secret)],
@@ -255,6 +264,19 @@ export async function GET(req: NextRequest) {
     ["daily_rep_brief",     () => callInternalCron("/api/cron/daily-rep-brief", secret)],
     ["inbox_auto_archive",  () => callInternalCron("/api/cron/inbox-auto-archive", secret)],
     ["stuck_rep_alarm",     () => callInternalCron("/api/cron/stuck-rep-alarm", secret)],
+    // ── Silent-cron rescue (2026-05-16 audit). These were declared in
+    // vercel.json but Vercel Hobby's 2-cron cap meant they never fired.
+    // Each route self-gates on its own cadence (e.g. weekly-checkin is
+    // Monday-only, congress/weekly is week-based), so calling them
+    // daily here is safe — they no-op on off-days.
+    ["template_proposals",      () => callInternalCron("/api/cron/template-proposals", secret)],
+    ["rep_edit_clustering",     () => callInternalCron("/api/cron/rep-edit-clustering", secret)],
+    ["candidate_global_promote",() => callInternalCron("/api/cron/candidate-global-promote", secret)],
+    ["onboarding_quota_check",  () => callInternalCron("/api/cron/onboarding-quota-check", secret)],
+    ["weekly_checkin",          () => callInternalCron("/api/cron/weekly-checkin", secret)],
+    ["congress_jitr_tick",      () => callInternalCron("/api/congress/jitr-tick", secret)],
+    ["congress_weekly",         () => callInternalCron("/api/congress/weekly", secret)],
+    ["congress_postmortem",     () => callInternalCron("/api/congress/postmortem-detect", secret)],
   ];
   const fanOut: Record<string, unknown> = {};
   for (const [name, fn] of fanOutSteps) {
