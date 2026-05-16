@@ -735,6 +735,52 @@ export async function createRichLarkDoc(args: {
 }
 
 /**
+ * Grant a Lark user full_access permission on a doc. Called by
+ * create_rich_lark_doc immediately after doc creation so the calling
+ * user (rep_id from the session) can actually see the doc without
+ * having to manually Share → add self via the Lark UI.
+ *
+ * Uses tenant access token (same as create). type=docx covers the
+ * new-style cloud docs we create — if we ever start creating doc
+ * (old format), sheets, bitable, etc., pass a different type.
+ *
+ * Lark API:
+ *   POST /open-apis/drive/v1/permissions/{token}/members
+ *     ?type=docx&need_notification=false
+ *   Body: { member_type: "openid", member_id: "ou_...", perm: "full_access" }
+ *   Header: Authorization: Bearer <tenant_access_token>
+ */
+export async function shareDocWithUser(args: {
+  doc_token: string;
+  user_open_id: string;
+  perm?: "view" | "edit" | "full_access";  // default full_access
+  type?: "docx" | "doc" | "sheet" | "bitable" | "file";  // default docx
+}): Promise<{ ok: boolean; error?: string }> {
+  const token = await getTenantAccessToken();
+  if (!token) return { ok: false, error: "no tenant token" };
+  if (!args.doc_token) return { ok: false, error: "doc_token required" };
+  if (!args.user_open_id) return { ok: false, error: "user_open_id required" };
+  const perm = args.perm ?? "full_access";
+  const docType = args.type ?? "docx";
+  const url = `${pickBase()}/drive/v1/permissions/${encodeURIComponent(args.doc_token)}/members?type=${docType}&need_notification=false`;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ member_type: "openid", member_id: args.user_open_id, perm }),
+      signal: AbortSignal.timeout(8_000),
+    });
+    const j = (await res.json().catch(() => ({}))) as { code?: number; msg?: string };
+    if (!res.ok || j.code !== 0) {
+      return { ok: false, error: `HTTP ${res.status} / code=${j.code}: ${j.msg ?? ""}` };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e).slice(0, 200) };
+  }
+}
+
+/**
  * Append rich blocks to an EXISTING doc. For "add to that doc you
  * made last week" workflows. Caller passes the document_id (looked
  * up from helper_artifacts) + the blocks to append.

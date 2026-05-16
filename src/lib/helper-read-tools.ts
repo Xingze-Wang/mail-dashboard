@@ -37,6 +37,45 @@ function scopeRepId(session: Session, args: Record<string, unknown>): number | n
   return session.repId;
 }
 
+/**
+ * After bot creates a Lark doc, grant the calling rep full_access so
+ * they can see it without manually adding themselves via the Lark
+ * Share UI. Returns a short status string we surface in the tool
+ * result message so the LLM knows whether to say "已自动 share 给你"
+ * or "doc 创建成功但 auto-share 失败".
+ *
+ * Failure is NON-FATAL: the doc already exists, the share just didn't
+ * stick. The caller should still return success on the doc itself.
+ */
+async function autoShareDocToCaller(
+  repId: number,
+  docToken: string,
+): Promise<"shared" | "no_open_id" | string /* error msg */> {
+  try {
+    const { data: rep } = await supabase
+      .from("sales_reps")
+      .select("lark_open_id")
+      .eq("id", repId)
+      .maybeSingle();
+    const openId = (rep?.lark_open_id as string | null) ?? null;
+    if (!openId) return "no_open_id";
+    const { shareDocWithUser } = await import("@/lib/lark");
+    const shareResult = await shareDocWithUser({
+      doc_token: docToken,
+      user_open_id: openId,
+      perm: "full_access",
+    });
+    if (!shareResult.ok) {
+      console.error("[create_lark_doc] auto-share failed:", shareResult.error);
+      return `share_failed: ${shareResult.error ?? "unknown"}`;
+    }
+    return "shared";
+  } catch (e) {
+    console.error("[create_lark_doc] auto-share threw:", e);
+    return `share_threw: ${String(e).slice(0, 120)}`;
+  }
+}
+
 async function listLeads(session: Session, args: Record<string, unknown>) {
   const status = typeof args.status === "string" ? args.status : null;
   const query = typeof args.query === "string" ? args.query.trim() : null;
@@ -951,6 +990,14 @@ export async function runReadTool(
             title,
             url: r.url, meta: { body_length: body.length },
           });
+          // Auto-share to the calling rep so they can see the doc
+          // without manually adding themselves via Lark UI. Failure is
+          // non-fatal — log and continue with the original create result.
+          const shareNote = await autoShareDocToCaller(session.repId, r.document_id);
+          return {
+            tool: call.tool,
+            result: { ...(r as unknown as Record<string, unknown>), share: shareNote },
+          };
         }
         return { tool: call.tool, result: r as unknown as Record<string, unknown> };
       }
@@ -978,6 +1025,14 @@ export async function runReadTool(
             url: r.url,
             meta: { block_count: r.blocks_written ?? 0, rich: true },
           });
+          // Auto-share to the calling rep so they can see the doc
+          // without manually adding themselves via Lark UI. Failure is
+          // non-fatal — log and continue with the original create result.
+          const shareNote = await autoShareDocToCaller(session.repId, r.document_id);
+          return {
+            tool: call.tool,
+            result: { ...(r as unknown as Record<string, unknown>), share: shareNote },
+          };
         }
         return { tool: call.tool, result: r as unknown as Record<string, unknown> };
       }
