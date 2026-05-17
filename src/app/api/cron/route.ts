@@ -233,16 +233,43 @@ export async function GET(req: NextRequest) {
   // each fan-out step runs once a day, which is what they want.
   const fanOutSteps: Array<[string, () => Promise<unknown>]> = [
     ["mission_seed",        () => callInternalCron("/api/missions/heuristic-seed", secret)],
-    ["mission_allocate",    () => callInternalCron("/api/missions/allocate-leads", secret)],
-    // Drain the draft queue in the same cron. Without this, leads sit
-    // in 'queued' forever (caught 2026-05-16: 487 'new' + 1053 'queued'
-    // backlog because draft-queue had no scheduler). Each call processes
-    // BATCH=3 leads; we kick it multiple times here to drain ~30/run.
-    ["draft_queue_1",       () => callInternalCron("/api/pipeline/draft-queue", secret)],
-    ["draft_queue_2",       () => callInternalCron("/api/pipeline/draft-queue", secret)],
-    ["draft_queue_3",       () => callInternalCron("/api/pipeline/draft-queue", secret)],
-    ["draft_queue_4",       () => callInternalCron("/api/pipeline/draft-queue", secret)],
-    ["draft_queue_5",       () => callInternalCron("/api/pipeline/draft-queue", secret)],
+    // Run allocator multiple times — leads land throughout the day; we
+    // can't schedule the allocator at sub-day cadence (Hobby plan limits
+    // to daily crons), so we fan out within the master cron pass.
+    ["mission_allocate_1",  () => callInternalCron("/api/missions/allocate-leads", secret)],
+    ["mission_allocate_2",  () => callInternalCron("/api/missions/allocate-leads", secret)],
+    ["mission_allocate_3",  () => callInternalCron("/api/missions/allocate-leads", secret)],
+    // Drain the draft queue HARD. BATCH=30 per call × N calls. Hobby
+    // plan blocks sub-daily cron schedules, so the master /api/cron is
+    // our one shot per day. 25 calls × 30/batch = 750 leads/day capacity,
+    // ~10x the Python ingest rate. Drains a 1,500-row backlog in ~2 days.
+    // Each call is bounded by the route's 300s maxDuration so even a slow
+    // S2/LLM round-trip doesn't stall the chain.
+    ["draft_queue_01",      () => callInternalCron("/api/pipeline/draft-queue", secret)],
+    ["draft_queue_02",      () => callInternalCron("/api/pipeline/draft-queue", secret)],
+    ["draft_queue_03",      () => callInternalCron("/api/pipeline/draft-queue", secret)],
+    ["draft_queue_04",      () => callInternalCron("/api/pipeline/draft-queue", secret)],
+    ["draft_queue_05",      () => callInternalCron("/api/pipeline/draft-queue", secret)],
+    ["draft_queue_06",      () => callInternalCron("/api/pipeline/draft-queue", secret)],
+    ["draft_queue_07",      () => callInternalCron("/api/pipeline/draft-queue", secret)],
+    ["draft_queue_08",      () => callInternalCron("/api/pipeline/draft-queue", secret)],
+    ["draft_queue_09",      () => callInternalCron("/api/pipeline/draft-queue", secret)],
+    ["draft_queue_10",      () => callInternalCron("/api/pipeline/draft-queue", secret)],
+    ["draft_queue_11",      () => callInternalCron("/api/pipeline/draft-queue", secret)],
+    ["draft_queue_12",      () => callInternalCron("/api/pipeline/draft-queue", secret)],
+    ["draft_queue_13",      () => callInternalCron("/api/pipeline/draft-queue", secret)],
+    ["draft_queue_14",      () => callInternalCron("/api/pipeline/draft-queue", secret)],
+    ["draft_queue_15",      () => callInternalCron("/api/pipeline/draft-queue", secret)],
+    ["draft_queue_16",      () => callInternalCron("/api/pipeline/draft-queue", secret)],
+    ["draft_queue_17",      () => callInternalCron("/api/pipeline/draft-queue", secret)],
+    ["draft_queue_18",      () => callInternalCron("/api/pipeline/draft-queue", secret)],
+    ["draft_queue_19",      () => callInternalCron("/api/pipeline/draft-queue", secret)],
+    ["draft_queue_20",      () => callInternalCron("/api/pipeline/draft-queue", secret)],
+    ["draft_queue_21",      () => callInternalCron("/api/pipeline/draft-queue", secret)],
+    ["draft_queue_22",      () => callInternalCron("/api/pipeline/draft-queue", secret)],
+    ["draft_queue_23",      () => callInternalCron("/api/pipeline/draft-queue", secret)],
+    ["draft_queue_24",      () => callInternalCron("/api/pipeline/draft-queue", secret)],
+    ["draft_queue_25",      () => callInternalCron("/api/pipeline/draft-queue", secret)],
     ["insights_realign",    () => callInternalCron("/api/cron/insights-realign", secret)],
     ["insights_prewarm",    () => callInternalCron("/api/cron/insights-prewarm", secret)],
     ["enrich_h_index",      () => callInternalCron("/api/cron/enrich-h-index?limit=50", secret)],

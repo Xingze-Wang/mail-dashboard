@@ -26,8 +26,6 @@
     { "path": "/api/congress/postmortem-detect", "schedule": "0 3 * * *" },
     { "path": "/api/cron/congress-chime",      "schedule": "30 7 * * 1" },
     { "path": "/api/pipeline/scan-fanout",     "schedule": "30 6 * * 1-5" },
-    { "path": "/api/pipeline/draft-queue",     "schedule": "*/10 * * * *" },
-    { "path": "/api/missions/allocate-leads",  "schedule": "*/30 * * * *" },
     { "path": "/api/cron/sync-miracleplus-contacts", "schedule": "0 5 * * *" },
     { "path": "/api/cron/sync-miracleplus-backfill", "schedule": "0 4 * * 0" },
     { "path": "/api/cron/agent-scheduler",            "schedule": "*/5 * * * *" },
