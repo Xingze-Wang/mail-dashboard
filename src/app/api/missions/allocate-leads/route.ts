@@ -109,11 +109,14 @@ async function runAllocation(shadow: boolean, allocator: string): Promise<RunRes
   return result;
 }
 
-/** GET — cron entry point. Auth: Bearer $CRON_SECRET. */
+/** GET — cron entry point. Auth: `x-vercel-cron: 1` (set by Vercel cron),
+ *  Bearer $CRON_SECRET, or admin session. */
 export async function GET(req: NextRequest) {
+  const isVercelCron = req.headers.get("x-vercel-cron") === "1";
   const auth = req.headers.get("authorization") || "";
-  const expected = `Bearer ${process.env.CRON_SECRET}`;
-  if (!process.env.CRON_SECRET || auth !== expected) {
+  const secret = process.env.CRON_SECRET;
+  const bearerOk = !!secret && auth === `Bearer ${secret}`;
+  if (!isVercelCron && !bearerOk) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
   const shadow = process.env.ALLOCATE_LEADS_SHADOW === "true";
