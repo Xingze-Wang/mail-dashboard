@@ -30,6 +30,18 @@ export const maxDuration = 300;
 async function checkAuth(req: NextRequest): Promise<boolean> {
   const secret = process.env.CRON_SECRET;
   const auth = req.headers.get("authorization");
+  // Debug: log what we see to find auth mismatches in prod.
+  if (auth?.startsWith("Bearer ")) {
+    console.log("draft-queue auth probe", {
+      hasSecretEnv: !!secret,
+      secretLen: secret?.length ?? 0,
+      authLen: auth.length,
+      bearerLen: auth.length - 7,
+      match: auth === `Bearer ${secret}`,
+      secretPrefix: secret?.slice(0, 4),
+      bearerPrefix: auth.slice(7, 11),
+    });
+  }
   if (secret && auth === `Bearer ${secret}`) return true;
   // Admin/senior only. Previously any authenticated user could kick
   // the queue, which processes leads across every rep (not just the
