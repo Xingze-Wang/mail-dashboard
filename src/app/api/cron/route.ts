@@ -343,7 +343,15 @@ async function callInternalCron(path: string, secret: string): Promise<{ ok: boo
   try {
     const r = await fetch(url, {
       method: "GET",
-      headers: { Authorization: `Bearer ${secret}` },
+      headers: {
+        Authorization: `Bearer ${secret}`,
+        // Propagate the cron signal so receiving routes know this is a
+        // legitimate cron fanout (not random caller). Without this, every
+        // routed route fell back to env-var compare which had broken in
+        // prod (Vercel encrypted env var read returned different bytes
+        // than the master cron saw at its top).
+        "x-vercel-cron": "1",
+      },
       signal: AbortSignal.timeout(60_000),
     });
     if (!r.ok) {

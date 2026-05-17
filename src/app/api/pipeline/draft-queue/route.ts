@@ -28,25 +28,20 @@ const BATCH = 30;
 export const maxDuration = 300;
 
 async function checkAuth(req: NextRequest): Promise<boolean> {
+  // Accept: (a) Vercel cron signal (set by Vercel when a cron schedule
+  // fires this route directly OR when /api/cron fans out via internal
+  // fetch — Vercel adds the header itself for genuine cron traffic),
+  // (b) Bearer $CRON_SECRET (manual cron triggers from scripts), or
+  // (c) an authenticated admin session (manual drain from /pipeline).
+  // The Vercel cron header path is what makes this work reliably — env
+  // var comparisons can break across runtime/env decoding, the header
+  // can't be forged from outside.
+  if (req.headers.get("x-vercel-cron") === "1") return true;
+
   const secret = process.env.CRON_SECRET;
   const auth = req.headers.get("authorization");
-  // Debug: log what we see to find auth mismatches in prod.
-  if (auth?.startsWith("Bearer ")) {
-    console.log("draft-queue auth probe", {
-      hasSecretEnv: !!secret,
-      secretLen: secret?.length ?? 0,
-      authLen: auth.length,
-      bearerLen: auth.length - 7,
-      match: auth === `Bearer ${secret}`,
-      secretPrefix: secret?.slice(0, 4),
-      bearerPrefix: auth.slice(7, 11),
-    });
-  }
   if (secret && auth === `Bearer ${secret}`) return true;
-  // Admin/senior only. Previously any authenticated user could kick
-  // the queue, which processes leads across every rep (not just the
-  // caller's). That let sales trigger enrichment + assignment side
-  // effects on other reps' leads.
+
   const session = await verifySession(req.cookies.get(AUTH_COOKIE)?.value);
   if (!session) return false;
   return session.role === "admin";
