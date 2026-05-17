@@ -187,6 +187,32 @@ export const DEFAULT_INTRO_PROMPT = `根据论文写一句个性化开头（1句
 
 只返回这一句话。`;
 
+// Sentence terminators we accept as "complete". Includes both Chinese and
+// ASCII sentence endings + closing quotes/parens. Anything else means the
+// LLM stopped mid-sentence — never save that.
+const SENTENCE_END_RE = /[。．\.!！?？]["'』」）)]?\s*$/;
+
+function endsCompletely(text: string): boolean {
+  return SENTENCE_END_RE.test(text.trim());
+}
+
+/**
+ * Trim back to the last complete sentence boundary. If no sentence
+ * terminator is present at all, returns empty string (caller should
+ * regenerate, not save a fragment).
+ */
+function trimToLastCompleteSentence(text: string): string {
+  const t = text.trim();
+  // Find the last sentence-ender that's not the very end.
+  const enders = /[。．\.!！?？]/g;
+  let lastIdx = -1;
+  for (const m of t.matchAll(enders)) {
+    lastIdx = m.index! + m[0].length;
+  }
+  if (lastIdx <= 0) return "";
+  return t.slice(0, lastIdx).trim();
+}
+
 async function generatePersonalizedIntro(
   title: string,
   abstract: string,
@@ -208,17 +234,40 @@ async function generatePersonalizedIntro(
 
 ${prompt}`;
 
-  // Route through MiraclePlus proxy. Direct Gemini errors with
-  // FAILED_PRECONDITION on Vercel hkg1 IPs.
   const { llmChat } = await import("./llm-proxy");
-  const r = await llmChat({
+
+  // Attempt 1: normal call.
+  let r = await llmChat({
     model: "gemini-2.5-flash",
     user: finalPrompt,
     temperature: 0.5,
     max_tokens: 500,
     timeoutMs: 20_000,
   });
-  return sanitizePersonalizedIntro(r.text);
+  let cleaned = sanitizePersonalizedIntro(r.text);
+
+  // If the model returned a complete sentence, ship it.
+  if (endsCompletely(cleaned)) return cleaned;
+
+  // Retry once with more headroom — sometimes the model used the 500-token
+  // budget on reasoning then truncated the actual reply. Bump to 1200.
+  r = await llmChat({
+    model: "gemini-2.5-flash",
+    user: finalPrompt + "\n\n（注意：必须以句号结尾，不要中途截断。）",
+    temperature: 0.5,
+    max_tokens: 1200,
+    timeoutMs: 25_000,
+  });
+  cleaned = sanitizePersonalizedIntro(r.text);
+  if (endsCompletely(cleaned)) return cleaned;
+
+  // Last resort: trim back to last complete sentence so we never save a
+  // mid-sentence fragment. If no complete sentence exists at all, return
+  // empty string — caller treats that as "no personalized intro" and uses
+  // the generic fallback. Better to skip personalization than ship garbage.
+  const trimmed = trimToLastCompleteSentence(cleaned);
+  if (trimmed.length >= 20) return trimmed;
+  return "";
 }
 
 // ============ Main export ============

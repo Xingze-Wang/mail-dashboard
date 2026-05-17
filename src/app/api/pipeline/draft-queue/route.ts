@@ -18,14 +18,13 @@ import { scoreWithGemini } from "@/lib/gemini-scorer";
  *
  * Stays well under Vercel's 60s function limit: 5 leads * ~5s Gemini = 25s.
  */
-// Drain ~15 leads per invocation. maxDuration is bumped to 300s (Pro
-// limit) so a 15-lead batch with occasional S2/LLM spikes has headroom.
-// Previously 3, which created a 1500-row backlog when the queue had no
-// scheduler. The master /api/cron now also calls draft-queue 5x in its
-// fan-out, so worst-case daily drain ≈ 75 leads. Python imports ~70-90/day
-// — this barely keeps up. If backlog grows again, raise BATCH or add
-// a dedicated cron schedule (not a fan-out hop).
-const BATCH = 15;
+// Drain up to 30 leads per invocation. maxDuration is 300s (Pro
+// limit). At ~5s/lead (S2 + LLM + DB) that's 150s — comfortably under.
+// Combined with a dedicated cron schedule that fires every 10 min on
+// weekdays (vercel.json), worst-case daily drain ≈ 30 * 6 * 24 = 4,320,
+// which is way more than the ~80/day Python ingest. Backlog drains in
+// under a day even when starting from 1,500+.
+const BATCH = 30;
 export const maxDuration = 300;
 
 async function checkAuth(req: NextRequest): Promise<boolean> {
