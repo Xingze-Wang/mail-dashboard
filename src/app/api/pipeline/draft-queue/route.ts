@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { generateDraft, normalizeMatchedDirections } from "@/lib/email-generator";
+import { validateDraft } from "@/lib/draft-validator";
 import { getRep, classifyLead, assignRep, getAssignmentConfig } from "@/lib/assignment";
 import { verifySession, AUTH_COOKIE } from "@/lib/auth";
 import { lookupAuthor } from "@/lib/semantic-scholar";
@@ -153,6 +154,24 @@ async function processOne(row: Record<string, unknown>): Promise<boolean> {
       // A/B routing (active vs approved_draft).
       leadId: id,
     });
+
+    // QUALITY GATE — block drafts with LLM-meta leaks, truncated intros,
+    // missing signature, etc. from reaching `ready` status. Rolls back
+    // to `queued` so the next cron pass re-renders. Shared rules with
+    // scripts/_audit-drafts-v2.mjs in src/lib/draft-validator.ts.
+    const validation = validateDraft({
+      subject: draft.subject,
+      html: draft.html,
+      introOutput: draft.introOutput,
+    });
+    if (!validation.ok) {
+      console.warn("draft-queue quality gate failed", {
+        id,
+        issues: validation.hard.map((h) => h.key),
+      });
+      await supabase.from("pipeline_leads").update({ status: "queued" }).eq("id", id);
+      return false;
+    }
 
     await supabase
       .from("pipeline_leads")
