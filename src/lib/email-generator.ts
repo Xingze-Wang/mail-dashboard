@@ -72,6 +72,40 @@ function sanitizePersonalizedIntro(text: string): string {
   return t;
 }
 
+// ============ matched_directions normalization ============
+
+/**
+ * Python's scanner sometimes writes `matched_directions` to the DB as a
+ * JSON-encoded string (e.g. `'["具身3D空间理解","多模态内容解析"]'`) rather than
+ * a proper text[] array. Old callers did `typeof === "string" ? split(",")
+ * : array`, which on a JSON-string input produced `['["X"', '"Y"]']` — and
+ * downstream `.join("、")` then output the raw JSON tokens (e.g.
+ * `["具身3D..."、"多模态..."]`) into the email body.
+ *
+ * This helper handles all three shapes:
+ *   - already an array → return as-is
+ *   - JSON-encoded string starting with `[` → JSON.parse, return array
+ *   - comma-separated string → split + trim
+ *   - null / anything else → empty array
+ */
+export function normalizeMatchedDirections(raw: unknown): string[] {
+  if (Array.isArray(raw)) return raw.map(String).filter(Boolean);
+  if (typeof raw === "string") {
+    const s = raw.trim();
+    if (!s) return [];
+    if (s.startsWith("[")) {
+      try {
+        const parsed = JSON.parse(s);
+        if (Array.isArray(parsed)) return parsed.map(String).filter(Boolean);
+      } catch {
+        // fall through to comma-split
+      }
+    }
+    return s.split(",").map((x) => x.trim()).filter(Boolean);
+  }
+  return [];
+}
+
 // ============ Subject line truncation ============
 
 function truncateSubject(subject: string, maxLen = 200): string {
@@ -309,6 +343,11 @@ export async function generateDraft(lead: {
   // null and we fall through to the legacy hardcoded assembly below.
   const repName = lead.repName || "Leo";
   const repWechat = lead.repWechatId || "Lorenserus1";
+  // Normalize matched_directions ONCE at the entry point. Python sometimes
+  // writes this as a JSON-encoded string instead of a proper text[] array —
+  // see normalizeMatchedDirections() docstring. Without this, downstream
+  // .join("、") emitted raw JSON tokens into the email body.
+  const matchedDirections = normalizeMatchedDirections(lead.matchedDirections);
   try {
     const tpl = await loadEffectiveTemplate(lead.assignedRepId ?? null, lead.leadId ?? null);
     if (tpl) {
@@ -319,7 +358,7 @@ export async function generateDraft(lead: {
         firstName: lead.firstName,
         schoolName: lead.schoolName,
         schoolTier: lead.schoolTier,
-        matchedDirections: lead.matchedDirections,
+        matchedDirections,
         repName,
         repWechatId: repWechat,
       });
@@ -331,7 +370,7 @@ export async function generateDraft(lead: {
           repId: lead.assignedRepId,
           authorEmail: lead.authorEmail,
           schoolTier: lead.schoolTier,
-          matchedDirections: lead.matchedDirections,
+          matchedDirections,
         });
         return {
           subject: ab.subject,
@@ -371,7 +410,7 @@ export async function generateDraft(lead: {
 
   const thirdParagraph = generateThirdParagraph(
     schoolInfo,
-    lead.matchedDirections,
+    matchedDirections,
   );
 
   // Default to Leo only when the caller genuinely has no rep (should be rare —

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
-import { generateDraft } from "@/lib/email-generator";
+import { generateDraft, normalizeMatchedDirections } from "@/lib/email-generator";
 import { getRep, classifyLead, assignRep, getAssignmentConfig } from "@/lib/assignment";
 import { verifySession, AUTH_COOKIE } from "@/lib/auth";
 import { lookupAuthor } from "@/lib/semantic-scholar";
@@ -113,10 +113,10 @@ async function processOne(row: Record<string, unknown>): Promise<boolean> {
     //    (/api/missions/allocate-leads) at 09:00 Beijing daily. Draft-queue
     //    only processes leads that are already assigned (filtered in run()).
     const schoolTier = (row.school_tier as number | null) ?? null;
-    const mdRaw = row.matched_directions;
-    const matchedDirs = typeof mdRaw === "string"
-      ? mdRaw.split(",").map((s) => s.trim()).filter(Boolean)
-      : Array.isArray(mdRaw) ? (mdRaw as string[]) : [];
+    // matched_directions is Python-written JSON-string or proper array.
+    // normalizeMatchedDirections handles both (without it, JSON-stringified
+    // arrays leaked as `["具身..."]` raw escapes into email body).
+    const matchedDirs = normalizeMatchedDirections(row.matched_directions);
 
     const config = await getAssignmentConfig();
     const newTier = classifyLead(config, { citationCount, hIndex, schoolTier, authorEmail: email, localScore });
