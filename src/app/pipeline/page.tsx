@@ -426,7 +426,7 @@ export default function PipelinePage() {
   /* ── Fetchers ────────────────────────────────────────────────────── */
 
   const fetchLeads = useCallback(
-    (signal?: AbortSignal) => {
+    (signal?: AbortSignal, statusForUrl?: StatusKey) => {
       if (!hasInitialised.current) setLoading(true);
       else setRefreshing(true);
       // The `leads` array is intentionally the most recent 1000 rows for
@@ -436,8 +436,24 @@ export default function PipelinePage() {
       // displayed on this page matches the DB, not the paginated array.
       // Ready-count is fetched in parallel from the same primitive that
       // powers the sidebar badge — see the readyCounts state comment.
+      //
+      // Pass server-side status filter: the chip counts (canonical) and
+      // the listed rows previously disagreed when ready leads were older
+      // than the 1000-row newest-first window — clicking "Ready 1176"
+      // showed "No leads yet" because the visible 1000 rows were all
+      // drafting/new and the client-side `.status === "ready"` filter
+      // matched zero of them. Filtering server-side moves the right
+      // rows into the window before pagination.
+      const statusParam = (() => {
+        if (!statusForUrl || statusForUrl === "all") return "";
+        // UI's "drafting" / "ripening" chips bucket multiple DB statuses,
+        // so we can't push them server-side — they still client-filter
+        // on the wider fetch. For the rest, server-side is cleaner.
+        if (statusForUrl === "drafting" || statusForUrl === "ripening") return "";
+        return `&status=${statusForUrl}`;
+      })();
       return Promise.all([
-        fetch(`/api/pipeline?limit=1000`, { signal }).then((r) => r.json()),
+        fetch(`/api/pipeline?limit=1000${statusParam}`, { signal }).then((r) => r.json()),
         fetch(`/api/pipeline/ready-count`, { signal, cache: "no-store" }).then((r) => r.json()),
         fetch(`/api/pipeline/status-counts`, { signal, cache: "no-store" }).then((r) => r.json()),
       ])
@@ -479,10 +495,10 @@ export default function PipelinePage() {
 
   useEffect(() => {
     const ctrl = new AbortController();
-    fetchLeads(ctrl.signal);
+    fetchLeads(ctrl.signal, statusFilter);
     fetchDiscovery(ctrl.signal);
     return () => ctrl.abort();
-  }, [fetchLeads, fetchDiscovery]);
+  }, [fetchLeads, fetchDiscovery, statusFilter]);
 
   // Browser-side draft-queue polling REMOVED. Reason: 4 sales × multiple
   // tabs × every 15s = thousands of req/day to Vercel for the rare case
