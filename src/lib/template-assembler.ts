@@ -552,11 +552,17 @@ export async function assembleDraft(
   });
   // rep_name placeholder kept; substitute() ignores unknown {{...}}
   // tokens (returns them as-is per its loop), but we want UPPERCASE
-  // sentinels so we can distinguish "send-time resolved" from regular
-  // template tokens. Inject the sentinel directly via substituteRaw.
+  // rep_name is substituted directly at draft-time. Previously this
+  // was a {{REP_NAME}} sentinel for "survive reassignment" but in
+  // practice (a) reassignment after draft-time is rare, (b) the
+  // allocator re-renders the whole draft on assignment anyway, (c) the
+  // sentinel made the UI display literal {{REP_NAME}} which alarmed
+  // reps. Direct substitution makes the rendered draft match what
+  // reps see in the UI. resolveLatePlaceholders still handles any
+  // residual placeholders for legacy draft rows.
   const repIntro = substituteRaw(
     pickSlot(template, "rep_intro_format", overrides, segmentCtx),
-    { rep_name: "{{REP_NAME}}" },
+    { rep_name: input.repName },
   );
   const schoolPitch = substitute(pickSlot(template, "school_pitch_format", overrides, segmentCtx), {
     school_text: pitch.school_text,
@@ -565,24 +571,28 @@ export async function assembleDraft(
     wechat_article_url: WECHAT_ARTICLE_URL,
   });
   // cta_signoff_format contains a literal <a href="{{apply_url}}"> —
-  // we do TWO passes: first unescape-substitute the URL (it's trusted
-  // server config), then leave rep_wechat + closing_name as sentinels.
+  // first unescape-substitute the URL (trusted server config), then
+  // closing_name = recipient firstName (lead-bound, NOT rep-bound, so
+  // resolving here is correct — it never changes on rep reassignment).
+  // Only rep_wechat stays as a sentinel for resolveLatePlaceholders.
   const ctaWithUrl = substituteRaw(pickSlot(template, "cta_signoff_format", overrides, segmentCtx), {
     apply_url: APPLY_URL_CTA,
   });
   const ctaSignoff = substituteRaw(ctaWithUrl, {
-    closing_name: "{{CLOSING_NAME}}",
-    rep_wechat: "{{REP_WECHAT}}",
+    // closing_name = recipient's firstName (lead-bound), rep_wechat =
+    // rep's wechat id (rep-bound). Both substituted at draft-time.
+    // Previously these were sentinels; the resolver mis-defaulted
+    // closing_name to repName, producing "如果 Leo 对算力支持感兴趣...".
+    closing_name: closingName,
+    rep_wechat: input.repWechatId,
   });
 
   // Personalized intro is the LLM output — escape it.
   const personalizedIntroHtml = escapeHtml(personalizedIntro);
 
-  // Signature is now also a placeholder. resolveLatePlaceholders fills
-  // it from current rep state. closingName is left here unused —
-  // resolveLatePlaceholders will fold the rep_name sentinel pattern.
-  void closingName;
-  const signature = `<span style="font-size: 14px; color: #333; line-height: 1.6;">{{REP_NAME}}<br>奇绩创坛</span>`;
+  // Signature: substitute rep name directly. Same rationale as repIntro
+  // above — what the UI shows should match what the recipient gets.
+  const signature = `<span style="font-size: 14px; color: #333; line-height: 1.6;">${escapeHtml(input.repName)}<br>奇绩创坛</span>`;
 
   const html = `<html>
 <head><meta charset="utf-8"></head>
