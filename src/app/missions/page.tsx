@@ -799,7 +799,19 @@ function RepDrillModal({ repId, onClose }: { repId: number; onClose: () => void 
       >
         {loading || !data ? (
           <div style={{ textAlign: "center", padding: 40, color: "var(--text-tertiary)" }}>Loading…</div>
-        ) : (
+        ) : (() => {
+          // Have we got ANY 7d-window content to show below the stats? If
+          // not, we render an explicit "quiet week" hint so the modal never
+          // collapses to just a header (the 2026-05-19 bug — modal popped
+          // open empty because all sections gated on length>0).
+          const hasAnyContent = !!data.brief
+            || data.missions.length > 0
+            || data.recent_emails.length > 0
+            || data.recent_inbound.length > 0
+            || data.recent_wechat.length > 0
+            || data.recent_escalations.length > 0
+            || data.learnings.length > 0;
+          return (
           <>
             <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 20 }}>
               <div>
@@ -818,6 +830,42 @@ function RepDrillModal({ repId, onClose }: { repId: number; onClose: () => void 
                 cursor: "pointer", lineHeight: 1, padding: "0 4px",
               }}>×</button>
             </div>
+
+            {/* Always-shown 7d snapshot — the drill modal used to render
+                nothing when all sections were length=0 (rep had no missions
+                today + quiet week → blank dialog). This grid gives at minimum
+                a 5-number snapshot so the modal always communicates. */}
+            <div style={{
+              display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12,
+              padding: "14px 0", borderTop: "1px solid var(--border-light)",
+              borderBottom: "1px solid var(--border-light)", marginBottom: 18,
+              fontFamily: "var(--font-heading)",
+            }}>
+              <Stat label="Missions today" value={data.missions.length} />
+              <Stat label="Sends 7d" value={data.recent_emails.length} />
+              <Stat label="Replies 7d" value={data.recent_inbound.length} />
+              <Stat label="WeChat 7d" value={data.recent_wechat.length} valueColor={data.recent_wechat.length > 0 ? "var(--green)" : undefined} />
+              <Stat label="Leon learned" value={data.learnings.length} />
+            </div>
+
+            {!hasAnyContent && (
+              <div style={{
+                textAlign: "center", padding: "28px 16px", color: "var(--text-tertiary)",
+                fontSize: 13, lineHeight: 1.6,
+                background: "var(--background-secondary)", borderRadius: "var(--radius)",
+                marginBottom: 18,
+              }}>
+                <div style={{ fontWeight: 500, color: "var(--text-secondary)", marginBottom: 6 }}>
+                  Quiet week for {data.rep.name}
+                </div>
+                No missions today, no sends, no replies, no WeChat conversions in the last 7 days.
+                {data.rep.role === "sales" && (
+                  <div style={{ marginTop: 10, fontSize: 12 }}>
+                    If allocator missed this rep, check <code>/admin/missions</code> for daily quota config.
+                  </div>
+                )}
+              </div>
+            )}
 
             {data.brief && (
               <Block title="Today">
@@ -905,7 +953,8 @@ function RepDrillModal({ repId, onClose }: { repId: number; onClose: () => void 
               </Block>
             )}
           </>
-        )}
+          );
+        })()}
       </div>
     </div>
   );

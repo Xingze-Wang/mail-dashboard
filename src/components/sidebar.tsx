@@ -198,7 +198,8 @@ export function Sidebar() {
     { href: "/",         label: t("nav.overview", locale), Icon: OverviewIcon },
     { href: "/missions", label: t("nav.missions", locale), Icon: MissionsIcon, badgeKey: "missions_incomplete" as const },
     { href: "/pipeline", label: t("nav.pipeline", locale), Icon: PipelineIcon, badgeKey: "ready"  as const },
-    { href: "/emails",   label: t("nav.emails",   locale), Icon: EmailsIcon,   badgeKey: "unread" as const },
+    { href: "/inbox",    label: t("nav.inbox",    locale), Icon: InboxIcon,    badgeKey: "unread" as const },
+    { href: "/emails",   label: t("nav.emails",   locale), Icon: EmailsIcon },
   ];
 
   const toolsNav = [

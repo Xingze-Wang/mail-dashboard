@@ -95,7 +95,313 @@ export default function TemplatesPage() {
           );
         })}
       </div>
-      {tab === "library" ? <TemplateLibrary /> : tab === "editor" ? <TemplatesEditor /> : <AnalysisPage />}
+      {tab === "library" ? <TemplateLibrary /> : tab === "editor" ? <TemplatesEditor /> : <TemplatePerformance />}
+    </div>
+  );
+}
+
+// ── Performance tab: per-template card grid backed by
+//    /api/templates/performance. Replaces the old org-wide /analysis
+//    embed — admin wanted a per-template surface where each card shows
+//    the most important takeaways and clicking expands the detail.
+interface TemplatePerfRow {
+  id: string;
+  name: string;
+  rep_id: number | null;
+  active: boolean;
+  updated_at: string;
+  sent: number;
+  clicked: number;
+  wechat: number;
+  registered: number;
+  submitted: number;
+  clickRate: number;
+  wechatRate: number;
+  registeredRate: number;
+  submittedRate: number;
+  vsClickBaseline: number;
+  vsWechatBaseline: number;
+}
+interface TemplatePerfPayload {
+  windowDays: number;
+  baseline: {
+    totalSent: number;
+    totalClicked: number;
+    totalWechat: number;
+    totalRegistered: number;
+    totalSubmitted: number;
+    clickRate: number;
+    wechatRate: number;
+    registeredRate: number;
+    submittedRate: number;
+  };
+  templates: TemplatePerfRow[];
+}
+
+function TemplatePerformance() {
+  const [data, setData] = useState<TemplatePerfPayload | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [days, setDays] = useState(30);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [repNames, setRepNames] = useState<Record<number, string>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    fetch(`/api/templates/performance?days=${days}`, { credentials: "include" })
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
+      .then((d) => { if (!cancelled) setData(d); })
+      .catch((e) => { if (!cancelled) setError(String(e)); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [days]);
+
+  // Resolve rep names once — performance API only returns rep_id.
+  useEffect(() => {
+    fetch("/api/admin/reps", { credentials: "include" })
+      .then((r) => r.ok ? r.json() : null)
+      .then((j) => {
+        if (j?.reps) {
+          const map: Record<number, string> = {};
+          for (const r of j.reps as Array<{ id: number; name: string }>) map[r.id] = r.name;
+          setRepNames(map);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  if (loading) {
+    return <div style={{ padding: 40, textAlign: "center", color: "var(--text-tertiary)" }}>Loading template performance…</div>;
+  }
+  if (error || !data) {
+    return <div style={{ padding: 24, color: "var(--text-secondary)", fontSize: 13 }}>Couldn&apos;t load: {error ?? "no data"}</div>;
+  }
+
+  // Sort: active templates with ≥10 sends first (sorted by submittedRate desc
+  // then clickRate desc), then everything else by sent desc.
+  const sorted = [...data.templates].sort((a, b) => {
+    const aHot = a.active && a.sent >= 10 ? 1 : 0;
+    const bHot = b.active && b.sent >= 10 ? 1 : 0;
+    if (aHot !== bHot) return bHot - aHot;
+    if (aHot === 1) {
+      if (a.submittedRate !== b.submittedRate) return b.submittedRate - a.submittedRate;
+      return b.clickRate - a.clickRate;
+    }
+    return b.sent - a.sent;
+  });
+
+  return (
+    <div>
+      {/* Top bar: window selector + baseline summary */}
+      <div style={{
+        display: "flex", justifyContent: "space-between", alignItems: "center",
+        marginBottom: 16, flexWrap: "wrap", gap: 12,
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>Window</span>
+          {[7, 30, 90].map((d) => (
+            <button
+              key={d}
+              onClick={() => setDays(d)}
+              style={{
+                padding: "4px 10px", fontSize: 12,
+                background: days === d ? "var(--blue-soft)" : "transparent",
+                color: days === d ? "var(--blue)" : "var(--text-secondary)",
+                border: "1px solid " + (days === d ? "var(--blue)" : "var(--border)"),
+                borderRadius: 6, cursor: "pointer",
+              }}
+            >{d}d</button>
+          ))}
+        </div>
+        <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
+          Org baseline: {data.baseline.totalSent} sent · {(data.baseline.clickRate * 100).toFixed(1)}% click · {(data.baseline.submittedRate * 100).toFixed(1)}% submitted
+        </div>
+      </div>
+
+      {sorted.length === 0 ? (
+        <div style={{ padding: 60, textAlign: "center", color: "var(--text-tertiary)" }}>
+          No templates with traffic in the last {days} days.
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 12 }}>
+          {sorted.map((t) => (
+            <TemplatePerfCard
+              key={t.id}
+              t={t}
+              repName={t.rep_id == null ? "(global)" : repNames[t.rep_id] ?? `rep ${t.rep_id}`}
+              baseline={data.baseline}
+              expanded={expandedId === t.id}
+              onToggle={() => setExpandedId(expandedId === t.id ? null : t.id)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TemplatePerfCard({
+  t, repName, baseline, expanded, onToggle,
+}: {
+  t: TemplatePerfRow;
+  repName: string;
+  baseline: TemplatePerfPayload["baseline"];
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const hasData = t.sent >= 5;
+  const lift = (rate: number, base: number) => base > 0 ? rate / base : 0;
+  const liftBadge = (rate: number, base: number) => {
+    if (!hasData || base === 0) return null;
+    const r = lift(rate, base);
+    const pct = ((r - 1) * 100);
+    if (Math.abs(pct) < 5) return null;
+    return (
+      <span style={{
+        fontSize: 10, fontWeight: 600,
+        color: pct > 0 ? "var(--green)" : "var(--red)",
+        marginLeft: 4,
+      }}>
+        {pct > 0 ? "↑" : "↓"}{Math.abs(pct).toFixed(0)}%
+      </span>
+    );
+  };
+
+  return (
+    <div
+      className="section-card"
+      style={{
+        padding: 14, cursor: "pointer",
+        border: "1px solid var(--border)",
+        background: "var(--card)",
+        transition: "all 0.15s ease",
+      }}
+      onClick={onToggle}
+    >
+      {/* Header */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
+            <span style={{
+              fontFamily: "var(--font-heading)", fontSize: 14, fontWeight: 600,
+              color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            }}>{t.name}</span>
+            {!t.active && (
+              <span style={{
+                fontSize: 9, padding: "1px 5px", background: "var(--background-secondary)",
+                color: "var(--text-tertiary)", borderRadius: 4, textTransform: "uppercase", letterSpacing: "0.04em",
+              }}>off</span>
+            )}
+          </div>
+          <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>{repName}</div>
+        </div>
+        <div style={{ fontSize: 11, color: "var(--text-tertiary)", whiteSpace: "nowrap", marginLeft: 8 }}>
+          {t.sent} sent
+        </div>
+      </div>
+
+      {/* Three primary takeaways: click, wechat, submitted (the real conversion) */}
+      {hasData ? (
+        <div style={{
+          display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10,
+          paddingTop: 10, borderTop: "1px solid var(--border-light)",
+        }}>
+          <PerfTile
+            label="Click"
+            value={`${(t.clickRate * 100).toFixed(1)}%`}
+            sub={`${t.clicked} clicks`}
+            badge={liftBadge(t.clickRate, baseline.clickRate)}
+          />
+          <PerfTile
+            label="WeChat"
+            value={`${(t.wechatRate * 100).toFixed(1)}%`}
+            sub={`${t.wechat} added`}
+            badge={liftBadge(t.wechatRate, baseline.wechatRate)}
+            valueColor={t.wechat > 0 ? "var(--green)" : undefined}
+          />
+          <PerfTile
+            label="Submitted"
+            value={`${(t.submittedRate * 100).toFixed(1)}%`}
+            sub={`${t.submitted} applied`}
+            valueColor={t.submitted > 0 ? "var(--green)" : undefined}
+          />
+        </div>
+      ) : (
+        <div style={{
+          paddingTop: 10, borderTop: "1px solid var(--border-light)",
+          fontSize: 12, color: "var(--text-tertiary)", textAlign: "center",
+        }}>
+          Not enough traffic yet ({t.sent}/5 minimum for rates)
+        </div>
+      )}
+
+      {/* Expanded detail */}
+      {expanded && (
+        <div style={{
+          marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border-light)",
+          fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.6,
+        }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+            <PerfDetail label="Registered (MP)" main={`${t.registered}`} pct={`${(t.registeredRate * 100).toFixed(1)}%`} />
+            <PerfDetail label="Submitted (MP)" main={`${t.submitted}`} pct={`${(t.submittedRate * 100).toFixed(1)}%`} />
+            <PerfDetail label="vs org click" main={`${t.vsClickBaseline.toFixed(2)}×`} pct="lift" />
+            <PerfDetail label="vs org wechat" main={`${t.vsWechatBaseline.toFixed(2)}×`} pct="lift" />
+          </div>
+          <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+            Last updated {new Date(t.updated_at).toLocaleString()}
+          </div>
+          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            <Link
+              href={`/templates/${t.id}/inspect`}
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                fontSize: 12, padding: "4px 10px", background: "var(--blue-soft)", color: "var(--blue)",
+                borderRadius: 6, textDecoration: "none",
+              }}
+            >Inspect</Link>
+            <Link
+              href={`/templates/${t.id}/edit`}
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                fontSize: 12, padding: "4px 10px", background: "transparent", color: "var(--text-secondary)",
+                border: "1px solid var(--border)", borderRadius: 6, textDecoration: "none",
+              }}
+            >Edit</Link>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PerfTile({ label, value, sub, badge, valueColor }: {
+  label: string; value: string; sub: string; badge?: React.ReactNode; valueColor?: string;
+}) {
+  return (
+    <div>
+      <div style={{ fontSize: 10, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 2 }}>
+        {label}
+      </div>
+      <div style={{
+        fontFamily: "var(--font-heading)", fontSize: 18, fontWeight: 600,
+        color: valueColor ?? "var(--text)", letterSpacing: "-0.02em", lineHeight: 1,
+      }}>
+        {value}{badge}
+      </div>
+      <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 2 }}>{sub}</div>
+    </div>
+  );
+}
+
+function PerfDetail({ label, main, pct }: { label: string; main: string; pct: string }) {
+  return (
+    <div>
+      <div style={{ fontSize: 10, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
+      <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>{main} <span style={{ fontSize: 11, color: "var(--text-tertiary)", fontWeight: 400 }}>{pct}</span></div>
     </div>
   );
 }

@@ -10,6 +10,7 @@ const dict: Record<string, Record<Locale, string>> = {
   "nav.missions":        { en: "Today",           zh: "Today" },
   "nav.pipeline":        { en: "Pipeline",        zh: "线索库" },
   "nav.emails":          { en: "Emails",          zh: "邮件" },
+  "nav.inbox":           { en: "Inbox",           zh: "收件箱" },
   "nav.brief":           { en: "Brief",           zh: "速览" },
   "nav.insights":        { en: "Insights",        zh: "数据洞察" },
   "nav.templates":       { en: "Templates",       zh: "模板" },

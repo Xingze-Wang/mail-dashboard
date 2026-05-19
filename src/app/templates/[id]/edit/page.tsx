@@ -140,6 +140,18 @@ export default function TemplateEditPage({ params }: { params: Promise<{ id: str
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [pending, setPending] = useState<PendingEdit[]>([]);
   const [reviewBusyId, setReviewBusyId] = useState<string | null>(null);
+  // ── Live preview state for the intro_prompt slot ──
+  // Per the 2026-05-19 redesign sketch: the prompt textarea has a right-side
+  // (or below-on-narrow) panel that renders the LLM output for 1 sample
+  // (single mode) or 5 real recent leads (bench mode) so you can see how
+  // prompt edits actually look. Auto-runs ~1.2s after the last keystroke.
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewMode, setPreviewMode] = useState<"single" | "bench">("single");
+  const [previewSamples, setPreviewSamples] = useState<Array<{
+    lead_id: string | null; title: string; author_name: string | null; output: string; error: string | null;
+  }>>([]);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
 
   const isAdmin = me?.role === "admin";
 
@@ -255,6 +267,52 @@ export default function TemplateEditPage({ params }: { params: Promise<{ id: str
       setSaving(false);
     }
   }, [id, dirty, draft, rationale, data, isAdmin, refreshPending]);
+
+  // Live preview runner — POSTs the current intro_prompt draft to
+  // /api/templates/test which renders it against either the canonical
+  // sample (single mode) or 5 random recent leads (bench mode).
+  const runPreview = useCallback(async (mode: "single" | "bench") => {
+    const currentPrompt = (draft.intro_prompt ?? data?.intro_prompt) ?? "";
+    if (!currentPrompt.trim()) {
+      setPreviewError("Prompt is empty");
+      setPreviewSamples([]);
+      return;
+    }
+    setPreviewLoading(true);
+    setPreviewError(null);
+    try {
+      const res = await fetch("/api/templates/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          prompt: currentPrompt,
+          num_samples: mode === "bench" ? 5 : 1,
+          use_real_leads: mode === "bench",
+        }),
+      });
+      const j = await res.json();
+      if (!res.ok || j.error) {
+        setPreviewError(j.error ?? `HTTP ${res.status}`);
+        setPreviewSamples([]);
+      } else {
+        setPreviewSamples(j.samples ?? []);
+      }
+    } catch (e) {
+      setPreviewError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPreviewLoading(false);
+    }
+  }, [draft.intro_prompt, data?.intro_prompt]);
+
+  // Debounce: when prompt changes and panel is open in single mode, re-run
+  // automatically after 1.2s of no keystrokes. Bench mode is manual because
+  // 5× Gemini calls is too expensive to fire on every keystroke.
+  useEffect(() => {
+    if (!previewOpen || previewMode !== "single") return;
+    const t = setTimeout(() => { void runPreview("single"); }, 1200);
+    return () => clearTimeout(t);
+  }, [previewOpen, previewMode, draft.intro_prompt, runPreview]);
 
   const review = useCallback(async (editId: string, decision: "approve" | "reject", note?: string) => {
     setReviewBusyId(editId);
@@ -555,6 +613,108 @@ export default function TemplateEditPage({ params }: { params: Promise<{ id: str
                         readOnly ? "bg-slate-50 text-slate-600 border-slate-300" : "bg-white border-slate-300"
                       }`}
                     />
+                  )}
+
+                  {/* Inline live preview — only for intro_prompt (the LLM
+                      slot). Per 2026-05-19 redesign: click expand → see
+                      the rendered output for 1 sample (auto-refreshes as
+                      you type), or "5 cases" bench mode for variance check. */}
+                  {f.key === "intro_prompt" && (
+                    <div className="mt-2">
+                      <div className="flex items-center gap-2 mb-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const next = !previewOpen;
+                            setPreviewOpen(next);
+                            if (next) void runPreview(previewMode);
+                          }}
+                          className="text-[11px] font-medium px-2 py-1 rounded border border-purple-200 bg-purple-50 text-purple-700 hover:bg-purple-100"
+                        >
+                          {previewOpen ? "▼ Live preview" : "▶ Live preview"}
+                        </button>
+                        {previewOpen && (
+                          <>
+                            <div className="flex rounded border border-purple-200 overflow-hidden text-[11px]">
+                              {(["single", "bench"] as const).map((m) => (
+                                <button
+                                  key={m}
+                                  type="button"
+                                  onClick={() => { setPreviewMode(m); void runPreview(m); }}
+                                  className={`px-2 py-1 ${previewMode === m ? "bg-purple-200 text-purple-900" : "bg-white text-purple-700 hover:bg-purple-50"}`}
+                                >
+                                  {m === "single" ? "1 sample (auto)" : "5 cases"}
+                                </button>
+                              ))}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => void runPreview(previewMode)}
+                              disabled={previewLoading}
+                              className="text-[11px] px-2 py-1 rounded border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-50"
+                            >
+                              {previewLoading ? "Running…" : "↻ Re-run"}
+                            </button>
+                            <span className="text-[10px] text-slate-500">
+                              {previewMode === "single" ? "auto-refreshes 1.2s after you stop typing" : "manual — costs 5× LLM calls"}
+                            </span>
+                          </>
+                        )}
+                      </div>
+                      {previewOpen && (
+                        <div className="border border-purple-200 rounded p-3 bg-white space-y-3 max-h-[480px] overflow-y-auto">
+                          {previewError && (
+                            <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2">
+                              {previewError}
+                            </div>
+                          )}
+                          {previewLoading && previewSamples.length === 0 && (
+                            <div className="text-xs text-slate-500 text-center py-4">
+                              <Loader2 className="w-3 h-3 animate-spin inline-block mr-1" />
+                              Generating…
+                            </div>
+                          )}
+                          {previewSamples.length === 0 && !previewLoading && !previewError && (
+                            <div className="text-xs text-slate-500 text-center py-4">
+                              Edit the prompt above — output will render here.
+                            </div>
+                          )}
+                          {previewSamples.map((s, i) => (
+                            <div
+                              key={s.lead_id ?? `s${i}`}
+                              className={`border-l-2 pl-3 ${s.error ? "border-red-300" : "border-purple-300"}`}
+                            >
+                              <div className="text-[10px] text-slate-500 uppercase tracking-wide mb-1 flex items-center justify-between">
+                                <span>
+                                  {previewMode === "bench" ? `Sample ${i + 1}` : "Sample"}
+                                  {s.author_name && ` · ${s.author_name}`}
+                                </span>
+                                {s.lead_id && (
+                                  <a
+                                    href={`/pipeline/${s.lead_id}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-purple-600 hover:underline normal-case tracking-normal"
+                                  >
+                                    open lead ↗
+                                  </a>
+                                )}
+                              </div>
+                              <div className="text-[11px] text-slate-600 mb-2 italic">
+                                {s.title}
+                              </div>
+                              {s.error ? (
+                                <div className="text-xs text-red-600">⚠ {s.error}</div>
+                              ) : (
+                                <div className="text-sm text-slate-800 whitespace-pre-wrap leading-relaxed">
+                                  {s.output}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
               );
