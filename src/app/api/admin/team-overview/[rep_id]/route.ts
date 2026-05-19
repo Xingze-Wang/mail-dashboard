@@ -40,7 +40,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ rep_
     inboundR,
     wechatR,
   ] = await Promise.all([
-    supabase.from("sales_reps").select("id, name, role, email, lark_open_id, trust_level").eq("id", repId).maybeSingle(),
+    // Note: column is login_email (not email — 2026-05-19 bug, broke
+    // the whole modal because maybeSingle() returned null on the missing
+    // column and the route then returned "rep not found"). The client
+    // type still uses `email`, so we alias here.
+    supabase.from("sales_reps").select("id, name, role, email:login_email, lark_open_id, trust_level").eq("id", repId).maybeSingle(),
     supabase.from("daily_rep_brief")
       .select("goal, reasoning, bullets, admin_overrode, admin_note, computed_at")
       .eq("rep_id", repId).eq("brief_date", today).maybeSingle(),
