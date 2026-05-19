@@ -270,15 +270,11 @@ export default function OverviewPage() {
           </div>
           <div className="stat-card">
             <div className="stat-label">{t("stat.wechatAdded", locale)}</div>
-            <div style={{ marginTop: 4 }}>
-              <MpSignalCounts
-                registered={m?.mp_registered ?? 0}
-                submittedApplication={m?.mp_submitted ?? 0}
-                addedWechat={m?.wechat ?? 0}
-                totalEmailed={m?.mp_total_emailed}
-                size="md"
-              />
-            </div>
+            {/* This tile shows just the WeChat count — its label says
+                "WeChat Added", so cramming registered/submitted into the
+                same tile was misleading (2026-05-19 feedback). The full
+                MP trio lives in the funnel section + /analysis page. */}
+            <div className="stat-value" style={{ color: "var(--pink, #ec4899)" }}>{m?.wechat ?? 0}</div>
           </div>
         </div>
 
