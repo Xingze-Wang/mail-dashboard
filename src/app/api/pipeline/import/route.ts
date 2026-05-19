@@ -81,8 +81,10 @@ export async function POST(req: NextRequest) {
     let imported = 0;
     let skipped = 0;
     let duplicateInPipeline = 0;
+    let blockedByAppropriateness = 0;
     const errors: string[] = [];
     const blockedByGuard: { email: string; lastContactedAt: string }[] = [];
+    const blockedByEthics: { email: string; title: string; category: string; reason: string }[] = [];
 
     // Load assignment config once for the whole batch
     const config = await getAssignmentConfig();
@@ -258,6 +260,33 @@ export async function POST(req: NextRequest) {
       // quota. lead_tier is still classified so the v_lead_pool view can
       // partition by sub-pool.
       const assignedRepId: number | null = null;
+
+      // ── APPROPRIATENESS GATE (paper-level ethics filter) ───────────
+      // Per 2026-05-19 meta-audit finding: judges score offensive-security
+      // papers (backdoors, jailbreaks, attacks on LLaMA/DeepSeek/GPT) as
+      // "faithful" because the intro is, but offering free GPUs to scale
+      // an attack is a reputational landmine. We screen the paper itself.
+      // useJudge=true: runs the LLM judge for ambiguous cases (only fires
+      // when deterministic signals are present, so most leads skip it).
+      {
+        const { screenPaperAppropriateness } = await import("@/lib/email-appropriateness");
+        const appr = await screenPaperAppropriateness({
+          title,
+          abstract: (lead.abstract as string) || "",
+          useJudge: true,
+        });
+        if (!appr.ok) {
+          blockedByAppropriateness++;
+          skipped++;
+          blockedByEthics.push({
+            email: email || "(no email)",
+            title: title.slice(0, 80),
+            category: appr.category || "unknown",
+            reason: appr.hard.map((h) => h.message).join("; ").slice(0, 200),
+          });
+          continue;
+        }
+      }
 
       // Prefer the canonicalized arxiv id; synthesize a unique one otherwise.
       const arxivId = arxivIdCanonical ||
@@ -470,7 +499,15 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    return NextResponse.json({ imported, skipped, duplicateInPipeline, errors, blockedByGuard });
+    return NextResponse.json({
+      imported,
+      skipped,
+      duplicateInPipeline,
+      errors,
+      blockedByGuard,
+      blockedByAppropriateness,
+      blockedByEthics,
+    });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Import failed";
     return NextResponse.json({ error: message }, { status: 500 });

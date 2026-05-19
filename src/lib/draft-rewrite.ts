@@ -13,6 +13,7 @@
 
 import type { QcIssue } from "@/lib/email-structural-qc";
 import { REWRITABLE_HARD_CODES, validateEmailStructure } from "@/lib/email-structural-qc";
+import { stripCotLeak } from "@/lib/intro-salvage";
 
 const GEMINI_MODEL = "gemini-2.5-flash";
 const GEMINI_TIMEOUT_MS = 25_000;
@@ -149,6 +150,38 @@ export async function rewriteDraftIntro(args: {
       attempts: [],
       reason: "non_rewritable",
     };
+  }
+
+  // ── FREE SALVAGE PRE-PASS (port of email_qc_harden.strip_cot_leak) ──
+  // If the failing intro is just a leaky generation with the real 四段论
+  // sentence buried inside it, try to recover the clean sentence with
+  // pure string surgery — no LLM call. Re-validate; if QC passes, we
+  // skip the regenerate entirely.
+  const salvaged = stripCotLeak(args.previousIntro);
+  if (salvaged && salvaged !== args.previousIntro) {
+    const salvagedHtml = replaceIntroBlock(args.html, salvaged);
+    const salvageQc = validateEmailStructure({
+      subject: args.subject,
+      html: salvagedHtml,
+      queueMode: true,
+    });
+    if (salvageQc.ok) {
+      return {
+        ok: true,
+        finalHtml: salvagedHtml,
+        finalIntro: salvaged,
+        attempts: [
+          {
+            attempt: 0,
+            newIntro: salvaged,
+            resolvedPrompt: "(salvage: stripCotLeak, no LLM call)",
+            qcCodesAfter: [],
+            ok: true,
+          },
+        ],
+        reason: "salvaged",
+      };
+    }
   }
 
   const attempts: RewriteAttempt[] = [];

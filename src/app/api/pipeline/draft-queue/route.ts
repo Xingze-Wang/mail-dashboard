@@ -5,6 +5,8 @@ import { validateDraft } from "@/lib/draft-validator";
 import { validateEmailStructure } from "@/lib/email-structural-qc";
 import { rewriteDraftIntro } from "@/lib/draft-rewrite";
 import { judgeIntroThreeModels, extractIntroFromHtml } from "@/lib/email-judge";
+import { checkIntroGrounding } from "@/lib/intro-grounding";
+import { screenPaperAppropriateness } from "@/lib/email-appropriateness";
 import { getRep, classifyLead, assignRep, getAssignmentConfig } from "@/lib/assignment";
 import { verifySession, AUTH_COOKIE } from "@/lib/auth";
 import { lookupAuthor } from "@/lib/semantic-scholar";
@@ -140,6 +142,44 @@ async function processOne(row: Record<string, unknown>): Promise<boolean> {
     // explicitly silence the unused-binding lint here.
     void assignRep;
 
+    // ── APPROPRIATENESS GATE (defense in depth) ────────────────────
+    // The import route already screens this with useJudge=true. Re-check
+    // here with useJudge=false (deterministic only) — catches anything
+    // that slipped past (e.g. discovery-promoted leads that didn't go
+    // through /api/pipeline/import). useJudge=false keeps cost zero;
+    // import-time has the LLM-judge backstop for ambiguous cases.
+    {
+      const appr = await screenPaperAppropriateness({
+        title,
+        abstract: (row.abstract as string) || "",
+        useJudge: false,
+      });
+      if (!appr.ok) {
+        console.warn("draft-queue appropriateness blocked", {
+          id,
+          category: appr.category,
+          codes: appr.hard.map((h) => h.code),
+        });
+        await supabase
+          .from("pipeline_leads")
+          .update({
+            status: "judge_quarantined",
+            judge_verdict: {
+              passed: false,
+              block_votes: 0,
+              valid_judges: 0,
+              appropriateness_blocked: true,
+              appropriateness_category: appr.category,
+              appropriateness_issues: appr.hard,
+              ts: new Date().toISOString(),
+            },
+            judge_status: "blocked",
+          })
+          .eq("id", id);
+        return false;
+      }
+    }
+
     // 3. Look up the assigned rep and generate the draft.
     const rep = await getRep(newRepId);
     const draft = await generateDraft({
@@ -243,6 +283,51 @@ async function processOne(row: Record<string, unknown>): Promise<boolean> {
       }
     }
 
+    // ── QUALITY GATE LAYER 2.5 — FREE deterministic grounding check
+    // (port of email_qc_content._check_grounding). Catches wrong-paper
+    // (quoted 《》 title doesn't match) and hallucinated technical terms
+    // (CamelCase / acronyms / hyphen-compounds that don't appear in the
+    // paper's title or abstract). Runs BEFORE the 3-model judge so we
+    // don't burn $0.008/draft on obvious failures.
+    const introForJudge = finalIntro || extractIntroFromHtml(finalHtml);
+    const grounding = checkIntroGrounding({
+      intro: introForJudge,
+      title,
+      abstract: (row.abstract as string) || "",
+    });
+    if (grounding.issues.some((g) => g.severity === "HARD")) {
+      console.warn("draft-queue grounding blocked", {
+        id,
+        ungrounded: grounding.ungrounded_terms,
+        codes: grounding.issues.filter((g) => g.severity === "HARD").map((g) => g.code),
+      });
+      await supabase
+        .from("pipeline_leads")
+        .update({
+          status: "judge_quarantined",
+          draft_subject: draft.subject,
+          draft_html: finalHtml,
+          draft_intro_prompt_resolved: draft.introPromptResolved ?? null,
+          draft_intro_output: finalIntro,
+          qc_verdict: qc,
+          qc_retry_count: qcRetryCount,
+          qc_history: qcHistory.length > 0 ? qcHistory : null,
+          // Stamp a synthetic judge verdict so admin can see why it was blocked
+          judge_verdict: {
+            passed: false,
+            block_votes: 0,
+            valid_judges: 0,
+            grounding_blocked: true,
+            ungrounded_terms: grounding.ungrounded_terms,
+            grounding_issues: grounding.issues,
+            ts: new Date().toISOString(),
+          },
+          judge_status: "blocked",
+        })
+        .eq("id", id);
+      return false;
+    }
+
     // ── QUALITY GATE LAYER 3 — three-model semantic judge (migration 104).
     // Runs Sonnet 4.6 + GLM 4.7 + Gemini 2.5 Flash (direct) in parallel and
     // returns a consensus verdict. Per 2026-05-19 product call: block on
@@ -255,7 +340,6 @@ async function processOne(row: Record<string, unknown>): Promise<boolean> {
     let judgeVerdict = null as Awaited<ReturnType<typeof judgeIntroThreeModels>> | null;
     let judgeStatus: "pass" | "blocked" | "pending" = "pending";
     try {
-      const introForJudge = finalIntro || extractIntroFromHtml(finalHtml);
       if (introForJudge) {
         judgeVerdict = await judgeIntroThreeModels({
           intro: introForJudge,
