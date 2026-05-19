@@ -172,6 +172,91 @@ async function buildExperimentMission(
   };
 }
 
+/**
+ * When a mission is created mid-day, the rep may have already sent /
+ * replied earlier today. bumpMissionProgress can't retroactively count
+ * those because it requires the mission to exist at action time. So
+ * right after inserting today's missions, count today's same-day
+ * activity and stamp mission_progress accordingly. Idempotent — upserts
+ * by mission_id, so repeated calls don't accumulate. Caps progress at
+ * target (also fires auto-complete if appropriate).
+ */
+async function backfillProgressForToday(repId: number, today: string): Promise<void> {
+  // Count today's sends/replies through canonical-counts so the numbers
+  // can't disagree with the dashboard tiles. countSent uses actor_rep_id
+  // (audit-correct per CLAUDE.md actor-vs-owner contract). countReplies
+  // uses the same scoping shape as /api/inbound (rep_id OR thread_id).
+  const startISO = today + "T00:00:00Z";
+  const endISO = today + "T23:59:59Z";
+  const { countSent, countReplies, getThreadIdsForRep } = await import("@/lib/canonical-counts");
+  const { getRep } = await import("@/lib/assignment");
+  const { count: sendCount } = await countSent({
+    actorRepId: repId,
+    since: startISO,
+    until: endISO,
+  }, { cache: false });
+  // Reply scope: replies attributed by rep_id OR any thread_id the rep
+  // sent on. Mirror /api/inbox/unread-count.
+  const rep = await getRep(repId);
+  const threadIds = rep?.sender_email
+    ? await getThreadIdsForRep(repId, rep.sender_email, { cache: false })
+    : [];
+  const { count: replyCount } = await countReplies({
+    repId,
+    threadIds,
+    since: startISO,
+  }, { cache: false });
+
+  // Fetch today's missions for this rep — only ones we should backfill.
+  const { data: missions } = await supabase
+    .from("missions")
+    .select("id, kind, target, status")
+    .eq("rep_id", repId)
+    .eq("due_date", today)
+    .in("status", ["active", "completed"]);
+  if (!missions || missions.length === 0) return;
+
+  const kindToCount: Record<string, number> = {
+    send: sendCount ?? 0,
+    reply: replyCount ?? 0,
+  };
+
+  for (const m of missions) {
+    const actual = kindToCount[m.kind as string];
+    if (typeof actual !== "number") continue;
+    const target = m.target as number;
+    // Cap at target to mirror the auto-complete contract — never claim
+    // 95/50, even if the rep over-sent. Surplus shows up in dashboards.
+    const newCount = Math.min(actual, target);
+    if (newCount === 0) continue;
+
+    const { data: prog } = await supabase
+      .from("mission_progress")
+      .select("count")
+      .eq("mission_id", m.id)
+      .maybeSingle();
+    if (prog && (prog.count as number) >= newCount) continue; // already ahead
+
+    if (prog) {
+      await supabase
+        .from("mission_progress")
+        .update({ count: newCount, updated_at: new Date().toISOString() })
+        .eq("mission_id", m.id);
+    } else {
+      await supabase
+        .from("mission_progress")
+        .insert({ mission_id: m.id, count: newCount });
+    }
+    if (newCount >= target && m.status === "active") {
+      await supabase
+        .from("missions")
+        .update({ status: "completed", completed_at: new Date().toISOString() })
+        .eq("id", m.id)
+        .eq("status", "active");
+    }
+  }
+}
+
 /** Shared seed logic. POST (admin) and GET (cron) both call this. */
 async function seedMissions(): Promise<{ today: string; results: SeedResult[] }> {
   const today = todayIso();
@@ -335,6 +420,18 @@ async function seedMissions(): Promise<{ today: string; results: SeedResult[] }>
         results.push({ rep_id: repId, rep_name: repName, send_target: 0, reply_target: 0, skipped_reason: `insert failed: ${error.message}` });
         continue;
       }
+    }
+    // Backfill mission_progress from same-day activity. Runs whether we
+    // just inserted new missions or the rep already had today's missions
+    // (skipped_reason='already has missions today'). The 2026-05-19 bug:
+    // when the seeder ran 2h after lijinyang sent 80 emails,
+    // bumpMissionProgress had no mission to bump — so today's 80 sends
+    // shipped uncounted. With backfill outside the insert guard, we also
+    // self-heal any earlier missions whose progress drifted.
+    try {
+      await backfillProgressForToday(repId, today);
+    } catch (e) {
+      console.warn("[heuristic-seed] backfill failed (non-blocking)", { repId, err: e instanceof Error ? e.message : String(e) });
     }
 
     const seedResult: SeedResult = { rep_id: repId, rep_name: repName, send_target: sendTarget, reply_target: replyTarget };

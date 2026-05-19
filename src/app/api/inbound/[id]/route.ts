@@ -75,6 +75,17 @@ export async function PATCH(
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
+    // 2026-05-19: clear the canonical-counts cache so the next
+    // /api/inbox/unread-count call sees the new is_read state, not the
+    // up-to-30s-stale cached value that was making the sidebar badge
+    // stick around after the user clicked through an inbound.
+    if (typeof updates.is_read === "boolean") {
+      try {
+        const { invalidateCanonicalCountsCache } = await import("@/lib/canonical-counts");
+        invalidateCanonicalCountsCache();
+      } catch { /* non-fatal */ }
+    }
+
     return NextResponse.json({ id: data.id, isRead: data.is_read });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Failed to update inbound email";

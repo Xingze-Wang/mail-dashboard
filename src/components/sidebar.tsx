@@ -392,6 +392,17 @@ export function Sidebar() {
     };
   }, []);
 
+  // 2026-05-19: re-poll badges on route navigation so the inbox badge
+  // updates after a user lands on /inbox (which marks emails read via
+  // a separate inbox:read event, but if they navigate away or back the
+  // 60s interval is the only refresh path). Fires inbox:read which the
+  // effect above handles via the existing 5s-throttled `load`.
+  useEffect(() => {
+    if (pathname === "/inbox" || pathname === "/emails") {
+      window.dispatchEvent(new Event("inbox:read"));
+    }
+  }, [pathname]);
+
   useEffect(() => {
     let cancelled = false;
     const load = async () => {

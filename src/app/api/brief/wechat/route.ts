@@ -40,17 +40,49 @@ export async function POST(req: NextRequest) {
     marked_by_rep_id: session.repId,
     marked_by_email: session.email,
   };
-  const { data, error } = lead_id
-    ? await supabase
+  // 2026-05-19: the upsert path used to use { onConflict: "lead_id" } but
+  // brief_lookups doesn't have a plain UNIQUE on lead_id — only the
+  // partial index ux_brief_lookups_wechat_per_lead (mig 016) which
+  // Postgres rejects for ON CONFLICT: "no unique or exclusion constraint
+  // matching the ON CONFLICT specification". Result: every "Mark: Added
+  // on WeChat" button click 500'd silently. Switching to find-or-update:
+  // look up the existing wechat row for this lead_id, update if found,
+  // insert if not. Same idempotency guarantee with less reliance on the
+  // partial index. Race-safe enough — the partial index still blocks
+  // duplicate `added_wechat=true` rows at the DB level if two clicks
+  // truly land simultaneously.
+  let data, error;
+  if (lead_id) {
+    const { data: existing } = await supabase
+      .from("brief_lookups")
+      .select("id")
+      .eq("lead_id", lead_id)
+      .eq("added_wechat", true)
+      .maybeSingle();
+    if (existing?.id) {
+      const r = await supabase
         .from("brief_lookups")
-        .upsert(payload, { onConflict: "lead_id", ignoreDuplicates: false })
+        .update(payload)
+        .eq("id", existing.id)
         .select()
-        .single()
-    : await supabase
+        .single();
+      data = r.data; error = r.error;
+    } else {
+      const r = await supabase
         .from("brief_lookups")
         .insert(payload)
         .select()
         .single();
+      data = r.data; error = r.error;
+    }
+  } else {
+    const r = await supabase
+      .from("brief_lookups")
+      .insert(payload)
+      .select()
+      .single();
+    data = r.data; error = r.error;
+  }
 
   if (error) {
     // Log so we can diagnose legacy-email failures (e.g. missing
