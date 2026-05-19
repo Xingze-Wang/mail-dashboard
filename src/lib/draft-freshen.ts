@@ -88,6 +88,16 @@ export async function freshenDraftForRep(args: {
     if (n !== targetName) wrongNames.add(n);
   }
 
+  // Same problem for wechat_id: when a rep changes their wechat_id, the
+  // old value is no longer in any sales_reps row, so the dynamic check
+  // above won't catch it — drafts rendered before the change keep the
+  // stale wechat in them. Add entries here whenever a rep changes wechat.
+  //   2026-05-19: 李金阳 (rep_id=10) renamed wechat 15242580320 → hacsipppp
+  const HISTORICAL_WECHATS = ["15242580320"];
+  for (const w of HISTORICAL_WECHATS) {
+    if (targetWechat && w !== targetWechat) wrongWechats.add(w);
+  }
+
   // Longest-first sort so "Chenyu" replaces before "Chen" — avoids
   // prefix-replacement bugs where a substring of one name eats another.
   const orderedNames = [...wrongNames].sort((a, b) => b.length - a.length);
