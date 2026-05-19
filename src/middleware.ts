@@ -17,6 +17,14 @@ const PUBLIC_PREFIXES = [
   // been silently 401'd since 2026-05-14. Match by exact path prefix.
   "/api/missions/allocate-leads",
   "/api/missions/heuristic-seed",
+  // Draft-queue cron entry point — handler accepts x-vercel-cron OR
+  // Bearer $CRON_SECRET OR admin session. Without this, parallel manual
+  // drains from admin scripts 401'd at the middleware (route was never
+  // reached). The master /api/cron fanout uses internal fetch which
+  // bypasses middleware, so prod cron path was never affected — only
+  // admin-triggered drains. Discovered 2026-05-19 during a 624-lead
+  // backlog drain.
+  "/api/pipeline/draft-queue",
   // Webhook diagnostic — no PII, returns "have we ever received an
   // event" so admins can verify Resend → us plumbing externally
   // (e.g. from Resend dashboard, no cookie). Tier 0 visibility tool.
