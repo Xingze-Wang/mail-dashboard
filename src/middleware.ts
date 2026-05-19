@@ -9,6 +9,14 @@ const PUBLIC_PREFIXES = [
   // check, same pattern as /api/cron. Without this, middleware 401s
   // them before they can validate.
   "/api/congress",
+  // Mission cron entry points — both handlers gate themselves with
+  // Bearer + x-vercel-cron. Listing the specific subpaths (not
+  // `/api/missions` blanket) so the rep-facing /api/missions GET still
+  // needs a session. Bug discovered 2026-05-19: route auth was fixed
+  // in 9840e77 but middleware blocked first, so allocator + seeder had
+  // been silently 401'd since 2026-05-14. Match by exact path prefix.
+  "/api/missions/allocate-leads",
+  "/api/missions/heuristic-seed",
   // Webhook diagnostic — no PII, returns "have we ever received an
   // event" so admins can verify Resend → us plumbing externally
   // (e.g. from Resend dashboard, no cookie). Tier 0 visibility tool.

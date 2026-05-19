@@ -354,12 +354,16 @@ export async function POST(req: NextRequest) {
 
 /**
  * GET /api/missions/heuristic-seed — cron entry point.
- * Auth: Bearer $CRON_SECRET. Vercel cron runs this daily 02:00 UTC
- * (10:00 Beijing) so reps see today's missions when they log in.
+ * Auth: `x-vercel-cron: 1` (Vercel cron platform) OR Bearer $CRON_SECRET.
+ * Vercel cron runs this daily; Bearer comparison alone is unreliable per
+ * commit 9840e77 — the platform's header is the authoritative signal.
  */
 export async function GET(req: NextRequest) {
-  const auth = req.headers.get("authorization");
-  if (auth !== `Bearer ${process.env.CRON_SECRET}`) {
+  const isVercelCron = req.headers.get("x-vercel-cron") === "1";
+  const auth = req.headers.get("authorization") || "";
+  const secret = process.env.CRON_SECRET;
+  const bearerOk = !!secret && auth === `Bearer ${secret}`;
+  if (!isVercelCron && !bearerOk) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
   const out = await seedMissions();
