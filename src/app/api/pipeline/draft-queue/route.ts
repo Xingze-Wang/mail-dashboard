@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { generateDraft, normalizeMatchedDirections } from "@/lib/email-generator";
 import { validateDraft } from "@/lib/draft-validator";
+import { validateEmailStructure } from "@/lib/email-structural-qc";
+import { rewriteDraftIntro } from "@/lib/draft-rewrite";
 import { getRep, classifyLead, assignRep, getAssignmentConfig } from "@/lib/assignment";
 import { verifySession, AUTH_COOKIE } from "@/lib/auth";
 import { lookupAuthor } from "@/lib/semantic-scholar";
@@ -155,22 +157,89 @@ async function processOne(row: Record<string, unknown>): Promise<boolean> {
       leadId: id,
     });
 
-    // QUALITY GATE — block drafts with LLM-meta leaks, truncated intros,
-    // missing signature, etc. from reaching `ready` status. Rolls back
-    // to `queued` so the next cron pass re-renders. Shared rules with
-    // scripts/_audit-drafts-v2.mjs in src/lib/draft-validator.ts.
+    // ── QUALITY GATE LAYER 1 — legacy draft-validator (LLM-meta leaks,
+    // truncated intros, missing signature). Keeps its existing behavior:
+    // hard failure rolls back to `queued` for next-cron retry. This catches
+    // the "LLM clearly broke" class.
     const validation = validateDraft({
       subject: draft.subject,
       html: draft.html,
       introOutput: draft.introOutput,
     });
     if (!validation.ok) {
-      console.warn("draft-queue quality gate failed", {
+      console.warn("draft-queue quality gate (legacy) failed", {
         id,
         issues: validation.hard.map((h) => h.key),
       });
       await supabase.from("pipeline_leads").update({ status: "queued" }).eq("id", id);
       return false;
+    }
+
+    // ── QUALITY GATE LAYER 2 — structural lock (migration 103).
+    // Catches a stricter class of failures (CoT leak markers, Gemini error
+    // string in body, banned symbols, block count broken, intro missing
+    // the 算力 hook, etc). On hard failure we try LLM-driven rewrite up to
+    // 2 attempts before quarantining.
+    let finalHtml = draft.html;
+    let finalIntro = draft.introOutput ?? "";
+    let qcRetryCount = 0;
+    const qcHistory: Array<Record<string, unknown>> = [];
+    let qc = validateEmailStructure({
+      subject: draft.subject,
+      html: finalHtml,
+      queueMode: true,
+    });
+
+    if (!qc.ok) {
+      const rewrite = await rewriteDraftIntro({
+        html: finalHtml,
+        subject: draft.subject,
+        title,
+        abstract: (row.abstract as string) || "",
+        previousIntro: finalIntro,
+        hard: qc.hard,
+      });
+      qcRetryCount = rewrite.attempts.length;
+      for (const a of rewrite.attempts) {
+        qcHistory.push({
+          ts: new Date().toISOString(),
+          attempt: a.attempt,
+          ok: a.ok,
+          intro_before: finalIntro,
+          intro_after: a.newIntro,
+          qc_codes_after: a.qcCodesAfter,
+          error_message: a.errorMessage ?? null,
+        });
+      }
+      if (rewrite.ok) {
+        finalHtml = rewrite.finalHtml;
+        finalIntro = rewrite.finalIntro;
+        qc = validateEmailStructure({ subject: draft.subject, html: finalHtml, queueMode: true });
+      } else {
+        // Rewrite exhausted (or non-rewritable hard failure like
+        // BLOCK_COUNT / SUBJECT_PREFIX). Quarantine the lead and bail.
+        console.warn("draft-queue structural QC failed, quarantining", {
+          id,
+          hard: qc.hard.map((h) => h.code),
+          rewrite_reason: rewrite.reason,
+          attempts: rewrite.attempts.length,
+        });
+        await supabase
+          .from("pipeline_leads")
+          .update({
+            status: "qc_quarantined",
+            qc_verdict: qc,
+            qc_retry_count: qcRetryCount,
+            qc_history: qcHistory,
+            // Keep draft_html so admin can see what was generated and decide
+            draft_subject: draft.subject,
+            draft_html: finalHtml,
+            draft_intro_prompt_resolved: draft.introPromptResolved ?? null,
+            draft_intro_output: finalIntro,
+          })
+          .eq("id", id);
+        return false;
+      }
     }
 
     await supabase
@@ -184,15 +253,19 @@ async function processOne(row: Record<string, unknown>): Promise<boolean> {
         lead_tier: newTier,
         assigned_rep_id: newRepId,
         draft_subject: draft.subject,
-        draft_html: draft.html,
+        draft_html: finalHtml,
         // Capture the LLM prompt + output that produced this intro
         // (migration 062). Lead-bound; survives reassignment unchanged.
         draft_intro_prompt_resolved: draft.introPromptResolved ?? null,
-        draft_intro_output: draft.introOutput ?? null,
+        draft_intro_output: finalIntro,
         // Snapshot for diff mining (frozen even as sales edits).
         draft_original_subject: draft.subject,
-        draft_original_html: draft.html,
+        draft_original_html: finalHtml,
         draft_model: "server-gemini",
+        // New in mig 103 — structural QC verdict captured at save-to-ready time
+        qc_verdict: qc,
+        qc_retry_count: qcRetryCount,
+        qc_history: qcHistory.length > 0 ? qcHistory : null,
         status: "ready",
       })
       .eq("id", id);

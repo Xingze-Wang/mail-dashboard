@@ -279,6 +279,29 @@ export async function POST(req: NextRequest) {
         console.error(`[batch-send] freshen threw on lead=${id}:`, e);
       }
 
+      // ── DEFENSIVE STRUCTURAL QC (migration 103) ─────────────────────
+      // Mirror of the same check in send/route.ts. Hard-fail on the
+      // resolved-placeholder content blocks this single lead from being
+      // sent, increments the "qc_blocked" counter, and continues the
+      // batch. NEVER let a hard-fail through to Resend.
+      {
+        const { validateEmailStructure } = await import("@/lib/email-structural-qc");
+        const sendTimeQc = validateEmailStructure({
+          subject: freshSubject,
+          html: freshHtml,
+          queueMode: false,
+        });
+        if (!sendTimeQc.ok) {
+          await supabase
+            .from("pipeline_leads")
+            .update({ status: "ready", qc_verdict: sendTimeQc })
+            .eq("id", id);
+          blocks["qc_blocked"] = (blocks["qc_blocked"] || 0) + 1;
+          skipped++;
+          continue;
+        }
+      }
+
       // Atomic claim BEFORE Resend. Hard-closes the double-send race
       // that checkSendAllowed alone couldn't (mig 079). Two parallel
       // batches sending to the same recipient both call this; one

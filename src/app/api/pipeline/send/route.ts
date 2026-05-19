@@ -301,6 +301,38 @@ export async function POST(req: NextRequest) {
       finalHtml = resolved.html;
       finalSubject = resolved.subject;
     }
+
+    // ── DEFENSIVE STRUCTURAL QC (migration 103) ────────────────────────
+    // Last-mile check before Resend. In normal flow this is a no-op — the
+    // draft-queue worker already gated on the same lock when flipping
+    // 'queued' → 'ready'. But:
+    //   - manually-edited drafts can introduce new issues post-validate
+    //   - pre-103 historical drafts (qc_verdict = NULL) never got gated
+    //   - placeholder resolution above could leave a {{REP_*}} unfilled
+    //     if rep identity lookup failed mid-flight
+    // queueMode=false: unfilled {{REP_*}} is HARD here.
+    {
+      const { validateEmailStructure } = await import("@/lib/email-structural-qc");
+      const sendTimeQc = validateEmailStructure({
+        subject: finalSubject,
+        html: finalHtml,
+        queueMode: false,
+      });
+      if (!sendTimeQc.ok) {
+        await supabase
+          .from("pipeline_leads")
+          .update({ status: "ready", qc_verdict: sendTimeQc })
+          .eq("id", id);
+        return NextResponse.json(
+          {
+            error: `结构化 QC 在发送时检测到问题，已阻止本次发送。错误代码：${sendTimeQc.hard.map((h) => h.code).join(", ")}。请在 pipeline 页面查看并修改 draft，或将此 lead 退回 queued 让 cron 重新生成。`,
+            code: "qc_blocked",
+            qc: sendTimeQc,
+          },
+          { status: 422 },
+        );
+      }
+    }
     // Atomic claim — hard-closes the double-send race. checkSendAllowed
     // above is a soft check that can race; this is the hard gate. If
     // another send for the same recipient is already in flight, the
