@@ -509,6 +509,47 @@ export async function processAdminInboxCardAction(rawEvent: unknown): Promise<{
       }
     }
 
+    // Side effect: destructive Lark proposal approved → actually execute it.
+    //
+    // When Leon emits a `tool {"action":"reassign_lead",...}` block in Lark,
+    // lark-agent.ts:1293 wraps it in record_admin_request with evidence
+    // { proposal_action, original_proposal } and pushes a Yes/No card.
+    // Without this branch, the Yes button just marked inbox=acknowledged
+    // and the reassign never happened — silent no-op gap discovered
+    // 2026-05-19 with the lijinyang wechat card.
+    //
+    // We bridge to the same handlers /api/help/execute uses (now extracted
+    // to @/lib/lead-reassign) so web and Lark paths share one code path.
+    // For bulk reassign, we force confirm:true since the Lark Yes click IS
+    // the admin's confirmation (no two-phase preview/apply in this flow).
+    if (typeof evidence.proposal_action === "string" && evidence.original_proposal && typeof evidence.original_proposal === "object") {
+      const proposalAction = evidence.proposal_action;
+      const originalProposal = evidence.original_proposal as Record<string, unknown>;
+      const adminSession = { repId: rep.id, role: "admin" as const };
+      if (proposalAction === "reassign_lead") {
+        const { doReassignLead } = await import("@/lib/lead-reassign");
+        const r = await doReassignLead(adminSession, originalProposal);
+        sideEffectToast = r.ok
+          ? `🔀 已 reassign (${(r.detail.reassigned as number | undefined) ?? 0} lead, ${(r.detail.emailsCascaded as number | undefined) ?? 0} 封邮件归属同步)`
+          : `⚠️ reassign 失败: ${String(r.detail.error ?? "unknown").slice(0, 80)}`;
+      } else if (proposalAction === "reassign_leads_bulk") {
+        // Force confirm — admin already clicked Yes on the Lark card, no
+        // preview/apply two-phase makes sense here.
+        const { doReassignLeadsBulk } = await import("@/lib/lead-reassign");
+        const r = await doReassignLeadsBulk(adminSession, { ...originalProposal, confirm: true });
+        sideEffectToast = r.ok
+          ? `🔀 bulk reassign 完成 (${(r.detail.reassigned as number | undefined) ?? 0} lead, ${(r.detail.emails_cascaded as number | undefined) ?? 0} 封邮件)`
+          : `⚠️ bulk reassign 失败: ${String(r.detail.error ?? "unknown").slice(0, 80)}`;
+      }
+      // Note: batch_send is intentionally NOT bridged here. Each send is a
+      // high-stakes action and the existing batch_send flow already has its
+      // own confirmation UI on the web; admin-from-Lark batch-send needs a
+      // separate per-lead confirm step we haven't built yet. If admin clicks
+      // Yes on a batch_send card, the inbox marks acknowledged but no sends
+      // fire — failing closed is correct here. Other unmapped actions
+      // (skip_lead, flag_lead, etc.) also fall through to acknowledge-only.
+    }
+
     // Side effect: Leon scheduled_action approved → flip admin_approved=true
     // so the agent-scheduler cron picks it up on its next pass. The row
     // was created with next_fire_at=now() so it fires immediately on the
