@@ -4,6 +4,7 @@ import { generateDraft, normalizeMatchedDirections } from "@/lib/email-generator
 import { validateDraft } from "@/lib/draft-validator";
 import { validateEmailStructure } from "@/lib/email-structural-qc";
 import { rewriteDraftIntro } from "@/lib/draft-rewrite";
+import { judgeIntroThreeModels, extractIntroFromHtml } from "@/lib/email-judge";
 import { getRep, classifyLead, assignRep, getAssignmentConfig } from "@/lib/assignment";
 import { verifySession, AUTH_COOKIE } from "@/lib/auth";
 import { lookupAuthor } from "@/lib/semantic-scholar";
@@ -242,6 +243,61 @@ async function processOne(row: Record<string, unknown>): Promise<boolean> {
       }
     }
 
+    // ── QUALITY GATE LAYER 3 — three-model semantic judge (migration 104).
+    // Runs Sonnet 4.6 + GLM 4.7 + Gemini 2.5 Flash (direct) in parallel and
+    // returns a consensus verdict. Per 2026-05-19 product call: block on
+    // ANY judge voting should_block=true (aggressive). On block we set
+    // status='judge_quarantined' — kept distinct from 'qc_quarantined'
+    // (structural) so admin can tell the failure mode apart.
+    //
+    // Cost: ~$0.008/draft + ~1-2s latency. Safe inside draft-queue's 5s
+    // budget per lead (total ~3-5s including the LLM rewrite path).
+    let judgeVerdict = null as Awaited<ReturnType<typeof judgeIntroThreeModels>> | null;
+    let judgeStatus: "pass" | "blocked" | "pending" = "pending";
+    try {
+      const introForJudge = finalIntro || extractIntroFromHtml(finalHtml);
+      if (introForJudge) {
+        judgeVerdict = await judgeIntroThreeModels({
+          intro: introForJudge,
+          paperTitle: title,
+          paperAbstract: (row.abstract as string) || "",
+        });
+        judgeStatus = judgeVerdict.passed ? "pass" : "blocked";
+      }
+    } catch (err) {
+      // Judge call itself threw (network outage etc). Don't block the
+      // draft on infrastructure failure — log and treat as pending.
+      console.error("draft-queue judge call threw", { id, err: String(err).slice(0, 200) });
+      judgeStatus = "pending";
+    }
+
+    if (judgeStatus === "blocked") {
+      console.warn("draft-queue judge blocked", {
+        id,
+        block_votes: judgeVerdict?.block_votes,
+        valid_judges: judgeVerdict?.valid_judges,
+        mean_instr: judgeVerdict?.mean_instr,
+        mean_rel: judgeVerdict?.mean_rel,
+      });
+      await supabase
+        .from("pipeline_leads")
+        .update({
+          status: "judge_quarantined",
+          draft_subject: draft.subject,
+          draft_html: finalHtml,
+          draft_intro_prompt_resolved: draft.introPromptResolved ?? null,
+          draft_intro_output: finalIntro,
+          // Persist the structural QC too even though it passed — useful audit
+          qc_verdict: qc,
+          qc_retry_count: qcRetryCount,
+          qc_history: qcHistory.length > 0 ? qcHistory : null,
+          judge_verdict: judgeVerdict,
+          judge_status: "blocked",
+        })
+        .eq("id", id);
+      return false;
+    }
+
     await supabase
       .from("pipeline_leads")
       .update({
@@ -262,10 +318,14 @@ async function processOne(row: Record<string, unknown>): Promise<boolean> {
         draft_original_subject: draft.subject,
         draft_original_html: finalHtml,
         draft_model: "server-gemini",
-        // New in mig 103 — structural QC verdict captured at save-to-ready time
+        // mig 103 — structural QC verdict captured at save-to-ready time
         qc_verdict: qc,
         qc_retry_count: qcRetryCount,
         qc_history: qcHistory.length > 0 ? qcHistory : null,
+        // mig 104 — three-model semantic judge verdict (may be null if
+        // the judge layer threw infrastructure-side; treated as pending).
+        judge_verdict: judgeVerdict,
+        judge_status: judgeStatus,
         status: "ready",
       })
       .eq("id", id);
