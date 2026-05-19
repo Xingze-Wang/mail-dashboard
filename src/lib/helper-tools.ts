@@ -59,10 +59,13 @@ export const READ_TOOL_NAMES = new Set([
   "get_rep_helper_activity",
   "get_org_helper_activity_today",
   "get_lead_counts",              // aggregate counts (total + per-rep + unassigned), much cheaper than list_leads for "how many" questions
+  "get_lead_status_breakdown",    // per-rep × status grid: "每人手里多少 lead, 都什么状态"
   "get_mp_conversions",           // 2x2 conversion matrix: emailed × (registered MP) × (submitted application) × (added wechat). Ground truth from MiraclePlus CRM mirror.
   "explain_app_feature",          // retrieve sections of the app overview doc — "how do I use X / what is Y page"
   "explain_ontology",             // entity/action registry — names + relationships + actions
   "propose_self_skill",           // Leon proposes a new rule for itself → admin Yes → activates in future prompts
+  "schedule_action",              // Leon schedules a future action (dm_user / call_workflow) → admin Yes → fires on cron
+  "get_tool_usage_stats",         // admin only: tool-call counts over a window (which tools used most / never called)
   "propose_tool",                 // Leon authors a new SQL tool → admin approval → tool is callable
   "list_dynamic_tools",           // see what Leon-authored tools exist (any status)
   "approve_dynamic_tool",         // admin-only: approve a pending dynamic tool by id
@@ -77,7 +80,6 @@ export const READ_TOOL_NAMES = new Set([
   "list_admin_escalations",      // see Leon's pending "I was unsure" queue
   "escalate_to_admin",            // Leon is uncertain → ask admin instead of guessing
   "diagnose_metric_drop",
-  "find_similar_leads",
   // ── Lark write actions, exposed as "lookup-style" tools so the bot
   //    can fire them in-line during a Lark DM. The user is right there
   //    in DM with the bot; they see the message land, can call it back
@@ -125,6 +127,53 @@ export interface ToolCall {
  * System prompt fragment describing every tool. Appended to the
  * main SYSTEM prompt in /api/help/ask.
  */
+/**
+ * Role-aware tool prompt — strips admin-only tool bullets when role !== "admin".
+ *
+ * Why: TOOLS_PROMPT is ~10K tokens of tool catalog injected into every
+ * agent turn. Sales reps don't have access to ~28 admin-only tools, but
+ * they still see them in their context window, which (a) costs tokens
+ * (b) makes the LLM more likely to be confused and try one (cf. "openclaw
+ * dumb-ification" — the agent sees a tool and reaches for it).
+ *
+ * How: we tag admin-only bullets with "**admin only**" / "admin-only" /
+ * "**admin-only**" markers (already present in 19-28 of the ~84 tool
+ * docstrings, with stylistic variance). This function regex-strips
+ * those bullet lines for non-admin callers. Single source of truth
+ * (one TOOLS_PROMPT string) stays intact; runtime view is filtered.
+ *
+ * Edge case — multi-line bullets: some tools span multiple paragraphs.
+ * We strip until the next bullet (`- `) or section heading (`##`).
+ *
+ * Caller: lark-agent.ts line ~678 — replace `TOOLS_PROMPT` with
+ * `getToolsPromptForRole(session.role)`.
+ */
+export function getToolsPromptForRole(role: "admin" | "senior" | "sales"): string {
+  if (role === "admin") return TOOLS_PROMPT;
+  // Strip admin-only tool bullets. Pattern: a bullet line starting with
+  // `- ` whose first paragraph contains an admin-only marker, plus any
+  // continuation lines until the next bullet or section heading.
+  const lines = TOOLS_PROMPT.split("\n");
+  const out: string[] = [];
+  let skipping = false;
+  const ADMIN_RE = /\*\*admin[- ]?only\*\*|^- [a-z_]+ — admin[- ]?only/i;
+  for (const line of lines) {
+    if (line.startsWith("- ")) {
+      // Starting a new bullet — decide whether to skip it.
+      skipping = ADMIN_RE.test(line);
+      if (!skipping) out.push(line);
+    } else if (line.startsWith("## ") || line.startsWith("**A. ") || line.startsWith("**B. ")) {
+      // Section heading — end any skip block.
+      skipping = false;
+      out.push(line);
+    } else if (!skipping) {
+      out.push(line);
+    }
+    // else: in skipping block, drop the line
+  }
+  return out.join("\n");
+}
+
 export const TOOLS_PROMPT = `## 工具系统
 
 你有两类工具, **两种不同的代码块**:
@@ -132,7 +181,7 @@ export const TOOLS_PROMPT = `## 工具系统
 **A. 查询工具 (lookup 块, 立即执行, 无需确认)** — 用 \`\`\`lookup\`\`\` 块. 包括所有 get_* / list_* / search 类, 也包括 **propose_tool / propose_db_write / start_guided_task / propose_doc_edit / escalate_to_admin / record_admin_request** — 这些"propose" 系列虽然名字像 action, 但都注册在 READ_TOOL_NAMES 里, 必须用 \`\`\`lookup\`\`\` 调. 工具自己内部会推 Lark 卡 / 写 admin_inbox 等等. 例:
 
 \`\`\`lookup
-{"tool": "list_leads", "args": {"status": "ready", "limit": 5}}
+{"tool": "list_leads", "args": {"query": "Yanye Lu"}}
 \`\`\`
 
 \`\`\`lookup
@@ -140,13 +189,13 @@ export const TOOLS_PROMPT = `## 工具系统
 \`\`\`
 
 查询工具列表:
-- list_leads — 列出 leads. args: { status?: "ready"|"sent"|"replied"|"skipped"|"drafting", query?: string (搜 name/email/title), limit?: number (最多20) }. 返回: [{id, title, author_name, author_email, lead_tier, status, created_at, published_at, assigned_rep_id, mp_registered (bool — 这个收件人是否已在奇绩 CRM 注册), mp_submitted (bool — 是否已提交申请), wechat_added (bool — 我们是否标记加过微信)}, ...]. **MP 三色信号**: 不要再单独 lookup get_mp_conversions 看"这条到底转化了没" — 直接看每条 lead 的 mp_registered / mp_submitted / wechat_added 三个 boolean.
+- list_leads — **按关键词搜 lead** (拿 lead_id 用), 最多返 10 条. args: { query: string (**必填** — 搜 paper title / author_name / author_email 的子串, 中英文都行), status?: "ready"|"sent"|"replied"|"skipped"|"drafting" (可选, 缩小范围), limit?: number (最多10, 默认 5) }. 返回: [{id, title, author_name, author_email, lead_tier, status, created_at, published_at, assigned_rep_id, mp_registered, mp_submitted, wechat_added}, ...]. **什么时候用 (这是唯一合法用法)**: rep 说"Mei 那条 / 加了 X 微信 / skip Yanye 那条 / 发 Huibing Wang", 你**不知道 lead_id** → list_leads(query: "Mei") 拿 id. **绝对不要**用 list_leads 来回答 "我有多少 lead / 还剩几条 / 今天来了几条 cn 的" — 那是 get_lead_counts 的活. 也**绝对不要**用 list_leads 来看"每人持有多少 / 状态怎么分布" — 那是 get_lead_status_breakdown 的活. 没有 query 参数会被工具拒绝. **MP 三色信号** 在返回里 (mp_registered / mp_submitted / wechat_added).
 - get_lead — 单 lead 详情. args: { lead_id: string }. 返回: { lead: 完整 lead 行, mp_signals: { registered, submittedApplication, addedWechat, bucket: "unregistered"|"registered"|"submitted"|null, applicationProgress, submittedAt } | null }. **mp_signals**: 这条 lead 收件人在奇绩 CRM 的状态 (null = 没匹配上). bucket 是最强档位 — submitted > registered > unregistered. 回答 "这个人有没有报名 / 注册了吗 / 加微信了吗" 直接用这个字段.
 - get_my_stats — 当前 rep 的统计. args: {}. 返回: { assigned, ready, sent, replied, wechat, registered_90d (MP CRM 注册转化, 过去 90 天), submitted_application_90d (MP CRM 开表转化, 过去 90 天), override_used_today, override_cap, override_remaining }. **MP 字段**: 这两个是 ground-truth 转化数 (不是 wechat 那种代理信号), rep 问"我转化了多少 / 我有几个真报名了"直接用 submitted_application_90d.
 - get_my_missions_today — 当前用户今天的 missions 列表. args: {}. 返回: { ok, missions: [{id, kind, target, progress, status, scope}], today_conversions: { registered, submitted_application, wechat_added } (MP CRM 今天的转化 delta, 都是 Beijing 0 点至今, scope=本人 actor_rep_id) }. **用于回答**: (1) "今天的任务是什么 / 今天还有多少要做" → missions; (2) "今天有人报名了吗 / 今天加了几个微信" → today_conversions. 全 0 时, 不要主动提 conversions (那条信号会很安静, 别噪音).
 - get_admin_daily_report — admin-only. 重新生成今天的 admin daily report 文本 (org volume + 按 rep 表 + AI 使用 + 警告). args: {}. 返回: { ok, text }. 用于回答 "今天 report 长什么样 / 给我看下今天的 dashboard".
 - get_rep_info — 当前 rep 自己的信息. args: {}. 返回: { id, name, email, role }
-- list_reps — 全部 sales reps 的列表 (用于 name → rep_id 翻译). args: {}. 返回: { reps: [{id, name, sender_name, lark_name, aliases, role, active}, ...] }. **什么时候用**: 用户用名字提到任何**别的** rep 时 (不是自己) — 比如 "把这个 lead 给 Yujie", "Mei 那边的 .cn lead 都给 Leo". 你不知道 Yujie/Mei/Leo 的 rep_id, 必须先 lookup. **匹配规则**: 用户说的名字要在 (a) name, (b) sender_name, (c) lark_name (中文飞书名), (d) aliases[] (pinyin + 简称 + 中文别名, 见 mig 081) 里任一字段找到. e.g. "caohongyuze" → 匹配 aliases → id=3 (Ethan); "曹鸿宇泽" → 匹配 lark_name → id=3; "宇泽" → 匹配 aliases → id=3. 中文姓 (Cao / Du / Wang) 单独不够 — 还要看上下文消歧. **硬规则**: reassign_lead 和 reassign_leads_bulk 工具的 to_rep_id / currentRepId 字段必须是 list_reps 返回的真实 id, **绝对不要**自己编 (写 1 / 2 / 3 这种猜测式 id 是常见 bug). 用户说 "Yujie" → lookup → 找到 id=2 → tool 里写 to_rep_id: 2.
+- list_reps — 全部 sales reps 的列表 (用于 name → rep_id 翻译, 也用来给 dm_user 拿 lark_open_id). args: {}. 返回: { reps: [{id, name, sender_name, lark_name, aliases, role, active, lark_open_id}, ...] }. **什么时候用**: 用户用名字提到任何**别的** rep 时 (不是自己) — 比如 "把这个 lead 给 Yujie", "Mei 那边的 .cn lead 都给 Leo". 你不知道 Yujie/Mei/Leo 的 rep_id, 必须先 lookup. **匹配规则**: 用户说的名字要在 (a) name, (b) sender_name, (c) lark_name (中文飞书名), (d) aliases[] (pinyin + 简称 + 中文别名, 见 mig 081) 里任一字段找到. e.g. "caohongyuze" → 匹配 aliases → id=3 (Ethan); "曹鸿宇泽" → 匹配 lark_name → id=3; "宇泽" → 匹配 aliases → id=3. 中文姓 (Cao / Du / Wang) 单独不够 — 还要看上下文消歧. **硬规则**: reassign_lead 和 reassign_leads_bulk 工具的 to_rep_id / currentRepId 字段必须是 list_reps 返回的真实 id, **绝对不要**自己编 (写 1 / 2 / 3 这种猜测式 id 是常见 bug). 用户说 "Yujie" → lookup → 找到 id=2 → tool 里写 to_rep_id: 2.
 - get_my_growth — 当前 rep 的成长打分 (4 个维度: 选 lead 眼光 / AI 草稿契合度 / 跟进节奏 / 回信温度), 每维 1-5 rung + 证据 + 下一步解锁. args: {}. 返回: { dimensions[], overall_rung, top_strength, top_opportunity }. **什么时候用**: rep 问 "我做得怎么样 / 怎么提高 / 我的水平" 时, 或者你想用证据回答 "下一步该练什么"; 也可以在每天第一次开 panel 时主动调用作为 opener.
 - get_my_weekly_recap — 当前 rep 过去 7 天的活动总结. args: {}. 返回: { windowDays, sent, clicked, wechat, registered_7d (MP CRM 注册转化, 7 天), submitted_7d (MP CRM 开表转化, 7 天), clickRate, wechatRate, topPerformer: {lead_id, title, recipient, wechat_at} | null }. **什么时候用**: 周一 (Beijing time) session 第一次开 panel 时主动 lookup 一次, 用 "上周你 send 了 X 封, Y 个 click, Z 加了微信, R 个真注册了" 这种自然语言开场. 如果 registered_7d 或 submitted_7d > 0, **优先**提那条 (那才是真转化, click/wechat 是代理信号). 不要列表式罗列数字, 选 1-2 个有意思的点. 周二到周日不主动调用, 除非 rep 自己问 "这周怎么样".
 - get_my_memory — 当前 rep 跨 session 的长期记忆 (helper 记下来的偏好 / 战术 / 自我反思). args: { limit?: number }. 返回: [{kind, body, scope, confidence, created_at}, ...]. **什么时候用**: 任何 session 第一次回答前都应该 lookup 一次, 这样你的回答可以延续上次的话题, 不会忘记 rep 之前告诉你的偏好.
@@ -155,7 +204,6 @@ export const TOOLS_PROMPT = `## 工具系统
 - get_admin_alerts — **admin only**. 当前需要 admin 注意的事 (drift 待审, 销售卡住, 团队点击率异常, 模型样本不够等). args: {}. 返回: { alerts: [{ kind, severity, headline, evidence, action_hint }, ...] }. **什么时候用**: 当用户 role=admin 时, 每天第一次开 panel 应该主动 lookup 一次, 把最重要的 1-3 条以 "今天值得看一眼:" 的格式开场.
 - get_wechat_followups — 当前 rep 标了 "Added on WeChat" 但 ≥3 天没有 reply 的 leads. args: {}. 返回: { stale: [{ lead_id, recipient, lead_title, days_stale, marked_at }, ...] }. **什么时候用**: session 开场如果 rep 是 sales 角色 (不是 admin), 主动 lookup 一次. 如果有 stale 条目, 用 "你 X 天前在微信加了 Y, 可能值得 chime back 一下" 的方式提一句, 不要列全部, 挑 1-2 个最久的就行.
 - get_integrity_report — **admin only**. 数据完整性体检 (webhook 是否在收事件 / inbound 是否都归属到 rep / wechat 标记是否都有 actor / cron 是否还在跑 / etc). args: {}. 返回: { ranAt, checks: [{name, status: "green"|"yellow"|"red", detail}], summary }. **什么时候用**: admin session 第一次开 panel 时, 跟 get_admin_alerts 一起 lookup. 如果有 red 项, **优先**告诉 admin ("数据系统有 1 项 red: webhook 24h 没收到事件 — 这意味着 status 更新只靠每天 cron, 看 dashboard 会有最多 24h 延迟"). yellow 一般不主动提.
-- find_similar_leads — embedding 空间里找跟 reference lead 最像的 N 个 lead. args: { reference_lead_id: string (UUID), n?: 5 }. 返回: { reference_lead_id, similar: [{lead_id, title, distance}, ...] }. **什么时候用**: 当 rep 说 "再来一打那种 lead / 给我找几个像 X 的 / 跟这个类似的还有谁" 时. 注意: pgvector 没启用 / embedding 没回填的话会返回 error 字符串 — 直接说 "embedding 还没准备好, 让 admin 在 Supabase dashboard 启用 vector + 跑 backfill 脚本", 别假装在搜.
 - diagnose_metric_drop — 拿当前 metric (click_rate 或 wechat_rate) 在 cur 7 天 vs prev 7 天的变化, 同时返回 4 个协变量 (subject_length / geo / lead_tier / school_tier) 的分布偏移. args: { metric: "click_rate"|"wechat_rate", days?: 7, repId?: number (admin 可指定) }. 返回: { metric, prevRate, curRate, ratioChange, noise, cards: [{covariate, biggestShift, hypothesis}] }. **什么时候用**: 当 admin 或 rep 问 "为什么 X 在掉 / 为什么这周不好 / 怎么回事" 时, lookup 一次. 用 cards 里的 hypothesis 给一个**带证据的猜测**, 不要拍脑袋. noise=true 表示样本不够 (各窗口 <20 sent), 那就直说 "样本太少, 不能下结论". 不要主动调 — 只有用户问才用.
 - get_rep_helper_activity — **admin only**. 查看某个 rep 最近问 helper 的原话 (跨 session). args: { repId: number, limit?: 10, days?: 14 }. 返回: { repId, windowDays, messages: [{text, createdAt}, ...] }. **什么时候用**: 当 admin 主动问 "X 最近在问什么 / 困在哪 / 你跟 Yujie 都聊了啥" 时用. 不要主动 lookup — 这是侵入性的, 等 admin 明确说想看再用. 注意: shared_helper_questions cluster 已经聚合了多 rep 共性问题, 这个 tool 是补足那个 (只看一个人).
 - get_org_helper_activity_today — **admin only**. 跨**所有 rep**, 跨**两个 surface (web helper_messages + Lark lark_messages)**, 列出过去 N 小时谁问了 helper 什么. args: { hours?: 1-168 (默认 24) }. 返回: { window_hours, total_messages, unique_senders, rows: [{ rep_id, display (从 sales_reps join 来的真名), surface_breakdown, message_count, samples: [{ surface, text, at }, ...] }, ...] }. **什么时候用 (这是关键)**: admin 问 "**今天/最近 X 小时 谁问过 helper / 谁活跃 / 大家都在问什么**" 时必须用这个工具, **不要**自己用 helper_messages 一张表给答案 (会漏掉 Lark 的). **display 字段是 join 出来的真名**, 直接用; **绝对不要**自己从 rep_id 推名字 (历史 bug: 看到 rep_id=5 就猜成"王泽群", 真名其实是 Xingze; rep_id 必须永远 from tool result). rep_id=null 的 bucket 是群聊里没 @bot 的 traffic 或没绑 sales_reps 的人, 当成 "(group-chat or unbound)" 标出来.
@@ -186,11 +234,15 @@ export const TOOLS_PROMPT = `## 工具系统
 - list_dynamic_tools — 看 Leon 自己造的 SQL 工具有哪些 (跨任何 status). args: { status?: "pending"|"approved"|"rejected"|"deprecated"|"all" (默认 approved), limit?: 1-100 (默认 30) }. 返回: { status, count, tools: [{ id, name, description, args_schema, param_order, status, call_count, last_called_at, last_error, proposed_by_rep_id, proposed_at, proposal_reason }, ...] }. **什么时候用**: (1) **session 开始时**, 如果你怀疑可能已经有适合的 dynamic tool, lookup 一次看名字; (2) admin 问 "你最近造了什么工具 / 哪个 tool 还没批 / 我之前批的那个 X 还在不在用" 时. **不要**主动展开, 挑相关的 1-3 个用 "你有 X, Y, Z 这几个" 的方式提.
 - approve_dynamic_tool — **admin only**. 直接通过一个 pending dynamic_tool, 让它变成 approved (即可调用). args: { tool_id: string (uuid), note?: string }. 返回: { ok, error? }. **什么时候用**: admin 在 Lark DM 里说 "approve 那个 tool / 那个我批了" 或者从 list_dynamic_tools 的列表里指定 id. 也可以走 Lark 卡片的 Yes 按钮 (走 admin_inbox_action), 二选一就行.
 - propose_self_skill — **当你 (Leon) 自己发现自己有 gap, 想给自己加一条规则**, 用这个 (\`\`\`lookup\`\`\` 块). args: { body: string (≥10 字, 规则正文, 第一人称, 写成"我以后应该 X"), triggers?: string[] (≤6, 触发短语 — 留空 = universal 永久激活), reasoning?: string (为什么这条规则有用) }. 返回: { ok, inbox_id, message }. **什么时候用 (这是关键)**: (1) 你自己刚才**几乎犯错** (差点答了错的, 中途意识到了); (2) admin 隐含地指出一个 pattern (e.g. "你又忘 lookup 了" — 不是单次纠正, 是行为模式); (3) 你**注意到自己反复需要解释同一个 caveat** (e.g. "每次 send_lead_email 前都得提醒 rep 检查 draft" — 该把它做成 skill); (4) 你在 lookup 之前**犹豫**该用哪个 tool — 把决策规则写成 skill 给未来的自己. 流程: 想清楚规则文字 + 想 2-4 个触发短语 (中英文都行, 用户可能怎么说) → 调 propose_self_skill → admin 在 Lark 看到 Yes/No, Yes 后下次同样的查询你的 prompt 里就有这条 skill 了. **诚实要求**: body 要写**确切的规则**, 不要写"我应该更小心" 这种废话. 应该是 "当 X 出现时, 我先 Y 再 Z".
+- schedule_action — **Leon 自己 schedule 一个未来的动作** (DM 某 rep / 跑一个 workflow), 提一个 proposal 让 admin Yes 之后由 /api/cron/agent-scheduler 在到点时自动触发. args: { kind: "dm_user" | "call_workflow" (v1 只这两种; call_tool 在 cron 里还没实现, 别选), cron_expr: string (5-field UTC 标准 cron, e.g. "0 17 * * 5" = 周五 UTC 17:00; **agent-scheduler 是 daily 跑的, 所以分钟级精度不存在 — 行实际在下一次 09:00 UTC 扫描时才会 fire**), target_rep_id?: number (kind=dm_user 必填, list_reps 拿到的真 id), payload: { message?: string (dm_user 用, ≤500 字), workflow_name?: string (call_workflow 用, v1 没注册任何 workflow, 写了会 errored) }, description: string (≤300 字, 一句话讲这次 schedule 是干嘛, 会贴在 admin 卡上) }. 返回: { ok, scheduled_action_id, inbox_id, message }. **什么时候用 (这是关键)**: 当 rep/admin 说 "**X 时间提醒我 Y / 每周五下午跑一遍 Z / 明天早上 DM 某某说...**" 这种**延后/重复**的需求. **不是**用来回答 "现在帮我做 X" (那是立刻执行). **诚实要求**: 跟用户讲清楚 cadence — agent-scheduler 是 daily 09:00 UTC (Beijing 17:00) 才扫一次, 所以你写的 cron 是 "最早允许 fire 的时间", 实际可能比写的晚 0-24 小时. 不要承诺 "17:00 准时". **流程**: admin 在 Lark 看到 Yes/No 卡, Yes 后 admin_approved=true, 下一次 cron 扫描就会 fire. **绝对不要**自己直接写 \`agent_scheduled_actions\` 表 — 必须走这个工具拿 admin approval.
 - explain_ontology — **查 app 的实体/动作注册表**. args: { mode?: "list" (默认, 列所有 entity) | "entity" (拿一个 entity 完整定义, 需要 key) | "by_table" (按表名反查 entity, 需要 table) | "inverse" (找所有指向某 target entity 的关系, 需要 target), key?: "rep"|"lead"|"email"|"conversion"|"mission"|"template"|"learning"|"task"|"document", table?: string, target?: 同 key }. 返回根据 mode 不同. **什么时候用 (这是关键)**: 当你要回答**关于实体的结构性问题** — "Lead 有哪些字段", "Rep 能做什么动作", "marked_by_rep_id 是干嘛的", "我能改 sales_reps 的哪些列" — **先 lookup ontology**, 不要靠记忆瞎答. 8 个 entity: rep / lead / email / conversion / mission / template / learning / task / document. 每个都有 key_properties (字段) + relationships (跟其他 entity 的关系) + actions (能在它上面做的事 + 是否需要 approval). 比 explain_app_feature 更结构化: explain_app_feature 答"页面怎么用", explain_ontology 答"数据怎么连"和"我能做什么".
 - explain_app_feature — **查 app 自己的文档** (docs/APP_OVERVIEW_EN.md 切成 sections). args: { topic?: string (要查的关键词 / 问题, e.g. "pipeline page", "trust level", "微信"), list?: boolean (true=只列所有 sections, 不返回 body) }. 返回: { sections: [{key, title, body}, ...] } 或 { topics: [...] } 当 list=true. **什么时候用 (这是关键)**: 当 admin/rep 问 **"这个 app 怎么用 X" / "Y 页面是干嘛的" / "在哪里能 Z" / "trust_level 是什么意思" / "lead 怎么分配的"** 这种**关于产品本身**的问题. **必须**先 explain_app_feature lookup, 然后用返回的 body 答, **不要靠记忆瞎说**. e.g. 用户问"怎么 bulk send", 你查 topic="bulk send" → 拿到 pipeline page section → 答"在 /pipeline 切 Bulk mode, 多选 lead 然后 confirm". 如果 topic 没匹配 (返回 error), 跟用户说"我对这部分没有现成文档, admin 可能要在 docs/APP_OVERVIEW_EN.md 里补一节". **List 模式**: 不确定有什么 topics 就先 list=true 看一眼.
+- get_lead_status_breakdown — **每人 × 每 status 的二维分布**, 不返回 lead 详情. args: { since_days?: 1-365 (默认 30), geo?: "cn"|"edu"|"overseas", lead_tier?: "strong"|"normal", rep_id?: number (admin 才能指定别人; 不传 = 全公司; 非 admin 强制本人) }. 返回: { window_days, filters, total, status_totals: { ready: N, sent: N, replied: N, skipped: N, drafting: N, ... }, per_rep: [{rep_id, name, total, by_status: { ready: N, sent: N, ... }}, ...排序: total 多到少, 含 rep_id=null 的 "(unassigned)" 桶] }. **什么时候用 (这是关键)**: admin 问 "**每个人手里多少 lead, 都什么状态 / 谁堆了一堆 ready 没发 / 谁 sent 多 / 谁今天还卡在 drafting**" 这种**每人 × status 双维度**问题. **不要**用 list_leads 一条条数 (cap=10, 数不对) — 这个 tool 是为这种"看分布"问题专门做的, 跟 get_lead_counts 互补: get_lead_counts 只给 owned_count, 这个再多一层 status. 例子: admin 问"谁手里 ready 最多还没发" → get_lead_status_breakdown({ since_days: 30 }) → 看 per_rep[i].by_status.ready 最大的是谁.
+
 - get_lead_counts — **聚合数: 总数 + 每人 owned + unassigned pool + 每人 MP 转化**, 不返回 lead 详情. args: { since_days?: 1-365 (默认 7), geo?: "cn"|"edu"|"overseas" (按 author_email 域名分类), lead_tier?: "strong"|"normal" }. 返回: { window_days, filters, total, unassigned, per_rep: [{rep_id, name, owned_count, mp_registered (MP CRM 注册数), mp_submitted (开表数), wechat_added (微信加好友)}, ...排序: owned_count 多到少] }. **什么时候用 (这是关键)**: rep 或 admin 问 "**多少 / 有几条 / 总数 / 谁有多少 / 这周来了多少 cn 的 / 哪个 rep 转化最好**" 这种**聚合数量**问题. **不要**用 list_leads + 数组长度 (那个 cap=20, 数不对). list_leads 是要"看具体哪几条"用的, get_lead_counts 是要"多少条 + 每人转化"用的. 例子: admin 问"哪个 rep 这周 cn lead 开表最多" → get_lead_counts({ since_days: 7, geo: "cn" }) → 按 mp_submitted 找最大.
 - get_mp_conversions — **MiraclePlus CRM 的 ground-truth 转化矩阵**. 数据源: miracleplus_contacts 镜像表 (每天 cron 从奇绩 Open API 同步) + brief_lookups (微信加好友) + emails (我们发出去的). args: { rep_id?: number (admin 才能指定别人; 默认 caller 自己; 不传就看全公司), since_days?: 1-365 (默认 90 — 转化是慢信号, 7 天太短常常 0) }. 返回: { totalEmailed (denominator: 该窗口内实际发到的去重 email 数), matched (MP 里有 contact 的 — 包含 unregistered + registered + submittedApplication 三类), unregistered (MP 有他但 application_progress="未注册" — 收到了我们邮件但没去注册), registered (注册了但没提交 application), submittedApplication (真的提交了申请, signal: progress 包含 "Submitted" 或 applications_number>0 或 submitted_at 非空), wechatAdded (我们标了加微信的), bothWechatAndSubmitted (两者都有的), perRep?: [{rep_id, totalEmailed, matched, unregistered, registered, submittedApplication, wechatAdded, bothWechatAndSubmitted}, ...] (only when rep_id not specified), predicate: { actorRepId, since } }. **什么时候用 (这是关键)**: 当问题是 "**我们的 outreach 实际转化了多少 / 我发的 X 封邮件有几个真的报名了 / Y 加了微信但没报名的有多少 / 哪个 rep 的转化最好**" 这种**真实转化**问题. 这个跟 send/reply 不一样, **能看到 outreach → 报名**的完整漏斗. **注意**: (1) MP API 在部分场景下把 email mask 成 "******", 我们的 join 用 email 文本比对, 会漏匹配 — 数字是 directional 的, 不严格精确. (2) matched 里大多数是 unregistered (MP 知道但没注册), 真转化看 submittedApplication. **不要**自己拼 SQL 算转化, 用这个工具.
 - get_helper_conversation — **admin only**. 拿某个 rep 跟 Leon 的**完整对话** (user + assistant 两边都拿), 跨 Lark 和 web. args: { repId: number, days?: 1-60 (默认 14), limit?: 1-50 (默认 20) }. 返回: { repId, windowDays, turnCount, turns: [{ role: "user"|"assistant", text, createdAt, surface }, ...] }. **什么时候用 (这是关键)**: 当 admin 质问 "你之前跟 X 说啥了 / 你昨天答了什么 / X 来跟我抱怨你说错了, 你说了啥" 时**必须用**, 不要靠猜. **跟 get_rep_helper_activity 的区别**: 那个只返回 user 一侧; 这个返回**双向** (你能看到自己说过什么). admin 在 push 你 (说你答错了) 时, 先调这个看看自己原话, 再说 "我之前说的是 X, 现在改成 Y" — **不要**装作没说过.
+- get_tool_usage_stats — **admin only**. 看 Leon 自己 tool-call 的使用频率分布. args: { days?: 1-90 (默认 7), top_n?: 1-50 (默认 20) }. 返回: { window_days, total_calls, unique_tools, top_used: [{tool_name, call_count, error_count, avg_duration_ms}, ...], never_called: [string, ...] (READ_TOOL_NAMES 里这窗口没被调过的) }. **什么时候用 (这是关键)**: admin 问 "**Leon 最近最常用哪些 tool / 哪些 tool 从来不用 / 哪个 tool 错最多 / Leon 笨没笨**" 时. 这跟 agent-dumbness-check cron 互补: cron 看趋势 (上升=笨), 这个 tool 看 snapshot. **never_called 的意义**: 如果一个 tool 在 7-14 天里**完全没人调**, 大概率 docstring 写得不好 / 没人知道它存在 / 它解决的需求其实没人遇到 — 建议 deprecate 或重写文档. 不要主动跑, 等 admin 问.
 - list_admin_escalations — **admin only**. 看 Leon 最近自己挂起来的 "不确定" 问题. args: { status?: "new"|"acknowledged"|"all" (默认 new), limit?: 1-50 (默认 20) }. 返回: { count, escalations: [{ id, headline, body, fromRepId, status, createdAt, myGuess, whyUnsure }, ...] }. **什么时候用**: admin 问 "你有什么不确定的 / 你最近卡在哪 / 我什么没回你". 回答时直接念 myGuess 和 whyUnsure: "我猜的是 X, 不确定是因为 Y, 帮我看一眼".
 - list_admin_inbox — **admin only**. 列出 admin 收件箱里的笔记. args: { status?: "new"|"acknowledged"|"done"|"dismissed" (默认 new), limit?: 1-50 (默认 20) }. 返回: { status, count, items: [{ id, kind, headline, body, source_rep_id, evidence, status, created_at, updated_at }, ...] }. **什么时候用**: 当 admin 问 "你最近发现什么 / 有什么我应该看的 / inbox / 你给我留了啥" 时. **回答方式**: 别 dump 全部 — 挑 1-3 条最重要的, 用 "你的 inbox 里有 N 条 new, 最重要的是: X, Y, Z" 这种格式. admin 看完想标记某条, 用 mark_admin_inbox.
 - mark_admin_inbox — **admin only**. 把一条 admin_inbox 笔记标记成 acknowledged / done / dismissed. args: { id: uuid, status: "acknowledged"|"done"|"dismissed" }. 返回: { ok, id, status }. **什么时候用**: admin 看完一条说 "看到了 / 已经处理了 / 这条没用". acknowledged = "我知道了, 还没动", done = "搞定了", dismissed = "不重要, 别再提".
@@ -247,16 +299,18 @@ export const TOOLS_PROMPT = `## 工具系统
 ## 工具使用规则 (很重要)
 
 **硬规则**:
-1. 涉及数字的问题 ("多少 / 还剩 / 今天发了几个") → **必须**先 \`\`\`lookup\`\`\` get_my_stats 或 list_leads. 不要凭印象答.
+1. 涉及数字的问题 ("多少 / 还剩 / 今天发了几个") → **必须**先 \`\`\`lookup\`\`\` get_my_stats 或 get_lead_counts 或 get_lead_status_breakdown. **不要**用 list_leads 数数组长度 — list_leads 只用来搜单条 lead_id.
 2. 涉及具体 lead 的操作 ("发/skip/flag/重写 那个 X") → **必须**先 \`\`\`lookup\`\`\` list_leads(query: "X") 拿到真正的 lead_id (UUID). **不要**把作者名字当 lead_id 写进 tool proposal — lead_id 必须是 list_leads 返回的那个 UUID.
 3. 如果 list_leads 返回 0 条或多条歧义, 告诉用户并请他澄清, 不要猜.
 4. 普通知识类问题 ("怎么发邮件") 不需要 lookup, 直接用 Sales Guide 回答.
 5. 一次回答最多一个 tool proposal, 可以多个 lookup.
 6. **描述了操作就必须 propose tool 块**. 如果你在回答里写了 "我会指派 / 我已配置规则 / 我会发 X 封" 这种**做了**口吻, 但**没有**附 \`\`\`tool\`\`\` JSON 块, 用户**根本不会看到 confirm 卡片**, 也就什么都不会发生. 这是最常见的 bug — 别只用文字描述, 配套的 tool 块也得写出来. 反过来说: 如果你只是**讨论**操作 ("如果你想..." / "建议..."), 不要 propose tool, 那是诱导.
+7. **bulk 意图 → reassign_leads_bulk 一张卡, 不是 N 张 propose_db_write**. 当 admin 说"按 X 维度 (geo / lead_tier / 当前归属) 把 Y 类 lead 分给 N 个 rep" — 比如"unassigned cn 给 Yujie, overseas 给金阳, edu 给 Leo" — 这是**典型 bulk 场景**, 必须用 \`\`\`tool {"action":"reassign_leads_bulk", "rules":[...]}\`\`\` **一张卡**搞定. **绝对不要**拆成 4 张 \`propose_db_write\` 单卡 — admin 会被迫按顺序 approve, 一旦 reject 中间一张就有 lead 卡在池子里成 orphan (历史 bug, 2026-05-19 出过). rules 数组里第一条匹配的赢, 没匹配的不动, 自动 preview "会移动 N 条" 给 admin. 同理 "把所有 X 给 Y" 这种全量改也是 bulk 一条规则的事, 不是 N 张单卡.
+8. **明确意图不再反问**. 用户说"DM 这 5 个 sales [原话内容]" / "把 X 给 Y" / "执行" — 这是**已经决定**的事, 直接执行. 不要 3 轮反问"要不要先 lookup / 要不要跳过 senior / 默认全发还是...", 不要让用户重复说"go / 执行". 唯一的确认场景是: 数据不一致 (e.g. list_reps 给的 rep_id 跟 user 说的对不上, 该问); 工具会有真副作用且歧义没消 (e.g. "skip 那个 lead" 但 list_leads 返回 3 条 — 该问哪条). 其他情况照做.
 
 **格式提醒**:
 - lookup 块放在回答的**前面**或**中间**, tool 块放在**最后一行**.
-- lookup JSON 的 tool 字段必须是: list_leads / get_lead / get_my_stats / get_rep_info / list_reps / get_my_growth / get_my_weekly_recap / get_my_memory / get_admin_alerts / get_wechat_followups / get_integrity_report / get_rep_helper_activity / diagnose_metric_drop / find_similar_leads.
+- lookup JSON 的 tool 字段必须是: list_leads / get_lead / get_my_stats / get_rep_info / list_reps / get_my_growth / get_my_weekly_recap / get_my_memory / get_admin_alerts / get_wechat_followups / get_integrity_report / get_rep_helper_activity / diagnose_metric_drop.
 - tool JSON 的 action 字段必须是: batch_send / skip_lead / flag_lead / bulk_flag / redraft_lead / review_next / build_rep_template / open_split_view / remember_about_rep / track_prediction / reassign_lead / reassign_leads_bulk / learn_from_admin_correction / recall_my_mistakes.
 
 **反面例子 (不要这样做)**:

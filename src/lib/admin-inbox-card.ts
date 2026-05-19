@@ -509,6 +509,23 @@ export async function processAdminInboxCardAction(rawEvent: unknown): Promise<{
       }
     }
 
+    // Side effect: Leon scheduled_action approved → flip admin_approved=true
+    // so the agent-scheduler cron picks it up on its next pass. The row
+    // was created with next_fire_at=now() so it fires immediately on the
+    // first scan after approval (then re-computes from cron_expr).
+    if (typeof evidence.scheduled_action_id === "string") {
+      const { error: upErr } = await supabase
+        .from("agent_scheduled_actions")
+        .update({
+          admin_approved: true,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", evidence.scheduled_action_id);
+      sideEffectToast = upErr
+        ? `⚠️ schedule 批准失败: ${upErr.message.slice(0, 60)}`
+        : `⏰ 已批准 — agent-scheduler 下次扫描 (daily 09:00 UTC) 时 fire`;
+    }
+
     // For idea/observation: auto-classify into skill vs memory vs both.
     // EXCEPT if this is a Leon-self-skill-proposal — those already
     // come with the skill body + triggers, no need to re-classify.
@@ -601,6 +618,17 @@ export async function processAdminInboxCardAction(rawEvent: unknown): Promise<{
         approved_at: new Date().toISOString(),
         rejected_reason: "rejected via Lark card (reason pending)",
       }).eq("id", evidence.congress_debate_id);
+    }
+    if (typeof evidence.scheduled_action_id === "string") {
+      // Pause the scheduled action so it can never fire even if some
+      // future code path flips admin_approved=true by accident.
+      await supabase
+        .from("agent_scheduled_actions")
+        .update({
+          status: "paused",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", evidence.scheduled_action_id);
     }
     await supabase
       .from("admin_inbox")

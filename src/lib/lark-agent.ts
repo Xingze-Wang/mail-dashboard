@@ -14,9 +14,9 @@
 
 import { supabase } from "@/lib/db";
 import { llmChat } from "@/lib/llm-proxy";
-import { TOOLS_PROMPT, type ToolProposal } from "@/lib/helper-tools";
+import { getToolsPromptForRole, type ToolProposal } from "@/lib/helper-tools";
 import { runReadTool, extractReadToolCalls, stripReadToolCalls } from "@/lib/helper-read-tools";
-import { recordLearning, loadActiveLearnings, loadRelevantLearnings, formatLearningsForPrompt } from "@/lib/helper-learnings";
+import { loadRelevantLearnings, formatLearningsForPrompt } from "@/lib/helper-learnings";
 import { QIJI_PROGRAM_FACTS } from "@/lib/qiji-facts";
 import { SALES_GUIDE } from "@/lib/sales-guide-corpus";
 import {
@@ -427,7 +427,7 @@ const CORRECTION_LIKE_TRIGGERS: RegExp[] = [
 export function analyzeClaimWithoutTool(cleaned: string): (
   | { detectorFired: false }
   | { detectorFired: true; recoverable: false; reason: string }
-  | { detectorFired: true; recoverable: true; kind: "rep_pref" | "tactic" | "self_critique" | "other"; body: string }
+  | { detectorFired: true; recoverable: true; kind: "rep_pref" | "tactic" | "self_critique" | "skill" | "other"; body: string }
 ) {
   const correctionHit = CORRECTION_LIKE_TRIGGERS.find((re) => re.test(cleaned));
   if (correctionHit) {
@@ -457,23 +457,35 @@ export function analyzeClaimWithoutTool(cleaned: string): (
   }
 
   // Kind detection: look for literal "tactic:" / "rep_pref:" / "skill:"
-  // prefix in the BODY (not the claim). "skill" is intentionally NOT
-  // in the auto-exec allowlist (see auto-execute-safe.ts:54) — if the
-  // model hints "skill:" we still auto-record but the kind will fall
-  // through to "other" inside auto-execute-safe.
-  let kind: "rep_pref" | "tactic" | "self_critique" | "other" = "other";
+  // prefix in the BODY (not the claim). "skill" used to be coerced to
+  // "other" because auto-exec rejected it; now allowed (auto-execute-safe.ts).
+  let kind: "rep_pref" | "tactic" | "self_critique" | "skill" | "other" = "other";
   const prefixMatch = body.match(/^(rep_pref|tactic|self_critique|skill)\s*[:：]\s*/i);
   if (prefixMatch) {
     const found = prefixMatch[1].toLowerCase();
-    if (found === "rep_pref" || found === "tactic" || found === "self_critique") {
+    if (found === "rep_pref" || found === "tactic" || found === "self_critique" || found === "skill") {
       kind = found as typeof kind;
     }
-    // "skill:" → keep kind="other" (auto-exec won't accept "skill")
     body = body.slice(prefixMatch[0].length).trim();
     if (body.length < 20) {
       return { detectorFired: true, recoverable: false, reason: `body too short after kind-prefix strip (${body.length} chars)` };
     }
   }
+
+  // Heuristic upgrade: user-stated hard constraints ("from now on don't X",
+  // "never X", "always X", "以后...都/不要再/永远不/不再") are operational
+  // skills, not soft memories. They must always-load in the system prompt,
+  // not get FTS-recalled when keywords happen to match. The 2026-05-19
+  // session shipped a card-push 20 minutes after the user said "no more
+  // cards for DB ops" because that body was stored as kind=other and the
+  // recall didn't fire. Skill kind + empty triggers = universal load.
+  if (kind === "other") {
+    const HARD_CONSTRAINT_RE = /(以后[^。.\n]{0,40}(都|不要再|不再|永远不|绝对不|要))|(不要再|永远不要|从今以后|从现在开始|never|always|from now on|stop doing|don't ever|do not ever)/i;
+    if (HARD_CONSTRAINT_RE.test(body)) {
+      kind = "skill";
+    }
+  }
+
   return { detectorFired: true, recoverable: true, kind, body };
 }
 
@@ -675,7 +687,34 @@ export async function runAgent(session: LarkSession, question: string, history: 
     console.warn("[lark-agent] repetition check failed (non-blocking):", err);
   }
 
-  const system = SYSTEM_BASE + "\n" + TOOLS_PROMPT + (session.role === "admin" ? ADMIN_PROMPT_ADDENDUM : "") +
+  // Role-gated tool prompt: sales/senior only see the ~56 tools they
+  // can actually use; admin sees all 84. Saves tokens AND reduces the
+  // surface for "openclaw dumb-ification" (agent reaching for tools it
+  // doesn't actually have permission to call).
+  const toolsPrompt = getToolsPromptForRole(session.role);
+
+  // Approved dynamic tools — admin-authored SQL tools that the dispatcher
+  // can resolve at runtime, but the LLM only knows to call them if they're
+  // listed in the system prompt. Without this block, "approve a tool"
+  // succeeds at the DB level but the next turn says "unknown tool"
+  // because the model has no idea the tool exists. Cap at 20 to keep
+  // prompt under control.
+  let dynamicToolsBlock = "";
+  try {
+    const { listDynamicTools } = await import("@/lib/dynamic-tools");
+    const approved = await listDynamicTools({ status: "approved", limit: 20 });
+    if (approved.length > 0) {
+      const lines = approved
+        .map((t) => `- ${t.name} — ${(t.description ?? "").slice(0, 200)}`)
+        .join("\n");
+      dynamicToolsBlock = `\n\n## Admin 已批准的 dynamic tools (用 \`\`\`lookup\`\`\` 调, 跟 built-in 一样)\n${lines}`;
+    }
+  } catch (err) {
+    console.warn("[lark-agent] listDynamicTools failed (non-blocking):", err);
+  }
+
+  const system = SYSTEM_BASE + "\n" + toolsPrompt + (session.role === "admin" ? ADMIN_PROMPT_ADDENDUM : "") +
+    dynamicToolsBlock +
     (learningsBlock ? `\n\n## 长期记忆 (admin 纠正过的 / rep 偏好 / 自检)\n${learningsBlock}\n请尊重以上记忆 — admin 已经纠正过的事实不要再答错.` : "") +
     repetitionNudge;
   let userPrompt = `## 参考资料 — Sales Guide
@@ -701,7 +740,42 @@ ${question}
     }
     toolCallCount += calls.length;
     for (const c of calls) toolNames.push(c.tool);
-    const results = await Promise.all(calls.map((c) => runReadTool(session, c)));
+    // Dispatch each tool while measuring duration and inferring result_status,
+    // so we can write a tool_call_log row per call. Fire-and-forget log
+    // inserts — never block the agent on logging. turn_index is 1-indexed
+    // (iter starts at 0).
+    const results = await Promise.all(calls.map(async (c) => {
+      const t0 = Date.now();
+      const r = await runReadTool(session, c);
+      const duration_ms = Date.now() - t0;
+      const result = r.result as Record<string, unknown> | undefined;
+      const result_status: "ok" | "error" | "empty" = (() => {
+        if (result && typeof result === "object" && "error" in result && result.error) return "error";
+        // "empty" heuristic: result is an array-shaped field of length 0
+        if (result && typeof result === "object") {
+          for (const v of Object.values(result)) {
+            if (Array.isArray(v) && v.length === 0) return "empty";
+          }
+        }
+        return "ok";
+      })();
+      // Truncate args to ≤500 chars per migration 102 contract — no secrets.
+      let argsSummary = "";
+      try { argsSummary = JSON.stringify(c.args).slice(0, 500); } catch { argsSummary = "(unserializable)"; }
+      supabase.from("tool_call_log").insert({
+        rep_id: session.repId,
+        session_id: session.messageId ?? null,
+        turn_index: iter + 1,
+        tool_name: c.tool,
+        args_summary: argsSummary,
+        duration_ms,
+        result_status,
+        error_class: result_status === "error" ? "tool_error" : null,
+      }).then(({ error }) => {
+        if (error) console.warn("[tool_call_log] insert failed (non-blocking):", error.message);
+      });
+      return r;
+    }));
     const summary = results.map((r, i) =>
       `### ${calls[i].tool}(${JSON.stringify(calls[i].args)}) →\n${JSON.stringify(r.result).slice(0, 3500)}`
     ).join("\n\n");
@@ -1154,7 +1228,12 @@ export async function processInboundLarkMessage(
           },
         );
         if (r.executed) {
-          recoverySuffix = `${r.suffix} (auto-recovered: missed tool call)`;
+          // Surface the recovery loudly to admin — silent self-heal hides
+          // the underlying bug (model not emitting tool blocks when it
+          // claims to record). admin can grep transcripts for the marker
+          // and use it to gauge whether model-level instruction-following
+          // is regressing.
+          recoverySuffix = `${r.suffix}\n\n⚠️ heads-up: I claimed "记下来了" without emitting a proper tool block. Auto-recovery wrote it (kind: ${analysis.kind}). If this happens often, my instruction-following is drifting — flag to admin.`;
           console.warn(`[lark-agent/${transport}] CLAIMS_WITHOUT_TOOL_RECOVERED`, {
             rep: rep.id,
             kind: analysis.kind,

@@ -23,11 +23,10 @@ import { getAdminAlerts } from "@/lib/admin-alerts";
 import { getStaleWechatFollowups } from "@/lib/wechat-followup";
 import { runIntegrity } from "@/lib/integrity";
 import { diagnoseMetricDrop, type DiagnoseMetric } from "@/lib/diagnose-metric";
-import type { ToolCall } from "@/lib/helper-tools";
+import { READ_TOOL_NAMES, type ToolCall } from "@/lib/helper-tools";
 
 type Session = { repId: number; role: string; repName?: string; email?: string; messageId?: string | null };
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function scopeRepId(session: Session, args: Record<string, unknown>): number | null {
   if (session.role === "admin") {
@@ -79,22 +78,26 @@ async function autoShareDocToCaller(
 async function listLeads(session: Session, args: Record<string, unknown>) {
   const status = typeof args.status === "string" ? args.status : null;
   const query = typeof args.query === "string" ? args.query.trim() : null;
-  const limit = Math.max(1, Math.min(20, Number(args.limit) || 10));
+  const limit = Math.max(1, Math.min(10, Number(args.limit) || 5));
+
+  if (!query) {
+    return {
+      error:
+        "list_leads requires a query (paper title / author name / email substring). For aggregate counts use get_lead_counts. For status breakdown per rep use get_lead_status_breakdown. For a specific lead use get_lead(lead_id).",
+    };
+  }
+  if (/[,()]/.test(query)) return { error: "query contains invalid characters" };
 
   let q = supabase
     .from("pipeline_leads")
     .select("id, title, author_name, author_email, lead_tier, status, created_at, published_at, assigned_rep_id")
     .order("created_at", { ascending: false })
-    .limit(limit);
+    .limit(limit)
+    .or(`title.ilike.%${query}%,author_name.ilike.%${query}%,author_email.ilike.%${query}%`);
 
   const r = scopeRepId(session, args);
   if (r !== null) q = q.eq("assigned_rep_id", r);
   if (status) q = q.eq("status", status);
-
-  if (query) {
-    if (/[,()]/.test(query)) return { error: "query contains invalid characters" };
-    q = q.or(`title.ilike.%${query}%,author_name.ilike.%${query}%,author_email.ilike.%${query}%`);
-  }
 
   const { data, error } = await q;
   if (error) return { error: error.message };
@@ -385,7 +388,7 @@ async function listReps() {
   // (auto-pulled from Lark) rather than admin-curated.
   const { data, error } = await supabase
     .from("sales_reps")
-    .select("id, name, sender_name, lark_name, aliases, role, active")
+    .select("id, name, sender_name, lark_name, aliases, role, active, lark_open_id")
     .order("id", { ascending: true });
   if (error) return { error: error.message };
   return {
@@ -397,6 +400,7 @@ async function listReps() {
       aliases: Array.isArray(r.aliases) ? r.aliases as string[] : [],
       role: r.role,
       active: r.active !== false,
+      lark_open_id: (r.lark_open_id as string | null) ?? null,
     })),
   };
 }
@@ -559,43 +563,6 @@ export async function runReadTool(
         const report = await runIntegrity();
         return { tool: call.tool, result: { ...report } as unknown as Record<string, unknown> };
       }
-      case "find_similar_leads": {
-        // Dream #9 — cosine NN search in the embedding column.
-        // Stays useful only after migration 030 lands AND
-        // backfill-embeddings has run. Until then returns a clean
-        // hint so the helper can degrade gracefully.
-        const refId = String(args.reference_lead_id ?? "");
-        if (!UUID_RE.test(refId) && !/^[\w-]+$/.test(refId)) {
-          return { tool: call.tool, result: { error: "reference_lead_id required" } };
-        }
-        const limit = Math.max(1, Math.min(20, Number(args.n) || 5));
-        const { data: ref, error: refErr } = await supabase
-          .from("pipeline_leads")
-          .select("id, embedding")
-          .eq("id", refId)
-          .maybeSingle();
-        if (refErr) return { tool: call.tool, result: { error: refErr.message } };
-        if (!ref) return { tool: call.tool, result: { error: "reference lead not found" } };
-        if (!(ref as { embedding?: unknown }).embedding) {
-          return {
-            tool: call.tool,
-            result: {
-              error: "reference lead has no embedding yet — run scripts/backfill-embeddings.mjs (or pgvector extension may not be enabled in Supabase dashboard)",
-            },
-          };
-        }
-        // pgvector cosine distance via SQL — postgrest can't express
-        // <-> operator natively, so use the rpc helper. Falls through
-        // gracefully if rpc missing.
-        const { data: similar, error: simErr } = await supabase.rpc("find_similar_leads_by_embedding", {
-          ref_id: refId,
-          k: limit,
-        });
-        if (simErr) {
-          return { tool: call.tool, result: { error: `rpc failed (helper RPC may need to be defined): ${simErr.message}` } };
-        }
-        return { tool: call.tool, result: { reference_lead_id: refId, similar: similar ?? [] } };
-      }
       case "diagnose_metric_drop": {
         const allowed: DiagnoseMetric[] = ["click_rate", "wechat_rate"];
         const metric = String(args.metric ?? "");
@@ -735,6 +702,205 @@ export async function runReadTool(
             ok: true,
             inbox_id: inbox.id,
             message: "已经把自己想加的规则推给 admin Lark 卡, 等他 Yes.",
+          },
+        };
+      }
+      case "schedule_action": {
+        // Leon schedules a future action; admin must Yes before first fire.
+        // The agent-scheduler cron route handles cron_expr parsing — we
+        // only validate basic shape here. We DON'T precompute next_fire_at
+        // from cron_expr (would require duplicating nextFireUTC); instead
+        // we set it to now() so the next scheduler pass picks it up
+        // immediately AFTER admin approval flips admin_approved=true.
+        // The scheduler then recomputes the *real* next_fire_at after the
+        // first fire using cron_expr.
+        const kind = String(args.kind ?? "");
+        const cronExpr = String(args.cron_expr ?? "").trim();
+        const description = String(args.description ?? "").trim();
+        const payload = (args.payload && typeof args.payload === "object")
+          ? args.payload as Record<string, unknown>
+          : {};
+        const targetRepIdRaw = args.target_rep_id;
+        const targetRepId = typeof targetRepIdRaw === "number" ? targetRepIdRaw : null;
+
+        if (kind !== "dm_user" && kind !== "call_workflow") {
+          return { tool: call.tool, result: { error: "kind must be 'dm_user' or 'call_workflow' (call_tool not supported in v1)" } };
+        }
+        if (cronExpr.split(/\s+/).length !== 5) {
+          return { tool: call.tool, result: { error: "cron_expr must be 5-field standard cron, e.g. '0 17 * * 5'" } };
+        }
+        if (description.length < 10) {
+          return { tool: call.tool, result: { error: "description too short — write what this action is for" } };
+        }
+        if (kind === "dm_user") {
+          if (targetRepId === null) {
+            return { tool: call.tool, result: { error: "target_rep_id required for kind=dm_user" } };
+          }
+          const message = String(payload.message ?? "").trim();
+          if (!message) {
+            return { tool: call.tool, result: { error: "payload.message required for kind=dm_user" } };
+          }
+          if (message.length > 500) {
+            return { tool: call.tool, result: { error: "payload.message too long (>500 chars)" } };
+          }
+        }
+        if (kind === "call_workflow") {
+          const workflowName = String(payload.workflow_name ?? "").trim();
+          if (!workflowName) {
+            return { tool: call.tool, result: { error: "payload.workflow_name required for kind=call_workflow" } };
+          }
+        }
+
+        // Insert row first (admin_approved=false) so we have its id for the
+        // inbox evidence — the admin Yes button uses scheduled_action_id
+        // to flip approval.
+        const { data: row, error: insErr } = await supabase
+          .from("agent_scheduled_actions")
+          .insert({
+            created_by: session.repId,
+            target_rep_id: targetRepId,
+            kind,
+            cron_expr: cronExpr,
+            payload,
+            next_fire_at: new Date().toISOString(),
+            description,
+            admin_approved: false,
+            status: "active",
+          })
+          .select("id")
+          .single();
+        if (insErr || !row) {
+          return { tool: call.tool, result: { error: insErr?.message ?? "insert failed" } };
+        }
+
+        // Resolve target name for the admin card body
+        let targetName = "";
+        if (targetRepId !== null) {
+          const { data: t } = await supabase.from("sales_reps").select("name").eq("id", targetRepId).maybeSingle();
+          targetName = t?.name ?? `rep_${targetRepId}`;
+        }
+
+        const headline = `⏰ Leon 想 schedule: ${description.slice(0, 100)}`.slice(0, 200);
+        const cardBody = [
+          `**Description**: ${description}`,
+          `**Kind**: ${kind}`,
+          `**Cron (UTC)**: \`${cronExpr}\``,
+          kind === "dm_user" ? `**Target**: ${targetName} (rep_id=${targetRepId})` : "",
+          kind === "dm_user" ? `**Message**: ${String(payload.message ?? "").slice(0, 300)}` : "",
+          kind === "call_workflow" ? `**Workflow**: ${String(payload.workflow_name ?? "")}` : "",
+          "",
+          "Yes → 进 active 调度队列, 下一次 09:00 UTC scheduler scan 时 fire.",
+          "No → 标记 status=paused, 不会跑.",
+          "",
+          "注: agent-scheduler 是 daily 跑 (Hobby plan 限制), cron_expr 的分钟字段是 \"最早允许\", 实际可能晚 0-24 小时.",
+        ].filter(Boolean).join("\n");
+
+        const enc = new TextEncoder();
+        const key = `schedule_action|${row.id}`;
+        const buf = await crypto.subtle.digest("SHA-256", enc.encode(key));
+        const dedupHash = Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
+
+        const { data: inbox, error: inboxErr } = await supabase
+          .from("admin_inbox")
+          .insert({
+            kind: "idea",
+            headline,
+            body: cardBody,
+            source_rep_id: session.repId,
+            evidence: {
+              source: "leon_scheduled_action_proposal",
+              scheduled_action_id: row.id,
+              kind,
+              cron_expr: cronExpr,
+              target_rep_id: targetRepId,
+            },
+            dedup_hash: dedupHash,
+          })
+          .select("id")
+          .single();
+        if (inboxErr || !inbox) {
+          return { tool: call.tool, result: { error: inboxErr?.message ?? "inbox insert failed" } };
+        }
+
+        try {
+          const { sendAdminInboxCard } = await import("@/lib/admin-inbox-card");
+          await sendAdminInboxCard({
+            inbox_id: inbox.id,
+            kind: "idea",
+            headline,
+            body: cardBody,
+            source_rep_id: session.repId,
+            evidence: { source: "leon_scheduled_action_proposal" },
+          });
+        } catch (err) {
+          console.warn("[schedule_action] card push failed:", err);
+        }
+
+        return {
+          tool: call.tool,
+          result: {
+            ok: true,
+            scheduled_action_id: row.id,
+            inbox_id: inbox.id,
+            message: `已经 schedule 好了, 在 admin Lark 等 Yes. cron='${cronExpr}' UTC. 注意 scheduler 是 daily 跑.`,
+          },
+        };
+      }
+      case "get_tool_usage_stats": {
+        if (session.role !== "admin") {
+          return { tool: call.tool, result: { error: "admin only" } };
+        }
+        const days = Math.max(1, Math.min(90, Number(args.days) || 7));
+        const topN = Math.max(1, Math.min(50, Number(args.top_n) || 20));
+        const since = new Date(Date.now() - days * 86_400_000).toISOString();
+
+        // Fetch all calls in window (paged — could be many)
+        const rows: Array<{ tool_name: string; duration_ms: number | null; result_status: string | null }> = [];
+        let page = 0;
+        const PAGE = 1000;
+        while (page < 50) {
+          const { data, error } = await supabase
+            .from("tool_call_log")
+            .select("tool_name, duration_ms, result_status")
+            .gte("created_at", since)
+            .range(page * PAGE, (page + 1) * PAGE - 1);
+          if (error) return { tool: call.tool, result: { error: error.message } };
+          const got = data ?? [];
+          rows.push(...got);
+          if (got.length < PAGE) break;
+          page++;
+        }
+
+        // Aggregate
+        const byTool = new Map<string, { count: number; errors: number; total_ms: number; durations: number }>();
+        for (const r of rows) {
+          const t = byTool.get(r.tool_name) ?? { count: 0, errors: 0, total_ms: 0, durations: 0 };
+          t.count++;
+          if (r.result_status === "error") t.errors++;
+          if (typeof r.duration_ms === "number") { t.total_ms += r.duration_ms; t.durations++; }
+          byTool.set(r.tool_name, t);
+        }
+        const top_used = Array.from(byTool.entries())
+          .map(([tool_name, v]) => ({
+            tool_name,
+            call_count: v.count,
+            error_count: v.errors,
+            avg_duration_ms: v.durations > 0 ? Math.round(v.total_ms / v.durations) : null,
+          }))
+          .sort((a, b) => b.call_count - a.call_count)
+          .slice(0, topN);
+
+        const calledNames = new Set(byTool.keys());
+        const never_called = Array.from(READ_TOOL_NAMES).filter((n) => !calledNames.has(n)).sort();
+
+        return {
+          tool: call.tool,
+          result: {
+            window_days: days,
+            total_calls: rows.length,
+            unique_tools: byTool.size,
+            top_used,
+            never_called,
           },
         };
       }
@@ -897,6 +1063,79 @@ export async function runReadTool(
             filters: { geo, lead_tier: tier },
             total: rows.length,
             unassigned,
+            per_rep: perRepArr,
+          },
+        };
+      }
+      case "get_lead_status_breakdown": {
+        // Per-rep × status grid. Answers "每个人手里多少 lead, 都是什么状态"
+        // without dumping rows. Cheaper than list_leads + groupby — uses
+        // the same canonical fetchAllLeads primitive as get_lead_counts so
+        // the numbers can never disagree with the UI tiles.
+        const sinceArg = typeof args.since_days === "number" ? args.since_days : 30;
+        const cutoff = new Date(Date.now() - Math.max(1, Math.min(365, sinceArg)) * 86_400_000).toISOString();
+        const geo = typeof args.geo === "string" ? args.geo : null;
+        const tier = typeof args.lead_tier === "string" ? args.lead_tier : null;
+        // Optional rep filter — non-admin gets force-scoped to themselves.
+        let repFilter: number | undefined;
+        if (session.role === "admin") {
+          const explicit = Number(args.rep_id);
+          repFilter = Number.isFinite(explicit) ? explicit : undefined;
+        } else {
+          repFilter = session.repId;
+        }
+
+        const { rows } = await fetchAllLeads<{
+          assigned_rep_id: number | null;
+          status: string | null;
+          lead_tier: string | null;
+          author_email: string | null;
+        }>(
+          {
+            since: cutoff,
+            repId: repFilter,
+            tier: tier === "strong" || tier === "normal" ? tier : undefined,
+            geo: geo === "cn" || geo === "edu" || geo === "overseas" ? geo : undefined,
+          },
+          "assigned_rep_id, status, lead_tier, author_email",
+        );
+
+        // Bucket: rep_id (or "unassigned") → status → count
+        const grid: Record<string, Record<string, number>> = {};
+        const statusTotals: Record<string, number> = {};
+        for (const r of rows) {
+          const repKey = r.assigned_rep_id == null ? "unassigned" : String(r.assigned_rep_id);
+          const st = r.status ?? "unknown";
+          grid[repKey] ??= {};
+          grid[repKey][st] = (grid[repKey][st] ?? 0) + 1;
+          statusTotals[st] = (statusTotals[st] ?? 0) + 1;
+        }
+
+        // Hydrate rep names
+        const repIds = Object.keys(grid)
+          .filter((k) => k !== "unassigned")
+          .map(Number);
+        const { data: reps } = repIds.length
+          ? await supabase.from("sales_reps").select("id, name").in("id", repIds)
+          : { data: [] as { id: number; name: string }[] };
+        const repName = Object.fromEntries((reps ?? []).map((r) => [r.id, r.name]));
+
+        const perRepArr = Object.entries(grid)
+          .map(([key, byStatus]) => ({
+            rep_id: key === "unassigned" ? null : Number(key),
+            name: key === "unassigned" ? "(unassigned)" : repName[Number(key)] ?? `rep_${key}`,
+            total: Object.values(byStatus).reduce((a, b) => a + b, 0),
+            by_status: byStatus,
+          }))
+          .sort((a, b) => b.total - a.total);
+
+        return {
+          tool: call.tool,
+          result: {
+            window_days: sinceArg,
+            filters: { geo, lead_tier: tier, rep_id: repFilter ?? null },
+            total: rows.length,
+            status_totals: statusTotals,
             per_rep: perRepArr,
           },
         };

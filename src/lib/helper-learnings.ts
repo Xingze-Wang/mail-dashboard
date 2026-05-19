@@ -88,7 +88,11 @@ export async function loadRelevantLearnings(args: {
   const skills: HelperLearning[] = [];
   const memories: HelperLearning[] = [];
   for (const r of rows) {
-    if (r.kind === "skill") skills.push(r);
+    // High-confidence non-skill learnings (>=0.95) get promoted to skill
+    // bucket so they always-load via the universalSkills path. Catches
+    // the case where auto-recovery wrote a hard constraint as kind=other
+    // but with confidence=1.0 — without this they'd silently miss recall.
+    if (r.kind === "skill" || (r.confidence ?? 0) >= 0.95) skills.push(r);
     else memories.push(r);
   }
 

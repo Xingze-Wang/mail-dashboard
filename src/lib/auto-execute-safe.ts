@@ -51,19 +51,28 @@ export async function tryAutoExecuteSafe(
   // ─── remember_about_rep ──────────────────────────────────────────────
   if (proposal.action === "remember_about_rep") {
     const kindRaw = typeof proposal.kind === "string" ? proposal.kind : "other";
-    const allowed = ["rep_pref", "tactic", "self_critique", "other"] as const;
+    // "skill" admitted: a user-stated hard constraint is exactly the
+    // shape that loadRelevantLearnings's universalSkills path was built
+    // for — empty triggers + always loaded. Anything else (other / tactic /
+    // rep_pref / self_critique) goes through FTS recall and silently
+    // misses when the user's next question doesn't share keywords.
+    const allowed = ["rep_pref", "tactic", "self_critique", "skill", "other"] as const;
     type Kind = (typeof allowed)[number];
     const kind: Kind = (allowed as readonly string[]).includes(kindRaw) ? (kindRaw as Kind) : "other";
     const body = typeof proposal.body === "string" ? proposal.body.trim() : "";
     if (!body || body.length < 3 || body.length > 600) return { executed: false };
     const scope = proposal.scope === "org" && session.role === "admin" ? "org" : "rep";
     const scope_rep_id = scope === "org" ? null : session.repId;
+    // Hard constraints pin at confidence=1.0; other auto-recovered
+    // recordings stay at the historical 0.8 so dreaming-style pruning
+    // can still demote them.
+    const confidence = kind === "skill" ? 1.0 : 0.8;
     try {
       const learning = await recordLearning({
         scope_rep_id,
         kind,
         body,
-        confidence: 0.8,
+        confidence,
         evidence: { source: "auto_exec", session_rep: session.repId },
       });
       if (!learning) return { executed: false };
