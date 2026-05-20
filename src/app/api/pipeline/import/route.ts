@@ -70,6 +70,45 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // ─── Per-source disable gate ───────────────────────────────────────
+  // Env-var-controlled kill switch for specific scanner sources. Used
+  // when an upstream scraper is producing low-quality leads and we
+  // want to stop ingesting WITHOUT chasing down the script on a remote
+  // box (it can keep firing; we just return success-but-no-op).
+  //
+  // Two flags:
+  //   DISABLED_SCANNER_SOURCES="python_scanner,jike_scraper"  (comma list)
+  //   DISABLE_ALL_IMPORTS=true                                 (full stop)
+  //
+  // Source matching:
+  //   - peek body.source OR body.leads[0].source on first lead
+  //   - if any incoming lead's source is in the disabled set, the whole
+  //     request returns 200 with { skipped: N, reason: "disabled" }
+  //     so the scanner doesn't loop on errors.
+  const DISABLE_ALL = process.env.DISABLE_ALL_IMPORTS === "true";
+  const DISABLED_SOURCES = (process.env.DISABLED_SCANNER_SOURCES ?? "")
+    .split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  if (DISABLE_ALL || DISABLED_SOURCES.length > 0) {
+    let peek: string | null = null;
+    try {
+      const cloned = req.clone();
+      const j = (await cloned.json()) as { source?: string; leads?: Array<{ source?: string }> };
+      peek = (j.source ?? j.leads?.[0]?.source ?? "external").toLowerCase();
+    } catch {
+      // body unparseable — let the downstream handler reject it
+    }
+    if (DISABLE_ALL || (peek && DISABLED_SOURCES.includes(peek))) {
+      return NextResponse.json({
+        ok: true,
+        skipped: 0,
+        imported: 0,
+        reason: "import_disabled",
+        disabled_source: peek,
+        message: `Imports from "${peek}" are currently disabled via env. Scanner can keep retrying — no leads will land until DISABLED_SCANNER_SOURCES is updated.`,
+      });
+    }
+  }
+
   try {
     const body = await req.json();
 
