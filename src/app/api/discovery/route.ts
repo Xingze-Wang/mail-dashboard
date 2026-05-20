@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import type { DiscoveryLead } from "@/app/pipeline/types";
 import { DISCOVERY_SOURCES, type SourceCode } from "@/lib/sources";
+import { requireSession } from "@/lib/auth-helpers";
 
 /**
  * GET /api/discovery
@@ -28,6 +29,19 @@ import { DISCOVERY_SOURCES, type SourceCode } from "@/lib/sources";
  *   }
  */
 export async function GET(req: NextRequest) {
+  // Discovery is pre-allocation top-of-funnel (no assigned_rep_id on rows),
+  // so per-rep scoping doesn't apply here. Restrict to admin only — sales
+  // reps see their assigned leads via /api/pipeline, not raw discovery.
+  // This closes the 2026-05-20 audit finding (any rep could fetch any
+  // discovery lead via GET /api/discovery).
+  const session = await requireSession(req);
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (session.role !== "admin") {
+    return NextResponse.json({ error: "Forbidden — admin only" }, { status: 403 });
+  }
+
   const sp = req.nextUrl.searchParams;
 
   // ── parse filters ────────────────────────────────────────────────

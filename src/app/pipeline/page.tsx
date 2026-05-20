@@ -231,13 +231,15 @@ const CHANNELS = [
 type ChannelKey = (typeof CHANNELS)[number]["key"];
 
 const STATUS_CHIPS = [
-  { key: "all",       label: "All status" },
-  { key: "drafting",  label: "Drafting" },
-  { key: "ripening",  label: "Ripening" },
-  { key: "ready",     label: "Ready" },
-  { key: "sent",      label: "Sent" },
-  { key: "replied",   label: "Replied" },
-  { key: "skipped",   label: "Skipped" },
+  { key: "all",                label: "All status" },
+  { key: "drafting",           label: "Drafting" },
+  { key: "ripening",           label: "Ripening" },
+  { key: "ready",              label: "Ready" },
+  { key: "sent",               label: "Sent" },
+  { key: "replied",            label: "Replied" },
+  { key: "skipped",            label: "Skipped" },
+  { key: "qc_quarantined",     label: "QC 隔离" },
+  { key: "judge_quarantined",  label: "Judge 隔离" },
 ] as const;
 type StatusKey = (typeof STATUS_CHIPS)[number]["key"];
 
@@ -320,13 +322,17 @@ export default function PipelinePage() {
   ];
 
   const STATUS_CHIPS_L = [
-    { key: "all"      as const, label: t("pipeline.allStatus", locale) },
-    { key: "drafting" as const, label: t("pipeline.drafting",  locale) },
-    { key: "ripening" as const, label: t("pipeline.ripening",  locale) },
-    { key: "ready"    as const, label: t("pipeline.ready",     locale) },
-    { key: "sent"     as const, label: t("stat.sent",          locale) },
-    { key: "replied"  as const, label: t("pipeline.replied",   locale) },
-    { key: "skipped"  as const, label: t("pipeline.skipped",   locale) },
+    { key: "all"               as const, label: t("pipeline.allStatus", locale) },
+    { key: "drafting"          as const, label: t("pipeline.drafting",  locale) },
+    { key: "ripening"          as const, label: t("pipeline.ripening",  locale) },
+    { key: "ready"             as const, label: t("pipeline.ready",     locale) },
+    { key: "sent"              as const, label: t("stat.sent",          locale) },
+    { key: "replied"           as const, label: t("pipeline.replied",   locale) },
+    { key: "skipped"           as const, label: t("pipeline.skipped",   locale) },
+    // QC quarantine buckets (mig 103/104). Admin-facing — surface them
+    // so reviewers can find drafts the gate held back.
+    { key: "qc_quarantined"    as const, label: "QC 隔离" },
+    { key: "judge_quarantined" as const, label: "Judge 隔离" },
   ];
 
   const SORT_OPTIONS_L = [

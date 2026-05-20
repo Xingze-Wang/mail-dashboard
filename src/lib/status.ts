@@ -112,6 +112,12 @@ export const LEAD_STATUSES = [
   "sent",
   "replied",
   "skipped",
+  // mig 103: structural QC failed twice; admin reviews. Distinct from
+  // judge_quarantined so admin can tell the failure mode apart.
+  "qc_quarantined",
+  // mig 104: passed structural but failed grounding / 3-model semantic
+  // judge / appropriateness screen. Admin reviews.
+  "judge_quarantined",
 ] as const;
 export type LeadStatus = (typeof LEAD_STATUSES)[number];
 

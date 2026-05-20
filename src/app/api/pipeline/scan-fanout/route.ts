@@ -100,6 +100,16 @@ async function handle(req: NextRequest) {
   if (!checkAuth(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  // 2026-05-20 KILL SWITCH: arxiv scanning runs exclusively on the Mac mini
+  // now (resend07.py via launchd). ARXIV_SCAN_DISABLED=1 returns a no-op so
+  // even a manual cron hit or stale schedule entry is harmless. Reversible
+  // by clearing the env var.
+  if (process.env.ARXIV_SCAN_DISABLED === "1") {
+    return NextResponse.json({
+      skipped: true,
+      reason: "ARXIV_SCAN_DISABLED=1 — arxiv scan moved to Mac mini",
+    });
+  }
   const secret = process.env.CRON_SECRET;
   if (!secret) {
     // checkAuth would have already returned 401 in this case, but guard

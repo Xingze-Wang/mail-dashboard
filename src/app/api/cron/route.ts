@@ -59,6 +59,13 @@ export async function GET(req: NextRequest) {
   }
 
   // ── Step 2: Scan arxiv for new leads → enrich → classify → assign → draft ──
+  // 2026-05-20 KILL SWITCH: arxiv scanning moved exclusively to the Mac mini
+  // (resend07.py via launchd). Setting ARXIV_SCAN_DISABLED=1 in Vercel env
+  // skips Step 2 entirely so this Vercel cron only runs Resend sync + the
+  // downstream maintenance steps. Reversible without redeploy.
+  if (process.env.ARXIV_SCAN_DISABLED === "1") {
+    results.scan = { skipped: "ARXIV_SCAN_DISABLED=1 — scanning runs on Mac mini" };
+  } else
   try {
     const { leads, stats } = await scanArxiv({ maxPapers: 300, timeBudgetMs: 40_000 });
     const config = await getAssignmentConfig();
