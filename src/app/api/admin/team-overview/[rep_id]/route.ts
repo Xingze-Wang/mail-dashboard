@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/db";
 import { requireSession } from "@/lib/auth-helpers";
+import { computeTeamOverview } from "../route";
 
 export const dynamic = "force-dynamic";
 
@@ -87,6 +88,16 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ rep_
 
   if (!repR.data) return NextResponse.json({ error: "rep not found" }, { status: 404 });
 
+  // Canonical aggregates — same numbers the team-overview list shows.
+  // Before this, the modal computed sent_7d/replied_7d/wechat_7d
+  // client-side from `recent_emails.length` (capped at 15) and
+  // `recent_inbound.length` (always 0 because the wrong table was
+  // queried). Result: card said "113 sends, 2 replies" while the modal
+  // for the same rep said "0 sends, 0 replies". Two sources, one rep,
+  // disagreement. Now both pages render the same numbers from one place.
+  const overview = await computeTeamOverview();
+  const repCard = overview.reps.find((r) => r.rep_id === repId) ?? null;
+
   return NextResponse.json({
     today,
     rep: repR.data,
@@ -97,5 +108,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ rep_
     learnings: learningsR.data ?? [],
     recent_inbound: inboundR.data ?? [],
     recent_wechat: wechatR.data ?? [],
+    // Aggregates (single source — same as the team-overview card)
+    overview: repCard,
   });
 }

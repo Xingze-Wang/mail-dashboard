@@ -143,7 +143,9 @@ export default function MissionsPage() {
     return (
       <div>
         <h1 className="page-title">Missions</h1>
-        <p style={{ color: "var(--text-secondary)", marginTop: 12 }}>Mission system not initialized.</p>
+        <p style={{ color: "var(--text-secondary)", marginTop: 12 }}>
+          Couldn&apos;t load missions — please sign in and retry.
+        </p>
       </div>
     );
   }
@@ -559,11 +561,17 @@ interface RepOverviewCard {
   today_goal: string | null;
   today_reasoning: string | null;
   today_bullets: string[];
+  // Today bucket
+  new_leads_today: number;
+  sent_today: number;
+  replied_today: number;
+  wechat_today: number;
+  // 7d trailing
   sent_7d: number;
   replied_7d: number;
   wechat_7d: number;
   ready_queue: number;
-  sends_today: number;
+  sends_today: number;        // alias for sent_today, kept for back-compat
   missions_total: number;
   missions_done: number;
   last_activity_at: string | null;
@@ -662,10 +670,116 @@ function TeamOverviewSection() {
           </span>
         </div>
       )}
+      <AssignMissionForm reps={reps} onCreated={() => {
+        // Re-fetch team overview so missions_total/done reflects the new row.
+        void fetch("/api/admin/team-overview", { credentials: "include", cache: "no-store" })
+          .then((r) => r.ok ? r.json() : null)
+          .then((j) => { if (j) setReps(j.reps ?? []); });
+      }} />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 12 }}>
         {sorted.map((r) => <RepCard key={r.rep_id} rep={r} onClick={() => setDrillRepId(r.rep_id)} />)}
       </div>
       {drillRepId != null && <RepDrillModal repId={drillRepId} onClose={() => setDrillRepId(null)} />}
+    </div>
+  );
+}
+
+function AssignMissionForm({ reps, onCreated }: { reps: RepOverviewCard[]; onCreated: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [repId, setRepId] = useState<number | "">("");
+  const [kind, setKind] = useState<"send" | "reply" | "mark_wechat" | "custom">("send");
+  const [target, setTarget] = useState("12");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  async function submit() {
+    if (!repId || !target) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await fetch("/api/admin/missions", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "create_mission",
+          rep_id: repId,
+          kind,
+          target: parseInt(target),
+        }),
+      });
+      const j = await r.json();
+      if (!r.ok) { setMsg(`Error: ${j.error ?? "create failed"}`); return; }
+      setMsg(`✓ Created mission for rep ${repId}`);
+      setRepId("");
+      setTarget("12");
+      onCreated();
+      setTimeout(() => { setMsg(null); setOpen(false); }, 1500);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        style={{
+          marginBottom: 12, padding: "6px 12px", fontSize: 12,
+          border: "1px solid var(--border)", borderRadius: 6,
+          background: "var(--bg)", color: "var(--text)", cursor: "pointer",
+        }}
+      >
+        + Assign mission
+      </button>
+    );
+  }
+  return (
+    <div style={{
+      marginBottom: 12, padding: 12, border: "1px solid var(--border)", borderRadius: 8,
+      background: "var(--bg-secondary)", display: "flex", gap: 8, alignItems: "center",
+      flexWrap: "wrap", fontSize: 13,
+    }}>
+      <span style={{ fontWeight: 600 }}>Assign mission for today:</span>
+      <select value={repId} onChange={(e) => setRepId(e.target.value ? parseInt(e.target.value) : "")} style={{ padding: "4px 8px", borderRadius: 4, border: "1px solid var(--border)" }}>
+        <option value="">— rep —</option>
+        {reps.map((r) => <option key={r.rep_id} value={r.rep_id}>{r.rep_name}</option>)}
+      </select>
+      <select value={kind} onChange={(e) => setKind(e.target.value as typeof kind)} style={{ padding: "4px 8px", borderRadius: 4, border: "1px solid var(--border)" }}>
+        <option value="send">Send</option>
+        <option value="reply">Reply to inbound</option>
+        <option value="mark_wechat">Mark WeChat</option>
+        <option value="custom">Custom</option>
+      </select>
+      <input
+        type="number"
+        min="1"
+        value={target}
+        onChange={(e) => setTarget(e.target.value)}
+        style={{ width: 60, padding: "4px 8px", borderRadius: 4, border: "1px solid var(--border)" }}
+        placeholder="target"
+      />
+      <button
+        type="button"
+        onClick={submit}
+        disabled={busy || !repId || !target}
+        style={{
+          padding: "4px 12px", borderRadius: 4, border: "none",
+          background: "var(--text)", color: "var(--bg)", cursor: busy ? "wait" : "pointer",
+          opacity: (!repId || !target) ? 0.5 : 1,
+        }}
+      >
+        {busy ? "Creating…" : "Create"}
+      </button>
+      <button
+        type="button"
+        onClick={() => setOpen(false)}
+        style={{ padding: "4px 8px", background: "none", border: "none", color: "var(--text-secondary)", cursor: "pointer" }}
+      >
+        Cancel
+      </button>
+      {msg && <span style={{ marginLeft: 8, color: msg.startsWith("✓") ? "var(--green)" : "var(--coral)" }}>{msg}</span>}
     </div>
   );
 }
@@ -717,15 +831,50 @@ function RepCard({ rep, onClick }: { rep: RepOverviewCard; onClick: () => void }
           {rep.today_goal}
         </div>
       )}
-      {/* KPI stats */}
+      {/* KPI stats — Today row (primary) + 7d row (trailing context) */}
+      <div style={{
+        display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4,
+        marginBottom: 6, fontFamily: "var(--font-heading)",
+      }}>
+        <Stat label="New today" value={rep.new_leads_today} />
+        <Stat label="Sent today" value={rep.sent_today} valueColor={rep.sent_today > 0 ? "var(--text)" : "var(--text-tertiary)"} />
+        <Stat label="Replies" value={rep.replied_today} />
+        <Stat label="WeChat" value={rep.wechat_today} valueColor={rep.wechat_today > 0 ? "var(--green)" : "var(--text-tertiary)"} />
+      </div>
       <div style={{
         display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 4,
         marginBottom: 8, fontFamily: "var(--font-heading)",
+        paddingTop: 6, borderTop: "1px dashed var(--border-light)",
+        opacity: 0.75,
       }}>
         <Stat label="Sends 7d" value={rep.sent_7d} />
-        <Stat label="Replies" value={rep.replied_7d} />
-        <Stat label="WeChat" value={rep.wechat_7d} valueColor="var(--green)" />
+        <Stat label="Repl 7d" value={rep.replied_7d} />
+        <Stat label="WX 7d" value={rep.wechat_7d} />
       </div>
+      {/* Mission progress bar (Phase 3) — only when there are missions today */}
+      {rep.missions_total > 0 && (
+        <div style={{ marginBottom: 8 }}>
+          <div style={{
+            display: "flex", justifyContent: "space-between",
+            fontSize: 11, color: "var(--text-secondary)", marginBottom: 4,
+          }}>
+            <span>Today's missions</span>
+            <span style={{ fontWeight: 600, color: rep.missions_done >= rep.missions_total ? "var(--green)" : "var(--text)" }}>
+              {rep.missions_done}/{rep.missions_total}
+            </span>
+          </div>
+          <div style={{
+            height: 4, background: "var(--bg-secondary)", borderRadius: 2, overflow: "hidden",
+          }}>
+            <div style={{
+              height: "100%",
+              width: `${Math.min(100, (rep.missions_done / rep.missions_total) * 100)}%`,
+              background: rep.missions_done >= rep.missions_total ? "var(--green)" : "var(--text)",
+              transition: "width 200ms ease",
+            }} />
+          </div>
+        </div>
+      )}
       {/* Bottom strip: health reason + ready queue */}
       <div style={{
         display: "flex", alignItems: "center", justifyContent: "space-between",
@@ -765,6 +914,9 @@ interface RepDrillData {
   learnings: Array<{ kind: string; body: string; created_at: string }>;
   recent_inbound: Array<{ sender: string; subject: string; snippet: string; received_at: string }>;
   recent_wechat: Array<{ recipient: string; paper_title: string; wechat_at: string }>;
+  // Canonical aggregates — same source as the team-overview card so
+  // drill modal and card never disagree.
+  overview: RepOverviewCard | null;
 }
 
 function RepDrillModal({ repId, onClose }: { repId: number; onClose: () => void }) {
@@ -831,20 +983,23 @@ function RepDrillModal({ repId, onClose }: { repId: number; onClose: () => void 
               }}>×</button>
             </div>
 
-            {/* Always-shown 7d snapshot — the drill modal used to render
-                nothing when all sections were length=0 (rep had no missions
-                today + quiet week → blank dialog). This grid gives at minimum
-                a 5-number snapshot so the modal always communicates. */}
+            {/* Canonical aggregates — source-of-truth = data.overview
+                (the per-rep slice of /api/admin/team-overview). Used to
+                derive these client-side from `data.recent_emails.length`
+                which was LIMIT-15 capped, AND `data.recent_inbound.length`
+                which was always 0 because the query hit the wrong table.
+                Result: card said "113 sends" while modal said "0 sends".
+                Now both render the same number from one source. */}
             <div style={{
               display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12,
               padding: "14px 0", borderTop: "1px solid var(--border-light)",
               borderBottom: "1px solid var(--border-light)", marginBottom: 18,
               fontFamily: "var(--font-heading)",
             }}>
-              <Stat label="Missions today" value={data.missions.length} />
-              <Stat label="Sends 7d" value={data.recent_emails.length} />
-              <Stat label="Replies 7d" value={data.recent_inbound.length} />
-              <Stat label="WeChat 7d" value={data.recent_wechat.length} valueColor={data.recent_wechat.length > 0 ? "var(--green)" : undefined} />
+              <Stat label="Missions today" value={data.overview?.missions_total ?? data.missions.length} />
+              <Stat label="Sends 7d" value={data.overview?.sent_7d ?? 0} />
+              <Stat label="Replies 7d" value={data.overview?.replied_7d ?? 0} />
+              <Stat label="WeChat 7d" value={data.overview?.wechat_7d ?? 0} valueColor={(data.overview?.wechat_7d ?? 0) > 0 ? "var(--green)" : undefined} />
               <Stat label="Leon learned" value={data.learnings.length} />
             </div>
 

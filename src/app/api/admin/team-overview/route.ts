@@ -31,12 +31,17 @@ export interface RepOverviewCard {
   today_goal: string | null;
   today_reasoning: string | null;
   today_bullets: string[];
-  // KPIs (last 7 days unless noted)
+  // Today-bounded KPIs (since midnight local-day boundary)
+  new_leads_today: number;    // pipeline_leads created today, assigned to this rep
+  sent_today: number;         // emails sent (actor_rep_id) today
+  replied_today: number;      // inbound replies (rep_id) today
+  wechat_today: number;       // brief_lookups added_wechat today by this rep
+  // KPIs (last 7 days unless noted) — kept for trailing context
   sent_7d: number;
   replied_7d: number;
   wechat_7d: number;
   ready_queue: number;
-  sends_today: number;
+  sends_today: number;        // alias for sent_today, kept for back-compat
   // Mission progress today: aggregate target vs progress
   missions_total: number;
   missions_done: number;
@@ -95,6 +100,14 @@ async function _computeOverviewInner(today: string, since7d: string): Promise<{ 
   const briefByRep = new Map((briefs ?? []).map((b) => [b.rep_id as number, b]));
 
   // 3. Per-rep email activity for the past 7d (sent / replied)
+  //
+  // A reply to a sent email transitions emails.status from "sent" →
+  // "replied" — we want both to count as "sent by this rep" because
+  // the rep DID send it (the inbound reply is a downstream signal,
+  // not an erasure of the outbound). Previously the missing "replied"
+  // in the inclusion list undercounted any rep whose outbound got a
+  // reply — most visible on Ethan/Leo whose reply rate is non-zero.
+  const SENT_STATUSES = new Set(["sent", "delivered", "opened", "clicked", "replied"]);
   const { data: emails7d } = await supabase
     .from("emails")
     .select("actor_rep_id, status, created_at")
@@ -102,12 +115,12 @@ async function _computeOverviewInner(today: string, since7d: string): Promise<{ 
     .gte("created_at", since7d);
   const sentByRep = new Map<number, number>();
   const lastActByRep = new Map<number, string>();
-  let sendsTodayByRep = new Map<number, number>();
+  const sendsTodayByRep = new Map<number, number>();
   const todayStart = today + "T00:00:00";
   for (const e of emails7d ?? []) {
     const rid = e.actor_rep_id as number;
     if (rid == null) continue;
-    if (["sent", "delivered", "opened", "clicked"].includes(String(e.status))) {
+    if (SENT_STATUSES.has(String(e.status))) {
       sentByRep.set(rid, (sentByRep.get(rid) ?? 0) + 1);
       if ((e.created_at as string) >= todayStart) {
         sendsTodayByRep.set(rid, (sendsTodayByRep.get(rid) ?? 0) + 1);
@@ -118,32 +131,55 @@ async function _computeOverviewInner(today: string, since7d: string): Promise<{ 
     if (!prev || t > prev) lastActByRep.set(rid, t);
   }
 
-  // 4. Inbound replies and wechat conversions (last 7d).
+  // 4. Inbound replies and wechat conversions (last 7d + today).
   // The right table is `inbound_emails` (rep_id, created_at). The
   // earlier code used `email_contact_history` with `direction`+`received_at`
   // — neither column exists; PostgREST silently returned null and
   // replied_7d was always 0. Caught by audit subagent.
   const { data: inbound7d } = await supabase
     .from("inbound_emails")
-    .select("rep_id")
+    .select("rep_id, created_at")
     .in("rep_id", repIds)
     .gte("created_at", since7d);
   const repliedByRep = new Map<number, number>();
+  const repliedTodayByRep = new Map<number, number>();
   for (const r of inbound7d ?? []) {
     const rid = r.rep_id as number;
     repliedByRep.set(rid, (repliedByRep.get(rid) ?? 0) + 1);
+    if ((r.created_at as string) >= todayStart) {
+      repliedTodayByRep.set(rid, (repliedTodayByRep.get(rid) ?? 0) + 1);
+    }
   }
 
   const { data: wechat7d } = await supabase
     .from("brief_lookups")
-    .select("marked_by_rep_id")
+    .select("marked_by_rep_id, wechat_at")
     .in("marked_by_rep_id", repIds)
     .eq("added_wechat", true)
     .gte("wechat_at", since7d);
   const wechatByRep = new Map<number, number>();
+  const wechatTodayByRep = new Map<number, number>();
   for (const r of wechat7d ?? []) {
     const rid = r.marked_by_rep_id as number;
     wechatByRep.set(rid, (wechatByRep.get(rid) ?? 0) + 1);
+    if ((r.wechat_at as string) >= todayStart) {
+      wechatTodayByRep.set(rid, (wechatTodayByRep.get(rid) ?? 0) + 1);
+    }
+  }
+
+  // 4b. New leads created today, scoped to each rep's assignment.
+  // Tells admin "what landed in their queue today" — pairs nicely with
+  // sent_today (what they did with it). Counted from pipeline_leads,
+  // NOT emails (a lead created today might not be sent until tomorrow).
+  const { data: newLeadsToday } = await supabase
+    .from("pipeline_leads")
+    .select("assigned_rep_id")
+    .in("assigned_rep_id", repIds)
+    .gte("created_at", todayStart);
+  const newLeadsTodayByRep = new Map<number, number>();
+  for (const l of newLeadsToday ?? []) {
+    const rid = l.assigned_rep_id as number;
+    newLeadsTodayByRep.set(rid, (newLeadsTodayByRep.get(rid) ?? 0) + 1);
   }
 
   // 5. Ready queue depth — pipeline_leads assigned to this rep, status=ready.
@@ -250,11 +286,17 @@ async function _computeOverviewInner(today: string, since7d: string): Promise<{ 
       today_goal: (brief?.goal as string) ?? null,
       today_reasoning: (brief?.reasoning as string) ?? null,
       today_bullets: (brief?.bullets as string[]) ?? [],
+      // Today bucket
+      new_leads_today: newLeadsTodayByRep.get(rid) ?? 0,
+      sent_today: sendsToday,
+      replied_today: repliedTodayByRep.get(rid) ?? 0,
+      wechat_today: wechatTodayByRep.get(rid) ?? 0,
+      // 7d trailing
       sent_7d: sent7d,
       replied_7d: repliedByRep.get(rid) ?? 0,
       wechat_7d: wechatByRep.get(rid) ?? 0,
       ready_queue: ready,
-      sends_today: sendsToday,
+      sends_today: sendsToday,        // alias kept for legacy callers
       missions_total: missionsTotal,
       missions_done: missionsDone,
       last_activity_at: lastAct,

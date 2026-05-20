@@ -118,6 +118,12 @@ export async function POST(req: NextRequest) {
     action?: string;
     focus_id?: string;
     week_starting?: string;
+    // create_mission payload
+    rep_id?: number;
+    due_date?: string;
+    kind?: string;
+    target?: number;
+    description?: string | null;
   };
 
   const stamp = {
@@ -186,6 +192,57 @@ export async function POST(req: NextRequest) {
       .eq("status", "proposed");
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json({ ok: true });
+  }
+
+  // ─── Direct admin authoring — bypass the propose→approve flow when
+  // admin knows what they want. Inserts a mission row as `status='active'`
+  // immediately so the rep sees it on /missions today.
+  // ───
+  if (body.action === "create_mission") {
+    const repId = body.rep_id;
+    const dueDate = body.due_date ?? new Date().toISOString().slice(0, 10);
+    const kind = body.kind;
+    const target = body.target;
+    if (!repId || !kind || !target || target <= 0) {
+      return NextResponse.json(
+        { error: "create_mission requires rep_id, kind, target>0" },
+        { status: 400 },
+      );
+    }
+    const { data, error } = await supabase
+      .from("missions")
+      .insert({
+        rep_id: repId,
+        due_date: dueDate,
+        kind,
+        target,
+        description: body.description ?? null,
+        status: "active",
+        generated_by: "admin",
+        approved_at: stamp.approved_at,
+        approved_by_rep_id: stamp.approved_by_rep_id,
+      })
+      .select("id")
+      .single();
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ ok: true, id: data!.id });
+  }
+
+  // ─── Bulk-approve every proposed mission whose due_date == today.
+  // Different from approve_missions(week_starting) — this lets admin
+  // approve just today's queue from the team-overview screen without
+  // computing a week-starting date.
+  // ───
+  if (body.action === "approve_today_missions") {
+    const today = new Date().toISOString().slice(0, 10);
+    const { data, error } = await supabase
+      .from("missions")
+      .update({ status: "active", ...stamp })
+      .eq("due_date", today)
+      .eq("status", "proposed")
+      .select("id");
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ ok: true, approved: data?.length ?? 0 });
   }
 
   return NextResponse.json({ error: "unknown action" }, { status: 400 });
