@@ -275,7 +275,7 @@ ${prompt}`;
   // template-assembler.ts:204 already uses 3-flash; keep both in sync so
   // the same draft doesn't mix 2.5 + 3 voices.
   let r = await llmChat({
-    model: "gemini-3-flash",
+    model: "gemini-3.5-flash",
     user: finalPrompt,
     temperature: 0.5,
     max_tokens: 500,
@@ -289,7 +289,7 @@ ${prompt}`;
   // Retry once with more headroom — sometimes the model used the 500-token
   // budget on reasoning then truncated the actual reply. Bump to 1200.
   r = await llmChat({
-    model: "gemini-3-flash",
+    model: "gemini-3.5-flash",
     user: finalPrompt + "\n\n（注意：必须以句号结尾，不要中途截断。）",
     temperature: 0.5,
     max_tokens: 1200,

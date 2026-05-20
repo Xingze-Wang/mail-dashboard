@@ -195,13 +195,12 @@ ${prompt}`;
   // The proxy supports the Gemini family via "gemini-3-flash" /
   // "gemini-2.5-flash" aliases — see src/lib/llm-proxy.ts:KNOWN_MODELS.
   const { llmChat } = await import("@/lib/llm-proxy");
-  // gemini-3-flash (preview) has no implicit reasoning tokens; the
-  // 2.5-flash variant on this proxy was burning 990+ tokens on
-  // internal "thinking" before emitting visible output, leading to
-  // finish_reason: length truncation at 55 chars. 3-flash is also
-  // cheaper + faster for this paragraph-shape task.
+  // gemini-3.5-flash (GA, launched 2026-05-19 at I/O): newest non-thinking
+  // Google flash. Better at structured Chinese output than 3-flash-preview
+  // by our quick eyeball test; equally fast. Falls back via proxy alias
+  // if the upstream rejects the model name.
   const r = await llmChat({
-    model: "gemini-3-flash",
+    model: "gemini-3.5-flash",
     user: finalPrompt,
     temperature: 0.5,
     // 2500 because gemini-flash variants on this proxy use internal

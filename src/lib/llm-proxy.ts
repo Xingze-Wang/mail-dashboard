@@ -25,6 +25,10 @@ export const KNOWN_MODELS: Record<string, string> = {
   "o1":                "openai/o1",
 
   // ───── Fast / cheap workhorses ─────
+  // gemini-3.5-flash launched 2026-05-19 at Google I/O. GA, $1.50/$9 per
+  // M tokens, default in Gemini app + Search AI Mode. Same SDK endpoint
+  // (generativelanguage.googleapis.com). Newer + better than 3-flash-preview.
+  "gemini-3.5-flash":  "gemini-3.5-flash",
   "gemini-3-flash":    "gemini-3-flash-preview",
   "gemini-2.5-flash":  "gemini-2.5-flash",
   "gpt-5-mini":        "openai/gpt-5-mini",
