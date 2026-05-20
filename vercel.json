@@ -28,6 +28,7 @@
     { "path": "/api/cron/sync-miracleplus-contacts", "schedule": "0 5 * * *" },
     { "path": "/api/cron/sync-miracleplus-backfill", "schedule": "0 4 * * 0" },
     { "path": "/api/cron/agent-scheduler",            "schedule": "0 9 * * *" },
-    { "path": "/api/cron/agent-dumbness-check",       "schedule": "0 0 * * 1" }
+    { "path": "/api/cron/agent-dumbness-check",       "schedule": "0 0 * * 1" },
+    { "path": "/api/cron/redraft-quarantined",        "schedule": "0 */6 * * *" }
   ]
 }
