@@ -831,15 +831,18 @@ function RepCard({ rep, onClick }: { rep: RepOverviewCard; onClick: () => void }
           {rep.today_goal}
         </div>
       )}
-      {/* KPI stats — Today row (primary) + 7d row (trailing context) */}
+      {/* KPI stats — Today row (primary) + 7d row (trailing context).
+          Labels match exactly between rows so the same metric never
+          gets two names (was "WeChat" on today + "WX 7d" on the trail,
+          which read as two different signals). Symmetric naming. */}
       <div style={{
         display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4,
         marginBottom: 6, fontFamily: "var(--font-heading)",
       }}>
         <Stat label="New today" value={rep.new_leads_today} />
         <Stat label="Sent today" value={rep.sent_today} valueColor={rep.sent_today > 0 ? "var(--text)" : "var(--text-tertiary)"} />
-        <Stat label="Replies" value={rep.replied_today} />
-        <Stat label="WeChat" value={rep.wechat_today} valueColor={rep.wechat_today > 0 ? "var(--green)" : "var(--text-tertiary)"} />
+        <Stat label="Replies today" value={rep.replied_today} />
+        <Stat label="WeChat today" value={rep.wechat_today} valueColor={rep.wechat_today > 0 ? "var(--green)" : "var(--text-tertiary)"} />
       </div>
       <div style={{
         display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 4,
@@ -847,9 +850,9 @@ function RepCard({ rep, onClick }: { rep: RepOverviewCard; onClick: () => void }
         paddingTop: 6, borderTop: "1px dashed var(--border-light)",
         opacity: 0.75,
       }}>
-        <Stat label="Sends 7d" value={rep.sent_7d} />
-        <Stat label="Repl 7d" value={rep.replied_7d} />
-        <Stat label="WX 7d" value={rep.wechat_7d} />
+        <Stat label="Sent 7d" value={rep.sent_7d} />
+        <Stat label="Replies 7d" value={rep.replied_7d} />
+        <Stat label="WeChat 7d" value={rep.wechat_7d} />
       </div>
       {/* Mission progress bar (Phase 3) — only when there are missions today */}
       {rep.missions_total > 0 && (
