@@ -61,6 +61,51 @@ const OFFENSIVE_WEAK = [
   "vulnerability", "exploit", "attack surface",
 ];
 
+// 2026-05-20 audience filter: hard-block when the author's email is at a
+// US / EU / SG governmental research institution — they have their own
+// compute and aren't in our ICP. Chinese .gov.cn / 中科院 / 国内 national
+// labs are KEPT (core target group). Match on email domain only —
+// deterministic, zero cost.
+//
+// Logic: any `.gov` TLD that is NOT `.gov.cn` (which is a SLD form used
+// only by China), plus a list of named non-Chinese government labs.
+const NAMED_NON_CN_GOV_DOMAINS = [
+  // US national labs (DOE / DOD / civilian)
+  "ornl.gov", "lanl.gov", "lbl.gov", "anl.gov", "bnl.gov", "pnnl.gov",
+  "sandia.gov", "llnl.gov", "fnal.gov", "slac.stanford.edu",  // SLAC is DOE-funded
+  "nist.gov", "nasa.gov", "noaa.gov", "usgs.gov", "nih.gov",
+  "nrl.navy.mil", "afrl.af.mil", "arl.army.mil",
+  // EU
+  "cern.ch", "esa.int", "eso.org", "embl.org", "embl.de", "embl-ebi.ac.uk",
+  "max-planck.de",  // 'mpg.de' is in SCHOOL_DATA as "MPI" tier 1 — keep there, don't double-block
+  // Singapore
+  "a-star.edu.sg", "astar.edu.sg",
+  // Japan
+  "riken.jp", "aist.go.jp",
+];
+
+function isBlockedGovDomain(email: string): { blocked: boolean; reason?: string } {
+  if (!email || !email.includes("@")) return { blocked: false };
+  const domain = email.split("@").pop()!.toLowerCase();
+
+  // Named non-CN government labs first (most specific)
+  for (const d of NAMED_NON_CN_GOV_DOMAINS) {
+    if (domain === d || domain.endsWith(`.${d}`)) {
+      return { blocked: true, reason: `government research institution (${d}) — outside our ICP, has own compute` };
+    }
+  }
+  // .gov TLD (US federal) — but NOT .gov.cn (Chinese .gov), which is a
+  // SLD used only by China and is a target audience.
+  if (domain.endsWith(".gov") && !domain.endsWith(".gov.cn")) {
+    return { blocked: true, reason: `US government TLD (${domain}) — outside our ICP` };
+  }
+  // .mil — US military, also outside ICP
+  if (domain.endsWith(".mil")) {
+    return { blocked: true, reason: `US military domain (${domain}) — outside our ICP` };
+  }
+  return { blocked: false };
+}
+
 const GEMINI_MODEL = "gemini-2.5-flash";
 const GEMINI_TIMEOUT_MS = 25_000;
 
@@ -162,7 +207,7 @@ export interface AppropriatenessResult {
   ok: boolean;
   hard: QcIssue[];
   soft: QcIssue[];
-  category?: "fine" | "offensive" | "dual_use_risky" | "no_judge";
+  category?: "fine" | "offensive" | "dual_use_risky" | "blocked_audience" | "no_judge";
 }
 
 /**
@@ -181,12 +226,29 @@ export interface AppropriatenessResult {
 export async function screenPaperAppropriateness(args: {
   title: string;
   abstract: string;
+  authorEmail?: string;
   useJudge?: boolean;
 }): Promise<AppropriatenessResult> {
   const hard: QcIssue[] = [];
   const soft: QcIssue[] = [];
   const title = args.title || "";
   const abstract = args.abstract || "";
+
+  // (0) Audience filter — hard-block US/EU/SG/JP government labs by email
+  // domain. Chinese .gov.cn / cas.cn / ict.ac.cn are NOT blocked
+  // (core target audience). Zero LLM cost.
+  if (args.authorEmail) {
+    const govCheck = isBlockedGovDomain(args.authorEmail);
+    if (govCheck.blocked) {
+      hard.push({
+        code: "BLOCKED_AUDIENCE",
+        severity: "HARD",
+        message: govCheck.reason || "audience outside ICP",
+        sample: args.authorEmail,
+      });
+      return { ok: false, hard, soft, category: "blocked_audience" };
+    }
+  }
 
   const ttl = norm(title);
   const abs = norm(abstract);

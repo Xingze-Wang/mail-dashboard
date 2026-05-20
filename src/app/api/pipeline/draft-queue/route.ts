@@ -152,6 +152,7 @@ async function processOne(row: Record<string, unknown>): Promise<boolean> {
       const appr = await screenPaperAppropriateness({
         title,
         abstract: (row.abstract as string) || "",
+        authorEmail: email,
         useJudge: false,
       });
       if (!appr.ok) {

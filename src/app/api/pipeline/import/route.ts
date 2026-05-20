@@ -273,6 +273,7 @@ export async function POST(req: NextRequest) {
         const appr = await screenPaperAppropriateness({
           title,
           abstract: (lead.abstract as string) || "",
+          authorEmail: email,
           useJudge: true,
         });
         if (!appr.ok) {
@@ -304,6 +305,23 @@ export async function POST(req: NextRequest) {
 
       const scoreLookup =
         incomingScore !== null ? incomingScore : await scoreWithGemini(title, abstractStr);
+
+      // ── PAPER-TYPE CLASSIFICATION (mig 105 — log only, not a gate) ───
+      // Per 2026-05-20 product call: log what kind of paper this is
+      // (empirical_method / benchmark / theory / survey / null_result /
+      // measurement / position / unknown). NOT used to filter the lead.
+      // Used later to pivot conversion-rate by paper type.
+      // Best-effort: failure → "unknown", does NOT block the lead.
+      let paperTypeResult: { type: string; reason: string } = { type: "unknown", reason: "not classified" };
+      try {
+        const { classifyPaperType } = await import("@/lib/paper-type-classifier");
+        paperTypeResult = await classifyPaperType({
+          title,
+          abstract: abstractStr,
+        });
+      } catch (err) {
+        console.warn("paper-type classify failed", { title: title.slice(0, 60), err: String(err).slice(0, 100) });
+      }
 
       // Drafts carry literal {{REP_NAME}} / {{REP_WECHAT}} placeholders until
       // allocation. The draft-queue worker rewrites them post-assignment.
@@ -345,6 +363,9 @@ export async function POST(req: NextRequest) {
           matched_directions: (lead.matchedDirections as string) || null,
           draft_subject: finalSubject,
           draft_html: finalHtml,
+          // mig 105 — log paper type for future conversion analytics
+          paper_type: paperTypeResult.type,
+          paper_type_reason: paperTypeResult.reason,
           // Snapshot of the AI's original output so sales-edit diffs can be
           // mined. Identical to draft_* at insert time, but draft_* will be
           // overwritten by sales editing while these stay frozen.

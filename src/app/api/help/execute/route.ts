@@ -996,6 +996,18 @@ export async function POST(req: NextRequest) {
   try {
     switch (proposal.action) {
       case "batch_send":
+        // 2026-05-20: 批量发送暂停, 仅 admin 可用. 非 admin Leon 提案被拒.
+        // 销售必须逐封手动发 (/pipeline 页面单 lead 点 Send).
+        if (session.role !== "admin") {
+          result = {
+            ok: false,
+            detail: {
+              error: "批量发送已暂停, 仅 admin 可用. 请逐封手动审核后从 /pipeline 单发.",
+              code: "batch_send_disabled",
+            },
+          };
+          break;
+        }
         result = await doBatchSend(session, proposal, origin, cookie);
         break;
       case "skip_lead":

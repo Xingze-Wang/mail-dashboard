@@ -44,6 +44,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    // 2026-05-20 user call: 批量发送暂停 — 只 admin 可用.
+    // 销售 / senior 必须逐封手动发 (走 /api/pipeline/send 单发路径)
+    // 之前 checkBulkSendAllowed 是基于 trust_level 的训练轮; 这次是
+    // 更上层的产品决策, 直接 hard-block 非 admin.
+    if (session.role !== "admin") {
+      return NextResponse.json(
+        {
+          error: "批量发送已暂停, 仅 admin 可用. 请逐封手动审核后再发. (Batch send is paused for non-admin roles; send individually.)",
+          code: "batch_send_disabled",
+        },
+        { status: 403 },
+      );
+    }
+
     let body: Record<string, unknown>;
     try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 }); }
     const { ids, overrides } = body as { ids?: string[]; overrides?: string[] };

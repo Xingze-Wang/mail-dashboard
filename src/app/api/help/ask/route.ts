@@ -424,7 +424,15 @@ ${lookupSummary}
   // first keeps the cleaned text unambiguous when a response has both.
   const { cleaned: textNoEvidence, evidence } = extractEvidence(finalText);
 
-  const { cleaned, proposal, proposalError } = extractToolProposal(textNoEvidence);
+  const { cleaned, proposal, proposalError: parseProposalError } = extractToolProposal(textNoEvidence);
+
+  // 2026-05-20: 批量发送暂停, 仅 admin 可用. 如果 Leon 给非 admin 用户提了
+  // batch_send 提案, 直接 reject 让 Leon 改成单封建议. 同时存进 proposalError
+  // 路径走原来的"提案被拒"流程.
+  let proposalError = parseProposalError;
+  if (proposal && proposal.action === "batch_send" && session.role !== "admin") {
+    proposalError = "批量发送已暂停, 仅 admin 可用. 请改成 review_next 让用户逐封审核, 或在 /pipeline 单发.";
+  }
 
   // For SAFE DB-only proposals (remember_about_rep, record_admin_request,
   // learn_from_admin_correction), auto-execute server-side instead of
